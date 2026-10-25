@@ -1,15 +1,14 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { asc, inArray } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { chunks, documents, documentVersions, runs, sources } from "@/lib/db/schema";
+import { chunks, documents, documentVersions, sources } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
-import { STAGES } from "@/lib/jobs/stages";
-import { assertEmbeddingDimension, EMBED_STAGE, embedChunks, planEmbedChunks } from "@/lib/pipeline/embed";
-import { FETCH_RUN_STAGES, startEmbedBackfillRun } from "@/lib/pipeline/fetch/run";
+import { assertEmbeddingDimension, embedChunks, planEmbedChunks } from "@/lib/pipeline/embed";
+import { startEmbedBackfillRun } from "@/lib/pipeline/fetch/run";
 import { startWhileLocked, testDb, withRollback } from "@/test/db";
 import { VOYAGE_RECORDING_TEXTS } from "@/scripts/fixtures-record";
 
@@ -82,10 +81,6 @@ const newRun = (tx: Db, params: Record<string, unknown> = {}) =>
   createRun(tx, { kind: "stage", scope: { type: "system", id: "embed-test" }, stages: [], params, triggeredBy: "embed-test" });
 
 describe("embed.chunks plan", () => {
-  it("is the last stage of a crawl run and runs on its own queue", () => {
-    expect(FETCH_RUN_STAGES.at(-1)).toBe(EMBED_STAGE);
-    expect(STAGES[EMBED_STAGE]?.queue).toBe("embed.chunks");
-  });
 
   it("the plan batches 130 empty chunks into 64, 64 and 2", async () => {
     await withRollback(async (tx) => {
@@ -220,24 +215,6 @@ describe("assertEmbeddingDimension", () => {
 });
 
 describe("startEmbedBackfillRun", () => {
-  it("starts a run with only embed.chunks over all chunks", async () => {
-    await withRollback(async (tx) => {
-      const inserted: string[] = [];
-      const boss = {
-        insert: async (queue: string, jobs: Array<{ id: string }>) => {
-          inserted.push(queue);
-          return jobs.map((j) => j.id);
-        },
-      } as unknown as PgBoss;
-      // a chunk without an embedding: without one the run plans nothing and ends at once, so no second start is refused
-      await insertChunks(tx, await insertVersion(tx, await insertSource(tx), null), ["Unembedded chunk"]);
-      const { id } = await startEmbedBackfillRun(tx, boss, "embed-test");
-      const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ stages: [EMBED_STAGE], params: { all: true }, scopeType: "system", scopeId: "embeddings" });
-      expect(inserted.every((q) => q === "embed.chunks" || q === "run.advance")).toBe(true);
-      await expect(startEmbedBackfillRun(tx, boss, "embed-test")).rejects.toMatchObject({ reason: "embed_backfill_active" });
-    });
-  });
 
   it("a start waits for another start's lock, so two concurrent starts cannot both pass the check", async () => {
     const db = testDb();

@@ -133,15 +133,6 @@ describe("ProfileTab", () => {
     expect(profileConfidenceText({ profileConfidence: null, profileClass: null, hasProfile: false })).toBe("kein Profil");
   });
 
-  it("„Zusammenfassung neu erzeugen“ is a form on the newest version only (ruling M6-H-R1)", () => {
-    const html = renderToStaticMarkup(<ProfileTab view={view()} selected={null} links={links} />);
-    expect(html).toContain("Zusammenfassung neu erzeugen");
-    expect(html.match(/<form/g)).toHaveLength(1);
-    expect(html).toContain(`name="geoObjectId" value="${GEO}"`);
-    expect(html).toContain('name="placeId" value="p1"');
-    expect(renderToStaticMarkup(<ProfileTab view={view({ latest: false })} selected={null} links={links} />)).not.toContain("Zusammenfassung neu erzeugen");
-  });
-
   it("marks an older version and shows a notice", () => {
     const html = renderToStaticMarkup(<ProfileTab view={view({ latest: false })} selected={null} links={links} notice="entry_removed" noticeRunId="r1" />);
     expect(html).toContain("(ältere Version)");

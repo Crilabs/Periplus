@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { facts, runs } from "@/lib/db/schema";
+import { facts } from "@/lib/db/schema";
 import { getConsolidationConfig } from "@/lib/config";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { profileEntryKey } from "@/lib/domain/profile-view";
@@ -27,7 +27,7 @@ vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => ({ insert: (...args: un
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
 
-import { regenerateSummaryAction, removeProfileEntryAction, setPlacePositionAction } from "../places/[id]/actions";
+import { removeProfileEntryAction, setPlacePositionAction } from "../places/[id]/actions";
 
 const db = testDb();
 const cfg = getConsolidationConfig("v1");
@@ -62,7 +62,7 @@ const removalFacts = (tx: Db, objectId: string) =>
   tx.select({ value: facts.value }).from(facts).where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`));
 
 describe("removeProfileEntryAction", () => {
-  it("writes the removal, then starts the consolidation run and returns to the attribute", () =>
+  it("writes the removal and returns to the attribute", () =>
     withRollback(async (tx) => {
       current = tx;
       const p = await hazardPlace(tx);
@@ -70,20 +70,8 @@ describe("removeProfileEntryAction", () => {
         form({ geoObjectId: p.objectId, attribute: "hazards", entryKey: profileEntryKey("hazards", rock, cfg), version: "1", placeId: p.placeId }),
       );
       expect((await removalFacts(tx, p.objectId)).map((f) => f.value)).toEqual([{ remove: rock }]);
-      const [run] = await tx.select({ id: runs.id, params: runs.params }).from(runs).where(sql`${runs.params}->'geoObjectIds' ? ${p.objectId}`);
-      expect(run).toBeDefined();
-      expect(bossInsert).toHaveBeenCalled();
-      expect(redirect).toHaveBeenCalledWith(`/places/${p.placeId}?tab=profile&attr=hazards&notice=entry_removed&run=${run!.id}`);
-    }));
-
-  it("a run that fails to start leaves the removal standing and says so", () =>
-    withRollback(async (tx) => {
-      current = tx;
-      const p = await hazardPlace(tx);
-      bossInsert.mockRejectedValue(new Error("queue down"));
-      await removeProfileEntryAction(form({ geoObjectId: p.objectId, attribute: "hazards", entryKey: profileEntryKey("hazards", rock, cfg), version: "1" }));
-      expect(await removalFacts(tx, p.objectId)).toHaveLength(1);
-      expect(redirect).toHaveBeenCalledWith(`/geo/${p.objectId}?attr=hazards&notice=entry_removed_no_run`);
+      expect(bossInsert).not.toHaveBeenCalled();
+      expect(redirect).toHaveBeenCalledWith(`/places/${p.placeId}?tab=profile&attr=hazards&notice=entry_removed`);
     }));
 
   it("a stale version or an unknown entry writes nothing and says so", () =>
@@ -122,44 +110,17 @@ describe("removeProfileEntryAction", () => {
     }));
 });
 
-describe("regenerateSummaryAction (ruling M6-H-R1)", () => {
-  it("starts a summary-only run that regenerates, then goes to the run; admin only", () =>
-    withRollback(async (tx) => {
-      current = tx;
-      const p = await hazardPlace(tx);
-      await regenerateSummaryAction(form({ geoObjectId: p.objectId, placeId: p.placeId }));
-      expect(requireAdmin).toHaveBeenCalled();
-      const [run] = await tx.select({ id: runs.id, stages: runs.stages, params: runs.params }).from(runs).where(sql`${runs.params}->'geoObjectIds' ? ${p.objectId}`);
-      expect(run).toMatchObject({ stages: ["consolidation.summary"], params: { stagesOnly: ["consolidation.summary"], regenerateSummary: true } });
-      expect(bossInsert).toHaveBeenCalled();
-      expect(redirect).toHaveBeenCalledWith(`/runs/${run!.id}`);
-    }));
-
-  it("refuses a place of another object and a missing admin", () =>
-    withRollback(async (tx) => {
-      current = tx;
-      const p = await hazardPlace(tx);
-      const other = await insertPlace(tx, { name: "Andere Bucht", lon: 21.01 });
-      await expect(regenerateSummaryAction(form({ geoObjectId: p.objectId, placeId: other.placeId }))).rejects.toThrow(/does not belong/);
-      requireAdmin.mockRejectedValue(new Error("not an admin"));
-      await expect(regenerateSummaryAction(form({ geoObjectId: p.objectId }))).rejects.toThrow("not an admin");
-      expect(await tx.select().from(runs).where(sql`${runs.params}->'geoObjectIds' ? ${p.objectId}`)).toEqual([]);
-    }));
-});
-
 describe("setPlacePositionAction (ruling M6-H-R1)", () => {
-  it("moves the place point, then starts a run after the commit and returns to the geometry tab", () =>
+  it("moves the place point and returns to the geometry tab", () =>
     withRollback(async (tx) => {
       current = tx;
-      const { objectId, placeId } = await insertPlace(tx, { name: "Landbucht" });
+      const { placeId } = await insertPlace(tx, { name: "Landbucht" });
       await setPlacePositionAction(form({ placeId, lon: "21.001", lat: "35.2005" }));
       expect(requireAdmin).toHaveBeenCalled();
       const { rows } = await tx.execute<{ lon: number; lat: number }>(sql`select ST_X(position) as lon, ST_Y(position) as lat from places where id = ${placeId}`);
       expect(rows[0]).toEqual({ lon: 21.001, lat: 35.2005 });
-      // no geometry inputs on the synthetic grid: the consolidation run takes the new position into the profile
-      const [run] = await tx.select({ id: runs.id }).from(runs).where(sql`${runs.params}->'geoObjectIds' ? ${objectId}`);
-      expect(run).toBeDefined();
-      expect(redirect).toHaveBeenCalledWith(`/places/${placeId}?tab=geometry&position=moved&run=${run!.id}`);
+      // no geometry inputs on the synthetic grid: no run starts, the position stands
+      expect(redirect).toHaveBeenCalledWith(`/places/${placeId}?tab=geometry&position=moved_no_run`);
     }));
 
   it("a point too far away comes back with too_far and changes nothing; admin only", () =>

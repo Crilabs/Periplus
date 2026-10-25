@@ -8,7 +8,7 @@ import { MockModel } from "@/lib/ai/mock";
 import { candidateList, disambiguateMentionTask, type DisambiguateMentionInput } from "@/lib/ai/tasks/disambiguate-mention";
 import { disambiguationInputs } from "@/lib/pipeline/text/disambiguate";
 import { buildParams } from "@/lib/ai/anthropic";
-import { getConfig, loadConfig, type AppConfig } from "@/lib/config";
+import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { aiBatches, ambiguousMatches, geoObjects, mentions, runs } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
@@ -25,7 +25,6 @@ import {
   planDisambiguate,
 } from "@/lib/pipeline/text/disambiguate";
 import { matchVersion } from "@/lib/pipeline/text/mentions";
-import { startTextRun } from "@/lib/pipeline/text/run";
 import { freezeTextRunParams } from "@/lib/pipeline/text/versions";
 
 const base = loadConfig("config");
@@ -287,19 +286,6 @@ describe("stage mentions.disambiguate", () => {
       const [amb] = await tx.select().from(ambiguousMatches).where(eq(ambiguousMatches.documentVersionId, v.versionId));
       const jobs = await planDisambiguate(tx, { id: runId, params }, config);
       expect(jobs.flatMap((j) => j.ambiguousIds as string[])).toContain(amb!.id);
-    }));
-
-  it("startTextRun freezes the selection into the run's params", () =>
-    withRollback(async (tx) => {
-      const v = await insertTestVersion(tx, [TEXT]);
-      const { boss } = recordingBoss();
-      const { id } = await startTextRun(tx, boss, { documentVersionIds: [v.versionId], triggeredBy: "test" }, config);
-      const [row] = await tx.select({ params: runs.params, stages: runs.stages }).from(runs).where(eq(runs.id, id));
-      // the rules version active at the start is frozen too (ruling M7-E-R1)
-      expect(row!.params).toEqual({ documentVersionIds: [v.versionId], rulesVersion: getConfig().consolidation.version });
-      const pending = await startTextRun(tx, boss, { pending: true, triggeredBy: "test" }, config);
-      const [p] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, pending.id));
-      expect(p!.params).toMatchObject({ pending: true, documentVersionIds: expect.arrayContaining([v.versionId]) });
     }));
 
   it("overlapping runs never both plan the same pending match", () =>

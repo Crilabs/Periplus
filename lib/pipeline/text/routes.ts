@@ -188,7 +188,7 @@ export async function extractRoutes(db: Db, deps: RouteDeps, job: RouteJob): Pro
 
   return submitStageJobBatch(db, deps, {
     task,
-    queue: ROUTE_QUEUE,
+    queue: ROUTE_QUEUE as never, // queue dropped in N6; module is deleted in Task 4
     job,
     subjectIds: subjects,
     modelOverride: run.model,

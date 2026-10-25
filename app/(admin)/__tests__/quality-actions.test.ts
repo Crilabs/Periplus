@@ -35,7 +35,7 @@ vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => ({ insert: (...args: un
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
 
-import { activateCandidateAction, startEvaluationAction, startMeasurementAction } from "../quality/actions";
+import { activateCandidateAction, startMeasurementAction } from "../quality/actions";
 
 const ADMIN = "admin@example.invalid";
 
@@ -171,19 +171,7 @@ describe("startMeasurementAction", () => {
     }));
 });
 
-describe("startEvaluationAction and activateCandidateAction", () => {
-  it("a model without prompt version is rejected; an empty comparison set returns with the reason", () =>
-    withRollback(async (tx) => {
-      current = tx;
-      const { key } = await subdivision(tx);
-      await startEvaluationAction({ subdivisionKey: key, model: "claude-opus-5-5" });
-      expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${key}&error=invalid_input`);
-      await startEvaluationAction({ subdivisionKey: key, rulesVersion: "latest" });
-      expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${key}&error=invalid_input`);
-      await startEvaluationAction(form({ subdivisionKey: key, rulesVersion: getConfig().consolidation.version, model: "", promptVersion: "" }));
-      expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${key}&error=comparison_set_empty`);
-      expect(await started(tx)).toEqual([]);
-    }));
+describe("activateCandidateAction", () => {
 
   it("activation is refused while the gate is closed and writes its row once it passes", () =>
     withRollback(async (tx) => {
@@ -209,21 +197,5 @@ describe("startEvaluationAction and activateCandidateAction", () => {
       await activateCandidateAction({ subdivisionKey, evaluationRunId });
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${subdivisionKey}&error=regression_gate_closed`);
       expect(await activationsOf(tx, evaluationRunId)).toEqual([]);
-    }));
-
-  it("an extraction-only candidate from the form („unverändert“) stores no rules version and activates only the extraction", () =>
-    withRollback(async (tx) => {
-      current = tx;
-      const { subdivisionKey } = await setPlace(tx);
-      await startEvaluationAction(form({ subdivisionKey, rulesVersion: "", model: OPUS.model, promptVersion: String(OPUS.promptVersion) }));
-      const [run] = await started(tx);
-      expect(redirect).toHaveBeenLastCalledWith(`/runs/${run!.id}`);
-      expect((run!.params as { candidate: unknown }).candidate).toEqual({ extraction: OPUS });
-
-      // the run evaluated the set: its profiles hold the places' values, checked against Navily
-      await finishEvaluation(tx, run!.id, subdivisionKey);
-      await activateCandidateAction({ subdivisionKey, evaluationRunId: run!.id });
-      expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${subdivisionKey}&notice=activated`);
-      expect((await activationsOf(tx, run!.id)).map((r) => [r.kind, r.version])).toEqual([["extraction", `${OPUS.model}@p${OPUS.promptVersion}`]]);
     }));
 });

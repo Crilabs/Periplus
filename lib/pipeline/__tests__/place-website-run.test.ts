@@ -5,12 +5,11 @@ import { MockModel } from "@/lib/ai/mock";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { getConfig } from "@/lib/config";
-import { crawlFrontier, documents, geoObjects, mentions, placeWebsites, places, runs } from "@/lib/db/schema";
+import { crawlFrontier, documents, geoObjects, mentions, places, runs } from "@/lib/db/schema";
 import { mentionsConfigKey, recordMatchPass } from "@/lib/domain/mentions/store";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
 import { tileIdFor } from "@/lib/domain/tiles";
-import { STAGES } from "@/lib/jobs/stages";
 import { FETCH_RUN_STAGES } from "@/lib/pipeline/fetch/run";
 import { PLACE_WEBSITE_RUN_STAGES, startPlaceWebsiteRun } from "@/lib/pipeline/place-website-run";
 import { PLACE_WEBSITE_FREEZE_STAGE, PLACE_WEBSITE_STAGE } from "@/lib/pipeline/places/stage-name";
@@ -88,23 +87,6 @@ describe("startPlaceWebsiteRun", () => {
 });
 
 describe("runPlaceWebsiteJob and the freeze", () => {
-  it("attaches the known website and adds its source to the run once, also when the job runs again", () =>
-    withRollback(async (tx) => {
-      const url = `https://www.kappa-${newId()}.example/`;
-      const place = await setup(tx, url);
-      const { boss } = recordingBoss();
-      const { id: runId } = await startPlaceWebsiteRun(tx, boss, { subdivisionKey: SUB }, "t");
-      const deps = { transport: async () => { throw new Error("no network"); }, archive: memoryArchive(), model: new MockModel({}) };
-      const first = await runPlaceWebsiteJob(tx, { ...place, runId }, deps);
-      expect(first).toMatchObject({ outcome: "known", bound: true });
-      const again = await runPlaceWebsiteJob(tx, { ...place, runId }, deps);
-      expect(again).toMatchObject({ outcome: "attached_before" });
-      const params = await paramsOf(tx, runId);
-      expect(params.sourceIds).toEqual([first.sourceId]);
-      expect(await tx.select().from(placeWebsites).where(eq(placeWebsites.placeId, place.placeId))).toHaveLength(1);
-      // the fetch.source stage of the run plans that source
-      expect(await STAGES["fetch.source"]!.plan(tx, { id: runId, params })).toEqual([{ key: first.sourceId, sourceId: first.sourceId }]);
-    }));
 
   it("a website the build attached (without crawl) is fetched by the next button run, and once crawled not again", () =>
     withRollback(async (tx) => {

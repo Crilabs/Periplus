@@ -44,7 +44,7 @@ import {
   TextLink,
   type Tone,
 } from "../../_components/ui";
-import { mergePlaceAction, recomputePlaceProfileAction } from "./actions";
+import { mergePlaceAction } from "./actions";
 import { AutoDecisionLine } from "./auto-decision";
 import { DeliveryTab } from "./delivery-tab";
 import { FactsTab } from "./facts-tab";
@@ -119,7 +119,6 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
   const mergeable = active && p.status === "confirmed";
   const candidates = mergeable ? await mergeCandidates(db, p.id) : [];
   const merged = uuidParam.parse(sp.merged);
-  const mergedRun = uuidParam.parse(sp.run);
   const mergeRefused = mergeError(sp.mergeError);
   const statusSet = statusParam.parse(sp.status);
   const statusRefused = placeStatusError(sp.statusError);
@@ -153,41 +152,20 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
             <>
               {!task && <StatusActions placeId={p.id} status={p.status} />}
               {mergeable && <MergeDialog placeId={p.id} candidates={candidates} />}
-              <form action={recomputePlaceProfileAction}>
-                <input type="hidden" name="placeId" value={p.id} />
-                <Button title="Startet einen Konsolidierungslauf für diesen Ort: das Profil wird aus den aktuellen Facts neu gebildet.">
-                  Profil neu berechnen
-                </Button>
-              </form>
             </>
           )
         }
       />
       {merged && (
-        <Notice tone={sp.mergedNoRun ? "warn" : "ok"} className="mb-6" title="Orte zusammengelegt">
+        <Notice tone="ok" className="mb-6" title="Orte zusammengelegt">
           Der Ort <TextLink href={`/places/${merged}`}>{merged.slice(0, 8)}</TextLink> ist jetzt Teil dieses Orts; sein Profil
           bleibt als Verlauf. Liefert das nächste Paket seines Reviers auch diesen Ort, führt es ihn als „zusammengelegt in“
-          diesen Ort; sonst (anderes Revier, oder dieser Ort wird nicht geliefert) meldet es ihn als entfernt.{" "}
-          {sp.mergedNoRun ? (
-            "Der Folgelauf konnte nicht gestartet werden – bitte „Profil neu berechnen“."
-          ) : mergedRun ? (
-            <>
-              Das Profil wird neu berechnet (<TextLink href={`/runs/${mergedRun}`}>Lauf</TextLink>).
-            </>
-          ) : null}
+          diesen Ort; sonst (anderes Revier, oder dieser Ort wird nicht geliefert) meldet es ihn als entfernt.
         </Notice>
       )}
       {statusSet && (
-        <Notice tone={sp.statusNoRun ? "warn" : "ok"} className="mb-6" title={`Status: ${PLACE_STATUS_LABELS[statusSet]}`}>
-          {sp.statusNoRun ? (
-            "Der Status ist gespeichert. Der Folgelauf konnte nicht gestartet werden – bitte „Profil neu berechnen“."
-          ) : mergedRun ? (
-            <>
-              Gespeichert; das Profil wird neu berechnet (<TextLink href={`/runs/${mergedRun}`}>Lauf</TextLink>).
-            </>
-          ) : (
-            "Gespeichert."
-          )}
+        <Notice tone="ok" className="mb-6" title={`Status: ${PLACE_STATUS_LABELS[statusSet]}`}>
+          Gespeichert.
         </Notice>
       )}
       {statusRefused && (

@@ -32,7 +32,7 @@ import {
   trClass,
   type Tone,
 } from "../../_components/ui";
-import { regenerateSummaryAction, removeProfileEntryAction } from "./actions";
+import { removeProfileEntryAction } from "./actions";
 import { FactCard } from "./facts-tab";
 
 const share = (n: number) => n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -40,7 +40,7 @@ const time = (d: Date) => d.toISOString().slice(0, 16).replace("T", " ");
 
 export const CONFIDENCE_CLASS_TONES: Record<ConfidenceClass, Tone> = { high: "ok", medium: "warn", low: "danger" };
 
-const NOTICE_TONES: Record<string, Tone> = { entry_removed: "ok", entry_removed_no_run: "warn", changed: "warn", error: "danger" };
+const NOTICE_TONES: Record<string, Tone> = { entry_removed: "ok", changed: "warn", error: "danger" };
 
 /** Where the profile table links to: the attribute's facts (`attr`), and where „Eintrag entfernen“ returns to. */
 export type ProfileLinks = {
@@ -91,8 +91,7 @@ export function ProfileTab({
       ) : (
         <Panel>
           <EmptyState title="Noch kein Profil.">
-            Ein Profil entsteht, wenn ein Konsolidierungslauf die Facts dieses Orts zusammenführt. „Profil neu berechnen“
-            startet einen solchen Lauf.
+            Für diesen Ort liegt kein Profil vor.
           </EmptyState>
         </Panel>
       )}
@@ -132,15 +131,6 @@ function ProfileBody({ view, selected, links }: { view: ProfileView; selected: A
         title="Zusammenfassung"
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {view.latest && (
-              <form action={regenerateSummaryAction}>
-                <input type="hidden" name="geoObjectId" value={links.geoObjectId} />
-                {links.placeId && <input type="hidden" name="placeId" value={links.placeId} />}
-                <Button size="sm" title="Startet einen Lauf, der die Zusammenfassung der neuesten Version neu schreibt (auch eine vorhandene).">
-                  Zusammenfassung neu erzeugen
-                </Button>
-              </form>
-            )}
             <Dialog trigger="Details zur Version" triggerSize="sm" title={`Profilversion ${s.version}`} description="Technische Angaben zu dieser Version des Profils.">
               <DescriptionList
                 columns={1}
@@ -398,7 +388,7 @@ function AttributeDetail({ detail: d, links, version }: { detail: AttributeFacts
                       <Link
                         href={`${links.attrHref(r.attribute)}&confirm=${encodeURIComponent(e.key)}`}
                         scroll={false}
-                        title="Legt einen Prüf-Fact an, der den Eintrag aus dem Profil nimmt; danach wird das Profil neu berechnet."
+                        title="Legt einen Prüf-Fact an, der den Eintrag aus dem Profil nimmt."
                         className={buttonClass("danger", "sm")}
                       >
                         Eintrag entfernen

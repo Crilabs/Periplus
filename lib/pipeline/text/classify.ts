@@ -116,7 +116,7 @@ export async function classifyVersions(
   const config = deps.config ?? getConfig();
   return submitStageJobBatch(db, deps, {
     task,
-    queue: CLASSIFY_QUEUE,
+    queue: CLASSIFY_QUEUE as never, // queue dropped in N6; module is deleted in Task 4
     job,
     subjectIds: job.documentVersionIds,
     open: (ids) => unclassified(db, ids, config),

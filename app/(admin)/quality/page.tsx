@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { z } from "zod";
-import { consolidationVersions, getConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { MetricKey } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { activeSubdivisionKeys, listSubdivisionOptions } from "@/lib/domain/subdivisions/store";
@@ -44,7 +44,7 @@ import {
   trClass,
   type Tone,
 } from "../_components/ui";
-import { activateCandidateAction, startEvaluationAction, startMeasurementAction, saveComparisonSelectionAction } from "./actions";
+import { activateCandidateAction, startMeasurementAction, saveComparisonSelectionAction } from "./actions";
 
 export const metadata: Metadata = { title: "Qualität" };
 
@@ -127,8 +127,6 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
   const evaluations = await listEvaluations(db, subdivision.key);
   const comparisons = new Map(await Promise.all(evaluations.map(async (e) => [e.runId, await compareEvaluation(db, e.runId)] as const)));
   const activeRules = await activeRulesVersion(db);
-  const ruleVersions = consolidationVersions();
-  const models = Object.keys(config.models.pricesEurPerMTok);
 
   const { candidates, size } = overview ?? { candidates: [], size: 0 };
   const target = dashboard.comparison.target;
@@ -397,40 +395,6 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
         description={`Eine neue Regelversion oder Extraktion wird am Vergleichssatz bewertet und nur aktiviert, wenn Präzision und Abdeckung nicht sinken und jeder geänderte Wert geprüft ist. Aktive Regelversion: ${activeRules}.`}
         className="mt-6"
       >
-        <form action={startEvaluationAction} className="flex flex-wrap items-end gap-3">
-          <input type="hidden" name="subdivisionKey" value={subdivision.key} />
-          <Field label="Regelversion">
-            <select name="rulesVersion" defaultValue="" className={inputClass}>
-              <option value="">unverändert</option>
-              {ruleVersions.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                  {v === activeRules ? " (aktiv)" : ""}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Modell (optional)">
-            <select name="model" defaultValue="" className={inputClass}>
-              <option value="">–</option>
-              {models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Prompt-Version (optional)">
-            <input type="number" name="promptVersion" min={1} step={1} className={cx(inputClass, "w-28")} />
-          </Field>
-          <Button>Bewertung starten</Button>
-        </form>
-        <p className="mt-2 text-xs text-muted">
-          „unverändert“ bewertet die aktiven Regeln ({activeRules}) und aktiviert keine Regelversion. Mit Modell und
-          Prompt-Version werden die vorhandenen Extraktionsläufe dieser Konfiguration bewertet; die Bewertung extrahiert
-          nichts neu.
-        </p>
-
         {evaluations.length === 0 ? (
           <EmptyState title="Noch keine Bewertung">Eine Bewertung schreibt Profile nur zur Ansicht, nie in die Lieferung.</EmptyState>
         ) : (

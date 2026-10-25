@@ -1,31 +1,13 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { withRollback } from "@/test/db";
 import { quietDay } from "@/test/external-calls";
 import { insertTestGeoObject, insertTestMention, type TestMention } from "@/test/text";
-import { MockModel } from "@/lib/ai/mock";
-import type { ExtractedFact, ExtractFactsInput } from "@/lib/ai/tasks/extract-facts";
-import type { ModelClient } from "@/lib/ai/types";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import {
-  chunks,
-  documents,
-  documentVersions,
-  extractionRuns,
-  extractionUnits,
-  facts,
-  mentions,
-  modelComparisonRatings,
-  modelComparisons,
-  modelComparisonUnits,
-  runs,
-  sources,
-  type DocType,
-} from "@/lib/db/schema";
-import { activeExtractionRun, mentionsExtractedBefore } from "@/lib/domain/extraction/active-run";
+import { chunks, documents, documentVersions, extractionRuns, facts, mentions, modelComparisonRatings, modelComparisons, modelComparisonUnits, runs, sources, type DocType } from "@/lib/db/schema";
 import {
   comparisonShortfall,
   compareRuns,
@@ -42,15 +24,7 @@ import {
   valuesAgree,
 } from "@/lib/domain/extraction/comparison";
 import { newId } from "@/lib/domain/ids";
-import { recordJobOutcome } from "@/lib/domain/runs";
-import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
-import { enqueueRunAdvance } from "@/lib/jobs/enqueue";
-import { BATCH_POLL_QUEUE, RUN_ADVANCE_QUEUE } from "@/lib/jobs/queues";
-import { pollBatch, type BatchDeps, type PollOptions } from "@/lib/pipeline/batches";
-import { enqueueStage } from "@/lib/pipeline/runs";
-import { CHECK_QUEUE, checkExtractionRun } from "@/lib/pipeline/text/check";
-import { EXTRACT_QUEUE, extractUnits } from "@/lib/pipeline/text/extract";
-import { MODEL_COMPARISON_STAGES, startModelComparisonRun } from "@/lib/pipeline/text/run";
+import { startModelComparisonRun } from "@/lib/pipeline/text/run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 
 /*
@@ -139,58 +113,6 @@ function recordingBoss() {
   return { boss, inserted };
 }
 
-/** A model client sending each batch to the mock of its model (`ctx.model`), as the provider would. */
-function modelRouter(byModel: Record<string, MockModel>): ModelClient {
-  const owner = new Map<string, MockModel>();
-  const of = (model: string | undefined) => {
-    const mock = model ? byModel[model] : undefined;
-    if (!mock) throw new Error(`no mock for model ${model}`);
-    return mock;
-  };
-  return {
-    call: (task, input, ctx) => of(ctx?.model).call(task, input, ctx),
-    async submitBatch(task, requests, ctx) {
-      const mock = of(ctx?.model);
-      const submitted = await mock.submitBatch(task, requests, ctx);
-      owner.set(submitted.batchId, mock);
-      return submitted;
-    },
-    collectBatch: (task, batchId) => owner.get(batchId)!.collectBatch(task, batchId),
-    cancelBatch: (batchId) => owner.get(batchId)!.cancelBatch(batchId),
-    listBatches: async (window) => (await Promise.all(Object.values(byModel).map((m) => m.listBatches(window)))).flat(),
-  };
-}
-
-const fact = (attribute: string, value: unknown, quote: string): ExtractedFact => ({
-  attribute,
-  value: JSON.stringify(value),
-  quote,
-  chunk: 1,
-  confidence: 0.8,
-  observed_at: null,
-  poi_name: null,
-});
-
-/** Executes every job of the run like the worker: stage jobs, `run.advance`, `ai.batch.poll`. */
-async function drive(tx: Db, rec: ReturnType<typeof recordingBoss>, model: ModelClient, runId: string, now: Date) {
-  const deps: BatchDeps = { model, boss: rec.boss, config, now: () => now, reservationScope: { runIds: [runId] } };
-  for (let i = 0; i < rec.inserted.length; i++) {
-    const { queue, data } = rec.inserted[i]!;
-    if (queue === RUN_ADVANCE_QUEUE) await enqueueStage(tx, rec.boss, String(data.runId), String(data.nextStage));
-    else if (queue === BATCH_POLL_QUEUE) await pollBatch(tx, { ...deps, handlers: BATCH_HANDLERS }, String(data.batchId), { n: data.n, mode: data.mode } as PollOptions);
-    else {
-      const job = data as { runId: string; stage: string; key: string; extractionRunId: string; unitIds: string[] };
-      if (queue === EXTRACT_QUEUE) await extractUnits(tx, deps, job);
-      else if (queue === CHECK_QUEUE) await checkExtractionRun(tx, job.extractionRunId, config);
-      else throw new Error(`no driver for queue ${queue}`);
-      const result = await recordJobOutcome(tx, job.runId, job.stage, job.key, "done");
-      if (result.nextStage) await enqueueRunAdvance(rec.boss, job.runId, result.nextStage, tx);
-    }
-  }
-  const [row] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, runId));
-  return row!.status;
-}
-
 /** A comparison with a finished run row and its two extraction runs, for facts written directly. */
 async function comparisonWithRuns(tx: Db) {
   const [run] = await tx.insert(runs).values({ kind: "stage", scopeType: "system", scopeId: "model-comparison", triggeredBy: "test", status: "finished" }).returning({ id: runs.id });
@@ -248,65 +170,6 @@ function failingUnitInsert(db: Db): Db {
 }
 
 describe("model comparison", () => {
-  it("a comparison run writes two extraction runs on the same units and leaves mention status alone", () =>
-    withRollback(async (tx) => {
-      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
-      const { versionIds, sourceIds } = await scene(tx, { sources: 2, types: ["trip_report", "pilot_guide"], perSource: 2 });
-      const { id: comparisonId, units } = await createModelComparison(tx, { label: "pilot", createdBy: "test", cfg: config, scope: { sourceIds } });
-      expect(units).toBe(4);
-      const rec = recordingBoss();
-      const seen: Record<string, number> = { [MODEL_A]: 0, [MODEL_B]: 0 };
-      const answer = (model: string, facts: (input: ExtractFactsInput) => ExtractedFact[]) =>
-        new MockModel({ "extract-facts": (input) => (seen[model]!++, { facts: facts(input as ExtractFactsInput) }) }, { batchIdPrefix: `mock-${model}-${newId()}-` });
-      const model = modelRouter({
-        [MODEL_A]: answer(MODEL_A, () => [fact("holding", "good", "Good holding in sand")]),
-        [MODEL_B]: answer(MODEL_B, () => [fact("holding", "moderate", "Good holding in sand"), fact("seabed", ["sand"], "holding in sand")]),
-      });
-      const { id: runId } = await startModelComparisonRun(tx, rec.boss, { comparisonId, triggeredBy: "test", now }, config);
-      expect(await drive(tx, rec, model, runId, now)).toBe("finished");
-
-      const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
-      expect(run).toMatchObject({ stages: [...MODEL_COMPARISON_STAGES], params: expect.objectContaining({ comparisonId, models: [MODEL_A, MODEL_B] }) });
-      const ers = await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, runId)).orderBy(extractionRuns.model);
-      expect(ers.map((e) => [e.model, e.purpose, e.status, e.comparisonId])).toEqual(
-        [MODEL_A, MODEL_B].sort().map((m) => [m, "comparison", "finished", comparisonId]),
-      );
-      const unitsOf = async (id: string) =>
-        (await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, id))).map((u) => `${u.documentVersionId}:${u.geoObjectId}:${u.part}`).sort();
-      expect(await unitsOf(ers[0]!.id)).toEqual(await unitsOf(ers[1]!.id));
-      expect((await unitsOf(ers[0]!.id)).length).toBe(4);
-      expect(seen).toEqual({ [MODEL_A]: 4, [MODEL_B]: 4 });
-      // no mention was claimed: all still pending for the regular extraction
-      const statuses = await tx.select({ s: mentions.extractionStatus }).from(mentions).where(inArray(mentions.documentVersionId, versionIds));
-      expect(statuses.map((s) => s.s)).toEqual(["pending", "pending", "pending", "pending"]);
-
-      const summary = await compareRuns(tx, comparisonId, config);
-      expect(summary.runs.map((r) => [r.model, r.units, r.facts])).toEqual([
-        [MODEL_A, 4, 4],
-        [MODEL_B, 4, 8],
-      ]);
-      expect(summary.agreement).toEqual({ same: 0, deviation: 4, onlyA: 0, onlyB: 4, pct: 0 });
-      // a second start is refused
-      await expect(startModelComparisonRun(tx, rec.boss, { comparisonId, triggeredBy: "test", now }, config)).rejects.toMatchObject({ reason: "comparison_started" });
-
-      // NOTE T19: while the decision is provisional no comparison run is active; once decided, the chosen model's is
-      const [unit] = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, ers[0]!.id)).limit(1);
-      const runOfModel = (m: string) => ers.find((e) => e.model === m)!.id;
-      const decide = (m: string, status: "provisional" | "decided"): AppConfig => {
-        const task = config.models.tasks["extract-facts"]!;
-        return {
-          ...config,
-          models: { ...config.models, tasks: { ...config.models.tasks, "extract-facts": { ...task, model: m, promptVersion: ers[0]!.promptVersion, decision: { status, note: "test" } } } },
-        };
-      };
-      expect(await activeExtractionRun(tx, unit!.documentVersionId, unit!.geoObjectId, decide(MODEL_A, "provisional"))).toBeNull();
-      expect(await activeExtractionRun(tx, unit!.documentVersionId, unit!.geoObjectId, decide(MODEL_B, "decided"))).toEqual({ id: runOfModel(MODEL_B) });
-      expect(await activeExtractionRun(tx, unit!.documentVersionId, unit!.geoObjectId, decide(MODEL_A, "decided"))).toEqual({ id: runOfModel(MODEL_A) });
-      // NOTE T19, second half: once decided, a regular run does not pay again for the mentions the chosen run extracted
-      const compared = (await tx.select({ m: mentions.id }).from(mentions).where(inArray(mentions.documentVersionId, versionIds))).map((r) => r.m).sort();
-      expect(await mentionsExtractedBefore(tx, compared, decide(MODEL_A, "provisional"))).toEqual([]);
-      expect(await mentionsExtractedBefore(tx, compared, decide(MODEL_B, "decided"))).toEqual(compared);
-    }));
 
   it("the sample spreads 200 units over doc types and sources", () =>
     withRollback(async (tx) => {

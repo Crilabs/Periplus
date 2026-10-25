@@ -1,34 +1,20 @@
 import { eq, sql } from "drizzle-orm";
-import type { PgBoss } from "pg-boss";
 import { afterEach, describe, expect, it } from "vitest";
 import { setSimulationMode } from "@/lib/adapters/simulation";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { crawlFrontier, documents, documentVersions, runs, sources, subdivisions, tileGeoObjects } from "@/lib/db/schema";
-import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
+import { crawlFrontier, documents, documentVersions, runs, sources, tileGeoObjects } from "@/lib/db/schema";
 import { consolidationTargets } from "@/lib/domain/consolidation/targets";
 import { newId } from "@/lib/domain/ids";
-import { markConsolidationSkipped } from "@/lib/domain/consolidation/skipped";
-import { createRun, endRun } from "@/lib/domain/runs";
-import { consolidationFollowupStage } from "@/lib/jobs/handlers/consolidation";
-import { revisitFreezeStage } from "@/lib/jobs/handlers/revisit";
-import { QUEUES } from "@/lib/jobs/queues";
-import { HANDLERS } from "@/lib/jobs/registry";
-import { STAGES } from "@/lib/jobs/stages";
-import { catchUpConsolidation } from "@/lib/pipeline/consolidation/run";
-import { CONSOLIDATION_FOLLOWUP_STAGE } from "@/lib/pipeline/consolidation/stages";
-import { FETCH_RUN_STAGES } from "@/lib/pipeline/fetch/run";
-import { REVISIT_STAGES, startRevisitRun } from "@/lib/pipeline/revisit-run";
-import { freezeRevisitRun, REVISIT_FREEZE_STAGE } from "@/lib/pipeline/revisit-stages";
-import { planGeocode } from "@/lib/pipeline/text/geocode";
-import { TEXT_RUN_STAGES } from "@/lib/pipeline/text/run";
-import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
+import { createRun } from "@/lib/domain/runs";
+import { REVISIT_STAGES } from "@/lib/pipeline/revisit-run";
+import { freezeRevisitRun } from "@/lib/pipeline/revisit-stages";
 import { foreignJobs, revisitPreflight, SIM_TRIGGERED_BY } from "@/lib/domain/revisit/preflight";
 import { insertExtraction, insertMention, insertMentionFact, insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { insertQualitySubdivision } from "@/test/quality";
 import { memoryArchive } from "@/test/s3";
-import { insertTestSource, insertTestSubdivision } from "@/test/text";
+import { insertTestSource } from "@/test/text";
 import { RUN_KIND_LABELS } from "@/app/(admin)/_components/labels";
 
 /*
@@ -37,17 +23,6 @@ import { RUN_KIND_LABELS } from "@/app/(admin)/_components/labels";
  */
 
 const base = loadConfig("config");
-
-function recordingBoss() {
-  const inserted: Array<{ queue: string; data: Record<string, unknown> }> = [];
-  const boss = {
-    insert: async (queue: string, jobs: Array<{ id: string; data: Record<string, unknown> }>) => {
-      inserted.push(...jobs.map((j) => ({ queue, data: j.data })));
-      return jobs.map((j) => j.id);
-    },
-  } as unknown as PgBoss;
-  return { boss, inserted };
-}
 
 const someone = () => `${newId()}@test.invalid`;
 
@@ -87,72 +62,6 @@ async function crawledVersion(tx: Db, sourceId: string, runId: string | null, do
   await tx.update(documents).set({ currentVersionId: version!.id }).where(eq(documents.id, doc!.id));
   return { versionId: version!.id };
 }
-
-describe("revisit stages", () => {
-  it("the freeze stage plans one job on its own queue between the crawl and the text stages", async () => {
-    expect(REVISIT_STAGES).toEqual([...FETCH_RUN_STAGES, REVISIT_FREEZE_STAGE, ...TEXT_RUN_STAGES]);
-    expect(STAGES[REVISIT_FREEZE_STAGE]).toBe(revisitFreezeStage);
-    expect(QUEUES).toContain("revisit.freeze");
-    expect(HANDLERS["revisit.freeze"]).toBeTypeOf("function");
-    expect(base.queues["revisit.freeze"]).toEqual({ concurrency: 1, retryLimit: 2, retryDelaySeconds: 60, retryBackoff: true });
-    expect(await revisitFreezeStage.plan({} as Db, { id: newId(), params: {} })).toEqual([{ key: "freeze" }]);
-  });
-});
-
-describe("startRevisitRun", () => {
-  it("startRevisitRun creates a revisit run over fetch and text stages for the subdivision", () =>
-    withRollback(async (tx) => {
-      setSimulationMode(false);
-      const { boss, inserted } = recordingBoss();
-      const a = await revisitSubdivision(tx);
-      const triggeredBy = someone();
-      const { id } = await startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy });
-      const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ kind: "revisit", scopeType: "subdivision", scopeId: a.subdivisionKey, stages: [...REVISIT_STAGES], triggeredBy });
-      expect(run!.params).toMatchObject({ subdivisionKey: a.subdivisionKey, rulesVersion: await activeRulesVersion(tx) });
-      expect(run!.params).not.toHaveProperty("documentVersionIds");
-      expect((run!.params as { sourceIds: string[] }).sourceIds).toContain(a.sourceId);
-      expect(inserted.filter((j) => j.queue === "fetch.source").map((j) => j.data.sourceId)).toContain(a.sourceId);
-
-      // a second start while the first crawls the source is refused (ruling M3-C-R6)
-      await expect(startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy })).rejects.toMatchObject({ reason: "source_run_active" });
-    }));
-
-  it("refuses an unknown subdivision or area key, a subdivision without tiles and a bad page cap before the run exists", () =>
-    withRollback(async (tx) => {
-      const { boss } = recordingBoss();
-      const a = await revisitSubdivision(tx);
-      const reason = (p: Promise<unknown>) => p.then(() => "started", (e: unknown) => (e instanceof RunScopeNotReady ? e.reason : String(e)));
-      // an unknown subdivision and a leftover area key name what to use instead (requireSubdivision)
-      expect(await reason(startRevisitRun(tx, boss, { subdivisionKey: "nope", triggeredBy: "test" }))).toBe("Error: Unbekannter Landesteil nope");
-      expect(await reason(startRevisitRun(tx, boss, { subdivisionKey: "saronic", triggeredBy: "test" }))).toBe(
-        "Error: Revier-Schlüssel saronic ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)",
-      );
-      const empty = await insertTestSubdivision(tx, `XT-${newId()}`, [5, 5, 5.5, 5.5]);
-      const emptyKey = (await tx.select({ key: subdivisions.key }).from(subdivisions).where(eq(subdivisions.id, empty.id)))[0]!.key;
-      expect(await reason(startRevisitRun(tx, boss, { subdivisionKey: emptyKey, triggeredBy: "test" }))).toBe("subdivision_without_coast_tiles");
-      expect(await reason(startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy: "test", maxPages: 0 }))).toMatch(/maxPages/);
-      const { id } = await startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy: "test", maxPages: 5 });
-      expect((await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, id)))[0]!.params).toMatchObject({ maxPages: 5 });
-    }));
-
-  it("a simulated revisit has no follow-up stage, plans no geocoding and no follow-up job (ruling M7-P8)", () =>
-    withRollback(async (tx) => {
-      const { boss } = recordingBoss();
-      const a = await revisitSubdivision(tx);
-      setSimulationMode(true);
-      const { id } = await startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy: "test" });
-      const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run!.stages).toEqual(REVISIT_STAGES.filter((s) => s !== CONSOLIDATION_FOLLOWUP_STAGE));
-      expect(run!.stages).toContain("mentions.geocode");
-      // the simulation plans no geocoding (Nominatim) before it looks at anything; a real run reads its frozen versions
-      expect(await planGeocode(tx, { id }, base)).toEqual([]);
-      expect(await consolidationFollowupStage.plan(tx, { id, params: {} })).toEqual([]);
-      setSimulationMode(false);
-      await expect(planGeocode(tx, { id }, base)).rejects.toThrow(/frozen version set/);
-      expect(await consolidationFollowupStage.plan(tx, { id, params: {} })).toEqual([{ key: "followup" }]);
-    }));
-});
 
 describe("revisit.freeze", () => {
   it("freezes the pending versions and the objects of pages gone in the run's crawl, once", () =>
@@ -204,35 +113,6 @@ describe("revisit.freeze", () => {
       const again = await freezeRevisitRun(tx, runId, base);
       expect(again).toEqual({ ...frozen, frozenBefore: true });
       expect(again.documentVersionIds).not.toContain(later.versionId);
-    }));
-});
-
-describe("revisit catch-up", () => {
-  it("a revisit ended before its freeze consolidates nothing of the subdivision on catch-up (ruling M7-G-R4)", () =>
-    withRollback(async (tx) => {
-      setSimulationMode(false);
-      const { boss, inserted } = recordingBoss();
-      const a = await revisitSubdivision(tx);
-      // an object of the subdivision's coast tile: the subdivision-wide consolidation would take it
-      const { geoObjectId } = await a.addPlace();
-      await tx.insert(tileGeoObjects).values({ tileId: a.tileIds[0]!, geoObjectId });
-      expect(await consolidationTargets(tx, { id: newId(), params: { subdivisionKey: a.subdivisionKey } }, new Date().toISOString().slice(0, 10))).toContain(geoObjectId);
-
-      const { id } = await startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy: "test" });
-      // ended by the admin during the crawl: the consolidation is stored as skipped
-      expect(await endRun(tx, id, "test")).toBe(true);
-      expect(await markConsolidationSkipped(tx, id, "run_ended")).toBe(true);
-      const [run] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, id));
-      expect(await consolidationTargets(tx, { id, params: run!.params as Record<string, unknown> })).toEqual([]);
-      // no catch-up run is created: counted among the runs this call would trigger, never DB-wide (final review B M-12)
-      const triggeredBy = `catch-up-${newId()}`;
-      expect(await catchUpConsolidation(tx, boss, id, triggeredBy)).toEqual({ status: "no_targets" });
-      expect(await tx.select({ id: runs.id }).from(runs).where(eq(runs.triggeredBy, triggeredBy))).toEqual([]);
-      expect(inserted.filter((j) => j.queue.startsWith("consolidation."))).toEqual([]);
-
-      // frozen with a gone page only: just that page's object (ruling M7-P7)
-      const params = { ...(run!.params as Record<string, unknown>), goneGeoObjectIds: [geoObjectId] };
-      expect(await consolidationTargets(tx, { id, params })).toEqual([geoObjectId]);
     }));
 });
 

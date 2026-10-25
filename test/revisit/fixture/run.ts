@@ -110,7 +110,7 @@ export async function drive(
           // the worker's fetch.url wiring in a simulation, shared (every page from the scenario, no converter service or renderer)
           ...simulatedFetchDeps(createSimulatedFetcher(requireScenario(scenario, runId)), cfg),
           archive,
-          enqueue: (t, jobs) => enqueueStageJobs(rec.boss, "fetch.url", runId, FETCH_URL_STAGE, jobs, t),
+          enqueue: (t, jobs) => enqueueStageJobs(rec.boss, "fetch.url" as never, runId, FETCH_URL_STAGE, jobs, t),
           now: () => new Date(`${day}T06:00:00Z`),
         },
         { db: tx, runId, stage: job.stage, sourceId: job.sourceId as string },

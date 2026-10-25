@@ -84,20 +84,12 @@ const queueConfig = {
   "gazetteer.build": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "gazetteer.coarse": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "subdivisions.build": { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
-  "mentions.reread": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "seed.tile": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "places.website": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "places.website.freeze": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "datasets.import": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "areas.import": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "geometry.compute": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "geometry.detect_bays": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "discovery.area": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "discovery.tile": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "discovery.propose": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "discovery.place": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "fetch.source": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "fetch.url": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "research.search": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "research.fetch": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "research.assess": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
@@ -109,25 +101,10 @@ const queueConfig = {
   "research.state_facts": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "research.landside_search": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "research.landside_extract": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "embed.chunks": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "sources.wikivoyage": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "compare.converters": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "ai.batch.poll": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "classify.document_version": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "mentions.batch": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "mentions.disambiguate": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "mentions.geocode": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "extraction.mention": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "extraction.route": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "extraction.check": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "consolidation.geo": { concurrency: 4, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "consolidation.highlights": { concurrency: 4, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "consolidation.summary": { concurrency: 2, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "consolidation.followup": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "images.place": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "delivery.build": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "quality.measure": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
-  "revisit.freeze": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 
@@ -677,7 +654,7 @@ describe("worker", () => {
     const { id } = await createRun(db, { kind: "system", scope: scope(), stages: ["ping"], params: {}, triggeredBy: "test" });
     await beginStage(db, id, "ping", 3);
     expect(await enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "a" }, { key: "b" }])).toBe(2);
-    // One known job and one new one, in the caller's transaction (as fetch.url extends its stage by the count).
+    // One known job and one new one, in the caller's transaction (as a crawl stage extended its stage by the count).
     const added = await db.transaction((tx) => enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "b" }, { key: "c" }], tx));
     expect(added).toBe(1);
 
@@ -800,10 +777,21 @@ describe("worker", () => {
   }, 30_000);
 
   it("a queue's expiry from the config is applied", async () => {
-    const before = await boss.getQueue("fetch.url");
-    await ensureQueues(boss, { ...queueConfig, "fetch.url": { ...queueConfig["fetch.url"], expireInSeconds: 3600 } });
-    expect(await boss.getQueue("fetch.url")).toMatchObject({ expireInSeconds: 3600 });
-    await ensureQueues(boss, { ...queueConfig, "fetch.url": { ...queueConfig["fetch.url"], expireInSeconds: before!.expireInSeconds } });
+    const before = await boss.getQueue("research.fetch");
+    await ensureQueues(boss, { ...queueConfig, "research.fetch": { ...queueConfig["research.fetch"], expireInSeconds: 3600 } });
+    expect(await boss.getQueue("research.fetch")).toMatchObject({ expireInSeconds: 3600 });
+    await ensureQueues(boss, { ...queueConfig, "research.fetch": { ...queueConfig["research.fetch"], expireInSeconds: before!.expireInSeconds } });
+  });
+
+  it("a pg-boss queue of a removed stage with waiting jobs neither blocks ensureQueues nor is worked (N6)", async () => {
+    const old = "consolidation.geo";
+    if (!(await boss.getQueue(old))) await boss.createQueue(old);
+    const id = await boss.send(old, { key: `old-${newId()}` });
+    await ensureQueues(boss, queueConfig);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect((await boss.getJobById(old, id!))?.state).toBe("created");
+    await boss.deleteAllJobs(old);
+    await boss.deleteQueue(old);
   });
 
   it("the dead-letter queue gets explicit retry settings", async () => {

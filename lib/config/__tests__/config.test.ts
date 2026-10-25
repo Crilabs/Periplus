@@ -139,8 +139,8 @@ describe("loadConfig", () => {
   it("loads the repo config", () => {
     const c = loadConfig("config");
     expect(c.queues["system.ping"].retryLimit).toBe(2);
-    // A crawled PDF is transcribed page by page in one job: it must not expire after pg-boss's default 15 minutes.
-    expect(c.queues["fetch.url"].expireInSeconds).toBeGreaterThanOrEqual(3600);
+    // A fetched page may be a PDF transcribed page by page in one job: it must not expire after pg-boss's default 15 minutes.
+    expect(c.queues["research.fetch"].expireInSeconds).toBeGreaterThanOrEqual(1800);
     // A package build holds its area lock and two pool connections; it must not expire and be retried meanwhile.
     expect(c.queues["delivery.build"].expireInSeconds).toBe(3600);
     expect(c.budgets.anthropic.dailyEur).toBeGreaterThan(0);

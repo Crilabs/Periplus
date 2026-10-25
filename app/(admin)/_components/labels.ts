@@ -598,8 +598,7 @@ export const VERSION_NOTE_LABELS: Record<VersionNote, string> = {
 
 /** Notices of the profile tab (`?notice=`) after „Eintrag entfernen“. */
 export const PROFILE_NOTICE_LABELS: Record<string, string> = {
-  entry_removed: "Eintrag entfernt. Das Profil wird neu berechnet.",
-  entry_removed_no_run: "Eintrag entfernt. Der Folgelauf konnte nicht gestartet werden – bitte „Profil neu berechnen“.",
+  entry_removed: "Eintrag entfernt.",
   changed: "Das Profil hat sich geändert – bitte neu laden.",
   error: "Der Eintrag kann nicht entfernt werden.",
 };

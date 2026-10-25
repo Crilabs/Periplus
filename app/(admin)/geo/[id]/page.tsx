@@ -22,7 +22,6 @@ import { MentionsPanel } from "../../_components/mentions-panel";
 import { MiniMap } from "../../_components/mini-map";
 import {
   Badge,
-  Button,
   DescriptionList,
   EmptyState,
   Mono,
@@ -37,7 +36,6 @@ import {
   cx,
 } from "../../_components/ui";
 import { Dialog } from "../../_components/dialog";
-import { recomputeGeoProfileAction } from "../../places/[id]/actions";
 import { FactsTab } from "../../places/[id]/facts-tab";
 import { ProfileTab } from "../../places/[id]/profile-tab";
 
@@ -137,16 +135,6 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
           </>
         }
         description="Ein Geo-Objekt mit Namen, Hierarchie, Erwähnungen in Dokumenten, den Facts daraus und dem Profil."
-        actions={
-          active && (
-            <form action={recomputeGeoProfileAction}>
-              <input type="hidden" name="geoObjectId" value={o.id} />
-              <Button title="Startet einen Konsolidierungslauf für dieses Geo-Objekt: das Profil wird aus den aktuellen Facts neu gebildet.">
-                Profil neu berechnen
-              </Button>
-            </form>
-          )
-        }
       />
       {error && (
         <Notice tone="danger" className="mb-6">

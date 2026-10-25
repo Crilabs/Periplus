@@ -67,7 +67,7 @@ describe("converter comparison page", () => {
       const { sampleId, url } = await insertSample(tx);
       const list = await render();
       expect(list).toContain("Vorläufig");
-      expect(list).toContain(">Vergleich starten<");
+      expect(list).not.toContain(">Vergleich starten<");
       expect(list).toMatch(/0 von 50<\/strong> bewertet/);
       expect(list).toContain(`href="/compare/converters?sample=${sampleId}"`);
       expect(list).not.toContain("Seitenansicht");

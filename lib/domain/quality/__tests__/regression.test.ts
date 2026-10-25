@@ -7,20 +7,10 @@ import { getConfig, loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { comparisonResults, comparisonSet, configActivations, evaluationProfiles, profiles, runs, type ComparisonAttribute, type ComparisonResultValue } from "@/lib/db/schema";
 import { activeRulesVersion, consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
-import { markConsolidationSkipped } from "@/lib/domain/consolidation/skipped";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
-import type { ModelClient } from "@/lib/ai/types";
-import { setModelClientFactory } from "@/lib/jobs/handlers/ai-batch";
-import { consolidationSummaryHandler } from "@/lib/jobs/handlers/consolidation";
-import type { JobContext } from "@/lib/jobs/worker";
-import { createLogger } from "@/lib/logger";
-import { requestPlaceDiscovery } from "@/lib/pipeline/consolidation/followup";
-import { summaryJobs } from "@/lib/pipeline/consolidation/summary";
-import { startTextRun } from "@/lib/pipeline/text/run";
 import { createRun } from "@/lib/domain/runs";
 import { CONSOLIDATION_GEO_STAGE } from "@/lib/pipeline/consolidation/stages";
-import { consolidateGeoJob, consolidationGeoJobs } from "@/lib/pipeline/consolidation/geo";
-import { catchUpConsolidation, startConsolidationRun } from "@/lib/pipeline/consolidation/run";
+import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { startEvaluation } from "@/lib/pipeline/quality-run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { insertExtraction, insertMention, insertMentionFact, insertProfile, insertSource } from "@/test/consolidation";
@@ -302,22 +292,6 @@ describe("compareEvaluation and activateCandidate", () => {
 const runParams = async (tx: Db, id: string) => (await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, id)))[0]!.params as Record<string, unknown>;
 
 describe("activeRulesVersion (ruling M7-P10)", () => {
-  it("a consolidation run without explicit version uses the activated rules version", () =>
-    withRollback(async (tx) => {
-      const { runId, places } = await scene(tx);
-      const rec = recordingBoss();
-      const before = await startConsolidationRun(tx, rec.boss, { scope: { geoObjectIds: [places[0]!.geoObjectId] }, triggeredBy: "test" });
-      expect((await runParams(tx, before.id)).rulesVersion).toBe(ACTIVE_RULES);
-      await activateCandidate(tx, { evaluationRunId: runId, activatedBy: "a" });
-      const after = await startConsolidationRun(tx, rec.boss, { scope: { geoObjectIds: [places[0]!.geoObjectId] }, triggeredBy: "test" });
-      expect((await runParams(tx, after.id)).rulesVersion).toBe("v80");
-      expect(rec.inserted.filter((j) => j.queue === "consolidation.geo").map((j) => j.data.rulesVersion)).toEqual([ACTIVE_RULES, "v80"]);
-      // a consolidation without a version (a place merge) takes the active one
-      const result = await consolidateGeo(tx, places[1]!.geoObjectId);
-      expect(result.status).toBe("created");
-      const [profile] = await tx.select({ rulesVersion: profiles.rulesVersion }).from(profiles).where(eq(profiles.geoObjectId, places[1]!.geoObjectId)).orderBy(sql`version desc`).limit(1);
-      expect(profile!.rulesVersion).toBe("v80");
-    }));
 
   it("an activated version without config file falls back to active.json", () =>
     withRollback(async (tx) => {
@@ -363,30 +337,6 @@ describe("extraction candidates (ruling M7-P11)", () => {
     await insertMentionFact(tx, place.geoObjectId, m, candidateRun, { value: "poor" });
     return { ...sub, place };
   }
-  const evaluated = async (tx: Db, runId: string, geoObjectId: string) =>
-    (await tx.select().from(evaluationProfiles).where(eq(evaluationProfiles.runId, runId))).find((e) => e.geoObjectId === geoObjectId)!.attributes;
-
-  it("an extraction candidate evaluation uses facts of the candidate extraction runs only", () =>
-    withRollback(async (tx) => {
-      const { subdivisionKey, place } = await candidateScene(tx);
-      const rec = recordingBoss();
-      const { id } = await startEvaluation(tx, rec.boss, { subdivisionKey, candidate: { extraction: OPUS }, triggeredBy: "test" });
-      const params = await runParams(tx, id);
-      expect(params).toMatchObject({ evaluation: true, comparisonSetSubdivision: subdivisionKey, rulesVersion: ACTIVE_RULES, extraction: OPUS, candidate: { extraction: OPUS } });
-      expect(params.candidate).not.toHaveProperty("rulesVersion");
-      const jobs = await consolidationGeoJobs(tx, { id, params });
-      expect(jobs).toEqual([expect.objectContaining({ geoObjectId: place.geoObjectId, mode: "evaluation", rulesVersion: ACTIVE_RULES, extraction: OPUS })]);
-      for (const job of jobs) await consolidateGeoJob(tx, { ...job, runId: id });
-      expect(await evaluated(tx, id, place.geoObjectId)).toMatchObject({ holding: "poor" });
-
-      // the same set without a candidate extraction: the active run's facts
-      const rules = await startEvaluation(tx, rec.boss, { subdivisionKey, candidate: { rulesVersion: ACTIVE_RULES }, triggeredBy: "test" });
-      await consolidateGeo(tx, place.geoObjectId, { runId: rules.id, mode: "evaluation", rulesVersion: ACTIVE_RULES });
-      expect(await evaluated(tx, rules.id, place.geoObjectId)).toMatchObject({ holding: "good" });
-      expect((await runParams(tx, rules.id)).candidate).toEqual({ rulesVersion: ACTIVE_RULES });
-      // nothing reached the profiles
-      expect(await tx.select().from(profiles).where(eq(profiles.geoObjectId, place.geoObjectId))).toEqual([]);
-    }));
 
   it("the extraction override is refused outside evaluation mode", () =>
     withRollback(async (tx) => {
@@ -415,77 +365,6 @@ describe("extraction candidates (ruling M7-P11)", () => {
 });
 
 describe("frozen rules version (ruling M7-E-R1)", () => {
-  /** Activates v2 as a deliberate activation would (a row in config_activations). */
-  async function activateV2(tx: Db, subdivisionKey: string) {
-    const evaluationRunId = await evaluationRunRow(tx, subdivisionKey, { rulesVersion: "v80", candidate: { rulesVersion: "v80" } });
-    await tx.insert(configActivations).values({ kind: "consolidation_rules", version: "v80", evaluationRunId, comparison: {}, activatedBy: "test", activatedAt: sql`clock_timestamp()` });
-    expect(await activeRulesVersion(tx)).toBe("v80");
-  }
-
-  /** A text run started under v1 whose extraction run holds a verified fact of a set place (its consolidation target). */
-  async function textRunScene(tx: Db, rec: ReturnType<typeof recordingBoss>) {
-    const sub = await insertQualitySubdivision(tx, [{ lon: 21.01, lat: 35.2 }]);
-    const place = await sub.addPlace();
-    const run = await startTextRun(tx, rec.boss, { documentVersionIds: [], triggeredBy: "test" });
-    const m = await insertMention(tx, place.geoObjectId, { sourceId: await insertSource(tx) });
-    await insertMentionFact(tx, place.geoObjectId, m, await insertExtraction(tx, place.geoObjectId, m, { runId: run.id }));
-    return { ...sub, place, runId: run.id };
-  }
-
-  /** A model client that fails every call: a summary that gets as far as the model has read its rules already. */
-  const noModel = { call: async () => { throw new Error("no model call in this test"); } } as unknown as ModelClient;
-  const ctx = (tx: Db): JobContext => ({ db: tx, boss: recordingBoss().boss, log: createLogger("test"), jobId: "job" });
-
-  it("a text run started before an activation keeps the old version on their geo, summary and follow-up jobs", () =>
-    withRollback(async (tx) => {
-      const rec = recordingBoss();
-      const text = await textRunScene(tx, rec);
-      expect((await runParams(tx, text.runId)).rulesVersion).toBe(ACTIVE_RULES);
-      await activateV2(tx, text.subdivisionKey);
-
-      for (const id of [text.runId]) {
-        const run = { id, params: await runParams(tx, id) };
-        const geoJobs = await consolidationGeoJobs(tx, run);
-        expect(geoJobs.length).toBeGreaterThan(0);
-        expect(geoJobs.every((j) => j.rulesVersion === ACTIVE_RULES)).toBe(true);
-        for (const job of geoJobs) await consolidateGeoJob(tx, { ...job, runId: id });
-      }
-      const [profile] = await tx.select({ rulesVersion: profiles.rulesVersion }).from(profiles).where(eq(profiles.runId, text.runId));
-      expect(profile!.rulesVersion).toBe(ACTIVE_RULES);
-
-      // the summary job carries the run's version and the summary reads those rules, not the active ones
-      const textRun = { id: text.runId, params: await runParams(tx, text.runId) };
-      const [summaryJob] = await summaryJobs(tx, textRun);
-      expect(summaryJob).toMatchObject({ geoObjectId: text.place.geoObjectId, rulesVersion: ACTIVE_RULES });
-      setModelClientFactory(() => noModel);
-      try {
-        configReads.length = 0;
-        await expect(consolidationSummaryHandler({ ...summaryJob!, runId: text.runId }, ctx(tx))).rejects.toThrow("no model call in this test");
-        expect(configReads).toEqual([ACTIVE_RULES]);
-      } finally {
-        setModelClientFactory(undefined);
-      }
-
-      // the follow-up reads the run's rules too
-      configReads.length = 0;
-      await requestPlaceDiscovery(tx, rec.boss, text.runId);
-      expect(configReads).toContain(ACTIVE_RULES);
-      expect(configReads).not.toContain("v80");
-    }));
-
-  it("a catch-up consolidates with the rules version of the run it catches up", () =>
-    withRollback(async (tx) => {
-      const rec = recordingBoss();
-      const text = await textRunScene(tx, rec);
-      await activateV2(tx, text.subdivisionKey);
-      await markConsolidationSkipped(tx, text.runId, "run_ended");
-      const result = await catchUpConsolidation(tx, rec.boss, text.runId, "test");
-      expect(result.status).toBe("started");
-      const catchUp = (result as { consolidationRunId: string }).consolidationRunId;
-      expect(await runParams(tx, catchUp)).toMatchObject({ geoObjectIds: [text.place.geoObjectId], rulesVersion: ACTIVE_RULES });
-      expect(rec.inserted.filter((j) => j.queue === "consolidation.geo" && j.data.runId === catchUp).map((j) => j.data.rulesVersion)).toEqual([ACTIVE_RULES]);
-    }));
-
   it("consolidationConfigFor refuses a rules version that is not a string", () =>
     withRollback(async (tx) => {
       await expect(consolidationConfigFor(tx, 2)).rejects.toThrow(/rules version must be a string/);

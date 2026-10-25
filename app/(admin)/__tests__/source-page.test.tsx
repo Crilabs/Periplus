@@ -41,13 +41,13 @@ beforeEach(() => {
 });
 
 describe("source page", () => {
-  it("an approved source can be saved, crawled and take uploads; any stored weight submits", () =>
+  it("an approved source can be saved; any stored weight submits", () =>
     withRollback(async (tx) => {
       currentDb = tx;
       const html = await render((await insertSource(tx, "approved")).id);
       expect(html).toContain(">Speichern<");
-      expect(html).toContain(">Crawlen<");
-      expect(html).toContain("Hochladen und archivieren");
+      expect(html).not.toContain(">Crawlen<");
+      expect(html).not.toContain("Hochladen und archivieren");
       // A step of 0.05 would make the browser refuse the whole form for the stored 0.72.
       expect(html).toMatch(/<input type="number"[^>]*step="any"[^>]*name="weight" value="0.72"/);
       expect(html).not.toMatch(/<fieldset disabled/);
@@ -61,16 +61,14 @@ describe("source page", () => {
       expect(html).not.toContain(">Speichern<");
       expect(html).not.toContain(">Crawlen<");
       expect(html).not.toContain(">Pausieren<");
-      expect(html).not.toContain("Hochladen und archivieren");
       expect(html).toMatch(/<fieldset disabled=""/);
     }));
 
-  it("a paused source takes uploads (ruling M3-E-R2), a rejected one does not", () =>
+  it("a paused source can be continued, a rejected one has no upload", () =>
     withRollback(async (tx) => {
       currentDb = tx;
       const html = await render((await insertSource(tx, "paused")).id);
       expect(html).toContain(">Fortsetzen<");
-      expect(html).toContain("Hochladen und archivieren");
       expect(await render((await insertSource(tx, "rejected")).id)).not.toContain("Hochladen und archivieren");
     }));
 
@@ -85,11 +83,7 @@ describe("source page", () => {
       for (const [status, validTo] of [["proposed", null], ["rejected", null], ["approved", "2026-01-01"]] as const) {
         expect(await render((await insertSource(tx, status, validTo)).id)).not.toContain("Quelle beenden");
       }
-      const run = "01a15602-0000-7000-8000-000000000001";
-      const notice = await render(approved.id, { ended: "3", run });
-      expect(notice).toContain("3 Objekte werden neu konsolidiert.");
-      expect(notice).toContain(`href="/runs/${run}"`);
-      expect(await render(approved.id, { ended: "3", endedNoRun: "1" })).toContain("ist nicht gestartet");
+      expect(await render(approved.id, { ended: "3" })).toContain("3 Objekte hatten Facts aus ihr.");
       expect(await render(approved.id, { ended: "0" })).toContain("Kein Objekt hatte Facts aus ihr.");
     }));
 

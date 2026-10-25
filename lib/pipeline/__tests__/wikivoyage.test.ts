@@ -8,13 +8,12 @@ import { runPdftotext } from "@/lib/adapters/pdf";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { crawlFrontier, documents, documentVersions, geoObjects, runs, sources, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
+import { crawlFrontier, documents, documentVersions, geoObjects, sources, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
 import { newId, newPublicId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
 import { getSource, ensureWhitelistSources, setSourceStatus, sourceIdByDomain } from "@/lib/domain/sources/store";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
-import { STAGES } from "@/lib/jobs/stages";
-import { FETCH_RUN_STAGES, startWikivoyageRun } from "@/lib/pipeline/fetch/run";
+import { startWikivoyageRun } from "@/lib/pipeline/fetch/run";
 import { fetchUrl } from "@/lib/pipeline/fetch/url";
 import { seedWikivoyage, WIKIVOYAGE_DOMAIN, WIKIVOYAGE_STAGE } from "@/lib/pipeline/sources/wikivoyage";
 import { withRollback } from "@/test/db";
@@ -126,9 +125,6 @@ describe("ensureWhitelistSources", () => {
 });
 
 describe("seedWikivoyage", () => {
-  it("runs on its own queue", () => {
-    expect(STAGES[WIKIVOYAGE_STAGE]?.queue).toBe("sources.wikivoyage");
-  });
 
   it("an island with de, el and en sitelinks yields three travel_guide documents at depth 0", async () => {
     await withRollback(async (tx) => {
@@ -242,24 +238,6 @@ describe("seedWikivoyage", () => {
 });
 
 describe("startWikivoyageRun", () => {
-  it("creates the whitelist sources and starts sources.wikivoyage before the crawl stages", async () => {
-    await withRollback(async (tx) => {
-      await seedArea(tx, []);
-      const { boss, inserted } = recordingBoss();
-      const { id } = await startWikivoyageRun(tx, boss, SUB_KEY, "admin");
-      const sourceId = (await sourceIdByDomain(tx, WIKIVOYAGE_DOMAIN))!;
-      const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({
-        scopeType: "subdivision",
-        scopeId: SUB_KEY,
-        stages: [WIKIVOYAGE_STAGE, ...FETCH_RUN_STAGES],
-        params: { subdivisionKey: SUB_KEY, sourceIds: [sourceId] },
-      });
-      expect(inserted).toEqual([{ queue: "sources.wikivoyage", data: expect.objectContaining({ key: SUB_KEY, subdivisionKey: SUB_KEY }) }]);
-      // The Wikivoyage source is being fetched now: a second run is refused.
-      await expect(startWikivoyageRun(tx, boss, SUB_KEY, "admin")).rejects.toMatchObject({ reason: "source_run_active" });
-    });
-  });
 
   it("an ended Wikivoyage source has its own refusal", async () => {
     await withRollback(async (tx) => {

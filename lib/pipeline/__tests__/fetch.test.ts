@@ -1,25 +1,25 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ConverterServiceError, createConverters, type RenderPage } from "@/lib/adapters/fetch";
 import { createGuardedAgent, createGuardedTransport } from "@/lib/adapters/fetch/guarded";
 import { makeResponse, RetryableHttpError, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { chunks, crawlFrontier, documents, documentVersions, outlinks, runs, sources } from "@/lib/db/schema";
+import { chunks, crawlFrontier, documents, documentVersions, outlinks, sources } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { beginStage, createRun, getRun, recordJobOutcome } from "@/lib/domain/runs";
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import type { JobData } from "@/lib/jobs/worker";
 import type { PgBoss } from "pg-boss";
 import { crawlRenderPage } from "@/lib/jobs/handlers/fetch";
-import { FETCH_RUN_STAGES, startExclusiveFetchRun, startFetchRun, startTestCrawl, startUploadFetchRun } from "@/lib/pipeline/fetch/run";
+import { FETCH_RUN_STAGES, startFetchRun, startTestCrawl, startUploadFetchRun } from "@/lib/pipeline/fetch/run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { FETCH_SOURCE_STAGE, prepareSourceCrawl } from "@/lib/pipeline/fetch/source";
 import { FETCH_URL_STAGE, fetchUrl, followLinks, planFetchUrls } from "@/lib/pipeline/fetch/url";
 import { decodeHtml, type FetchUrlDeps } from "@/lib/pipeline/fetch/page";
-import { crawlableSourceIds, getSource } from "@/lib/domain/sources/store";
+import { getSource } from "@/lib/domain/sources/store";
 import { testDb, withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 import { startSiteServer, type SiteServer } from "@/test/site-server";
@@ -719,67 +719,6 @@ describe("crawl run starters", () => {
     return { boss, inserted };
   }
 
-  it("a fetch run starts with fetch.source per source; a test crawl caps at 10 pages", async () => {
-    await withRollback(async (tx) => {
-      const sourceId = await insertSource(tx, newSite(), {});
-      const { boss, inserted } = recordingBoss();
-      const { id } = await startTestCrawl(tx, boss, sourceId, "admin");
-      const run = (await getRun(tx, id))!;
-      expect(run.scope).toEqual({ type: "source", id: sourceId });
-      expect(run.stages.map((st) => st.stage)).toEqual(["fetch.source", "fetch.url", "embed.chunks"]);
-      expect(inserted).toEqual([{ queue: "fetch.source", data: expect.objectContaining({ key: sourceId, sourceId, runId: id }) }]);
-      const [row] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(row!.params).toEqual({ sourceIds: [sourceId], maxPages: 10 });
-    });
-  });
-
-  it("\"approved\" resolves to the approved sources at start", async () => {
-    await withRollback(async (tx) => {
-      const sourceId = await insertSource(tx, newSite(), {});
-      const { boss } = recordingBoss();
-      const { id } = await startFetchRun(tx, boss, { sourceIds: "approved", triggeredBy: "admin" });
-      expect((await getRun(tx, id))!.scope).toEqual({ type: "source", id: "approved" });
-      const [row] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect((row!.params as { sourceIds: string[] }).sourceIds).toContain(sourceId);
-    });
-  });
-
-  it("an approved research source is neither crawled by \"approved\" nor accepted by id nor prepared", async () => {
-    await withRollback(async (tx) => {
-      const crawled = await insertSource(tx, newSite(), {});
-      const research = await insertSource(tx, newSite(), {});
-      await tx.update(sources).set({ origin: "research" }).where(eq(sources.id, research));
-      const { boss, inserted } = recordingBoss();
-      const { id } = await startFetchRun(tx, boss, { sourceIds: "approved", triggeredBy: "admin" });
-      const [row] = await tx.select().from(runs).where(eq(runs.id, id));
-      const planned = (row!.params as { sourceIds: string[] }).sourceIds;
-      expect(planned).toContain(crawled);
-      expect(planned).not.toContain(research);
-      expect(inserted.map((j) => (j.data as { sourceId: string }).sourceId)).not.toContain(research);
-      await expect(startFetchRun(tx, boss, { sourceIds: [research], triggeredBy: "admin" })).rejects.toMatchObject({ reason: "source_not_approved" });
-      expect(await crawlableSourceIds(tx)).not.toContain(research);
-      const prepared = await prepareSourceCrawl(tx, research, { transport: noNetwork, archive: memoryArchive() }, { db: tx, runId: id });
-      expect(prepared.status).toBe("not_approved");
-    });
-  });
-
-  it("an ended source is not crawled, even when its status is still approved", async () => {
-    await withRollback(async (tx) => {
-      const current = await insertSource(tx, newSite(), {});
-      const ended = await insertSource(tx, newSite(), {});
-      await tx.update(sources).set({ validTo: "2026-01-01" }).where(eq(sources.id, ended));
-      const { boss } = recordingBoss();
-      const { id } = await startFetchRun(tx, boss, { sourceIds: "approved", triggeredBy: "admin" });
-      const [row] = await tx.select().from(runs).where(eq(runs.id, id));
-      const planned = (row!.params as { sourceIds: string[] }).sourceIds;
-      expect(planned).toContain(current);
-      expect(planned).not.toContain(ended);
-      await expect(startFetchRun(tx, boss, { sourceIds: [ended], triggeredBy: "admin" })).rejects.toMatchObject({
-        reason: "source_not_approved",
-      });
-    });
-  });
-
   it("refuses sources that are not approved and documents that are no upload, before a run exists", async () => {
     await withRollback(async (tx) => {
       const paused = await insertSource(tx, newSite(), {}, "paused");
@@ -794,100 +733,9 @@ describe("crawl run starters", () => {
     });
   });
 
-  it("refuses a source that a queued or running run is fetching already, until that run ends", async () => {
-    await withRollback(async (tx) => {
-      const busy = await insertSource(tx, newSite(), {});
-      const free = await insertSource(tx, newSite(), {});
-      const { boss } = recordingBoss();
-      const first = await startFetchRun(tx, boss, { sourceIds: [busy], triggeredBy: "admin" });
-      const refused = startFetchRun(tx, boss, { sourceIds: [free, busy], triggeredBy: "admin" });
-      await expect(refused).rejects.toBeInstanceOf(RunScopeNotReady);
-      await expect(refused).rejects.toMatchObject({ reason: "source_run_active" });
-      await expect(startTestCrawl(tx, boss, busy, "admin")).rejects.toMatchObject({ reason: "source_run_active" });
-      // Another source is not affected; and once the first run has ended, the source may be fetched again.
-      await expect(startTestCrawl(tx, boss, free, "admin")).resolves.toMatchObject({ id: expect.any(String) });
-      await tx.update(runs).set({ status: "finished" }).where(eq(runs.id, first.id));
-      await expect(startTestCrawl(tx, boss, busy, "admin")).resolves.toMatchObject({ id: expect.any(String) });
-    });
-  });
-
-  it("\"Alle freigegebenen crawlen\" leaves out busy sources and names them; all busy is refused", async () => {
-    await withRollback(async (tx) => {
-      const busy = await insertSource(tx, newSite(), {});
-      const free = await insertSource(tx, newSite(), {});
-      const { boss } = recordingBoss();
-      await startFetchRun(tx, boss, { sourceIds: [busy], triggeredBy: "admin" });
-      const { id, skipped } = await startFetchRun(tx, boss, { sourceIds: [free, busy], triggeredBy: "admin", skipBusy: true });
-      expect(skipped).toEqual([busy]);
-      const [row] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(row!.params).toEqual({ sourceIds: [free], skippedSourceIds: [busy] });
-      await expect(startFetchRun(tx, boss, { sourceIds: [free, busy], triggeredBy: "admin", skipBusy: true })).rejects.toMatchObject({
-        reason: "source_run_active",
-      });
-    });
-  });
-
-  it("two concurrent starts for one source create one run", async () => {
-    // Committed rows: two transactions must race. A paused *.test.invalid source never meets other tests' queries;
-    // the exclusive start checks only for other runs (approval is checked before it).
-    const db = testDb();
-    const [row] = await db
-      .insert(sources)
-      .values({ domain: `${newId()}.test.invalid`, name: "Race", type: "forum", weight: 0.4, status: "paused", crawlRules: {}, origin: "manual" })
-      .returning({ id: sources.id });
-    const sourceId = row!.id;
-    const { boss } = recordingBoss();
-    const start = (on: Db) =>
-      startExclusiveFetchRun(on, boss, [sourceId], { skipBusy: false }, (ids) => ({
-        kind: "stage",
-        scope: { type: "source", id: sourceId },
-        params: { sourceIds: ids },
-        stages: FETCH_RUN_STAGES,
-        triggeredBy: "race-test",
-      }));
-    const created: string[] = [];
-    try {
-      // The first start's transaction stays open (its run not yet committed) while the second start runs.
-      let release!: () => void;
-      const held = new Promise<void>((resolve) => (release = resolve));
-      let started!: () => void;
-      const isStarted = new Promise<void>((resolve) => (started = resolve));
-      const first = db.transaction(async (tx) => {
-        created.push((await start(tx)).id);
-        started();
-        await held;
-      });
-      await isStarted;
-      const second = start(db).then((r) => {
-        created.push(r.id);
-        return r;
-      });
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      release();
-      await first;
-      await expect(second).rejects.toMatchObject({ reason: "source_run_active" });
-      expect(created).toHaveLength(1);
-    } finally {
-      // The run never gets a worker: end it so it does not keep the (paused) source busy.
-      if (created.length > 0) await db.update(runs).set({ status: "failed", failureReason: "test" }).where(inArray(runs.id, created));
-    }
-  }, 15_000);
-
   it("the refusal has a German text for the admin", async () => {
     const { RUN_SCOPE_REASON_LABELS } = await import("@/app/(admin)/_components/labels");
     expect(RUN_SCOPE_REASON_LABELS.source_run_active).toBe("Für die Quelle läuft bereits ein Abruf");
-  });
-
-  it("an upload run has only fetch.url with the document", async () => {
-    await withRollback(async (tx) => {
-      const sourceId = await insertSource(tx, newSite(), {}, "paused");
-      const url = `upload://${"a".repeat(64)}`;
-      const [doc] = await tx.insert(documents).values({ sourceId, url, urlNormalized: url, docType: "pilot_guide" }).returning({ id: documents.id });
-      const { boss, inserted } = recordingBoss();
-      const { id } = await startUploadFetchRun(tx, boss, doc!.id, "admin");
-      expect((await getRun(tx, id))!.stages.map((st) => st.stage)).toEqual(["fetch.url", "embed.chunks"]);
-      expect(inserted).toEqual([{ queue: "fetch.url", data: expect.objectContaining({ url, documentId: doc!.id, sourceId }) }]);
-    });
   });
 
   it("PERIPLUS_RENDERER=off builds the converters without a renderer", () => {

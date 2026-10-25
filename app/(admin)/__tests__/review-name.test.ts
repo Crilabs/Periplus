@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeResponse, type Transport } from "@/lib/adapters/http";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { geoNames, nameCandidates, places, reviewTasks, runs, unmatchedNames } from "@/lib/db/schema";
+import { geoNames, nameCandidates, places, reviewTasks, unmatchedNames } from "@/lib/db/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
@@ -139,37 +139,6 @@ describe("review of a new name", () => {
 
       await decideAction(form({ taskId, decision: JSON.stringify({ action: "reject" }) }));
       expect(redirect).toHaveBeenLastCalledWith(`/review/${taskId}?stale=1`);
-    }));
-
-  it("the create_place action starts a rematch run for the occurrences", () =>
-    withRollback(async (tx) => {
-      const { taskId, name, versionIds } = await nameTask(tx);
-      current = tx;
-      const decision = { action: "create_place", kind: "anchorage", position: { lon: 21.31, lat: 35.41 }, name, language: "en" };
-      await decideAction(form({ taskId, decision: JSON.stringify(decision) }));
-      const rematch = (await tx.select().from(runs).where(eq(runs.triggeredBy, "admin@example.invalid"))).filter(
-        (r) => (r.params as { rematch?: boolean; documentVersionIds?: string[] }).documentVersionIds?.includes(versionIds[0]!),
-      );
-      expect(rematch).toHaveLength(1);
-      expect(rematch[0]).toMatchObject({ kind: "stage", scopeType: "system", scopeId: "texts" });
-      expect(rematch[0]!.params).toMatchObject({ rematch: true, documentVersionIds: [...versionIds].sort() });
-      // its first stage is planned and enqueued (the classification of the two versions)
-      expect(enqueued.map((j) => j.queue)).toContain("classify.document_version");
-    }));
-
-  it("a rematch start failing after the decision committed gives a notice, not an error page", () =>
-    withRollback(async (tx) => {
-      const { taskId, name } = await nameTask(tx);
-      current = tx;
-      jobQueue.down = true;
-      try {
-        const decision = { action: "create_place", kind: "anchorage", position: { lon: 21.31, lat: 35.41 }, name, language: "en" };
-        await decideAction(form({ taskId, decision: JSON.stringify(decision) }));
-      } finally {
-        jobQueue.down = false;
-      }
-      expect(redirect.mock.lastCall![0]).toMatch(/\?notice=run_not_started$/);
-      expect((await tx.select().from(reviewTasks).where(eq(reviewTasks.id, taskId)))[0]!.status).toBe("decided");
     }));
 
   it("a rejected name starts no rematch run", () =>

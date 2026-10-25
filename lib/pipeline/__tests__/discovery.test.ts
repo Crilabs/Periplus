@@ -7,17 +7,10 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, runs, serpQueries, tileGeoObjects, tiles } from "@/lib/db/schema";
-import { newId } from "@/lib/domain/ids";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
 import { insertTestSubdivision } from "@/test/text";
-import { STAGES } from "@/lib/jobs/stages";
-import {
-  discoverArea,
-  DISCOVERY_AREA_STAGE,
-  DISCOVERY_PROPOSE_STAGE,
-  DISCOVERY_TILE_STAGE,
-} from "@/lib/pipeline/discovery";
-import { startDiscoveryRun, startProposalRun } from "@/lib/pipeline/discovery-run";
+import { discoverArea } from "@/lib/pipeline/discovery";
+import { startDiscoveryRun } from "@/lib/pipeline/discovery-run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
@@ -109,55 +102,7 @@ async function seedArea(tx: Db): Promise<string> {
   return areaId;
 }
 
-const keywords = (job: Record<string, unknown>) => (job.queries as Array<{ keyword: string }>).map((q) => q.keyword);
-
 describe("discovery stages", () => {
-  it("run on their own queues", () => {
-    expect(STAGES[DISCOVERY_AREA_STAGE]?.queue).toBe("discovery.area");
-    expect(STAGES[DISCOVERY_TILE_STAGE]?.queue).toBe("discovery.tile");
-    expect(STAGES[DISCOVERY_PROPOSE_STAGE]?.queue).toBe("discovery.propose");
-  });
-
-  it("the area stage plans one job for the subdivision", () =>
-    withRollback(async (tx) => {
-      await insertSubdivision(tx);
-      const jobs = await STAGES[DISCOVERY_AREA_STAGE]!.plan(tx, { id: newId(), params: { subdivisionKey: SUB_KEY } });
-      expect(jobs).toEqual([{ key: SUB_KEY, subdivisionKey: SUB_KEY }]);
-      await expect(STAGES[DISCOVERY_AREA_STAGE]!.plan(tx, { id: newId(), params: { subdivisionKey: "XD-NOPE" } })).rejects.toThrow(
-        "Unbekannter Landesteil XD-NOPE",
-      );
-    }));
-
-  it("the tile stage gets only the queries left under the per-run cap", () =>
-    withRollback(async (tx) => {
-      await seedArea(tx);
-      // 3 area queries (Törnbericht/Revierführer Testrevier, Test Gulf anchorages) leave 2 of 5 for the tiles;
-      // the tiles' 4 distinct queries ("Alpha" on both tiles counts once) are cut to the first 2.
-      const jobs = await STAGES[DISCOVERY_TILE_STAGE]!.plan(tx, { id: newId(), params: { subdivisionKey: SUB_KEY } });
-      expect(jobs.map((j) => ({ key: j.key, tileId: j.tileId, keywords: keywords(j) }))).toEqual([
-        { key: TILE_A, tileId: TILE_A, keywords: ["Ankerplatz Alpha"] },
-        { key: TILE_B, tileId: TILE_B, keywords: ["Ankerplatz Beta"] },
-      ]);
-      expect((jobs[0]!.queries as unknown[])[0]).toEqual({
-        keyword: "Ankerplatz Alpha",
-        languageCode: "de",
-        locationCode: 2276,
-        level: "tile",
-        scopeId: TILE_A,
-        priority: 1,
-      });
-    }));
-
-  it("a tile run has the whole cap for its tile", () =>
-    withRollback(async (tx) => {
-      await seedArea(tx);
-      const jobs = await STAGES[DISCOVERY_TILE_STAGE]!.plan(tx, { id: newId(), params: { tileIds: [TILE_B] } });
-      expect(jobs.map(keywords)).toEqual([["Ankerplatz Alpha", "Ankerplatz Beta", "anchorage Alpha", "anchorage Beta"]]);
-    }));
-
-  it("the propose stage plans one job", async () => {
-    expect(await STAGES[DISCOVERY_PROPOSE_STAGE]!.plan({} as Db, { id: newId(), params: {} })).toEqual([{ key: "propose" }]);
-  });
 
   it("the area job makes the area queries up to the cap, one after another", () =>
     withRollback(async (tx) => {
@@ -206,36 +151,6 @@ describe("area queries across subdivisions", () => {
 });
 
 describe("startDiscoveryRun", () => {
-  it("a subdivision run searches the subdivision, its tiles, then proposes", () =>
-    withRollback(async (tx) => {
-      await seedArea(tx);
-      const { boss, inserted } = recordingBoss();
-      const { id } = await startDiscoveryRun(tx, boss, { subdivisionKey: SUB_KEY }, "test");
-      const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({
-        kind: "stage",
-        scopeType: "subdivision",
-        scopeId: SUB_KEY,
-        stages: ["discovery.area", "discovery.tile", "discovery.propose"],
-        params: { subdivisionKey: SUB_KEY },
-      });
-      expect(inserted).toEqual([{ queue: "discovery.area", data: expect.objectContaining({ key: SUB_KEY, runId: id }) }]);
-    }));
-
-  it("a tile run searches the tile, then proposes", () =>
-    withRollback(async (tx) => {
-      await seedArea(tx);
-      const { boss, inserted } = recordingBoss();
-      const { id } = await startDiscoveryRun(tx, boss, { tileId: TILE_A }, "test");
-      const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({
-        scopeType: "tile",
-        scopeId: TILE_A,
-        stages: ["discovery.tile", "discovery.propose"],
-        params: { tileIds: [TILE_A] },
-      });
-      expect(inserted.map((j) => [j.queue, j.data.key])).toEqual([["discovery.tile", TILE_A]]);
-    }));
 
   it("refuses an unknown subdivision, an area key, a subdivision without coast tiles and a tile without a subdivision before the run exists", () =>
     withRollback(async (tx) => {
@@ -269,16 +184,5 @@ describe("excluded subdivisions", () => {
       const { boss, inserted } = recordingBoss();
       await expect(startDiscoveryRun(tx, boss, { subdivisionKey: "XT-D3" }, "test")).rejects.toThrow("Landesteil XT-D3 ist ausgeschlossen");
       expect(inserted).toEqual([]);
-    }));
-});
-
-describe("startProposalRun", () => {
-  it("runs only the propose stage", () =>
-    withRollback(async (tx) => {
-      const { boss, inserted } = recordingBoss();
-      const { id } = await startProposalRun(tx, boss, "test");
-      const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ scopeType: "system", scopeId: "discovery", stages: ["discovery.propose"] });
-      expect(inserted.map((j) => [j.queue, j.data.key])).toEqual([["discovery.propose", "propose"]]);
     }));
 });

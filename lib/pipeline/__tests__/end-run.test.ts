@@ -6,12 +6,12 @@ import { withRollback } from "@/test/db";
 import { insertNamedObject, insertTestTile, insertTestVersion } from "@/test/text";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { aiBatches, extractionRuns, extractionUnits, mentions, runStages, runs } from "@/lib/db/schema";
+import { aiBatches, extractionRuns, extractionUnits, mentions, runs } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { beginStage, createRun, getRun } from "@/lib/domain/runs";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { EXTRACT_STAGE, planExtraction } from "@/lib/pipeline/text/extract";
-import { endRunByAdmin, enqueueStage } from "@/lib/pipeline/runs";
+import { endRunByAdmin } from "@/lib/pipeline/runs";
 
 /*
  * „Lauf beenden“ is repeatable until its cleanup completed, and a stage planned after (or racing) the end plans
@@ -81,22 +81,6 @@ describe("Lauf beenden", () => {
       await tx.update(runs).set({ status: "finished" }).where(eq(runs.id, runId));
       expect(await endRunByAdmin(tx, stubBoss(), runId, ADMIN)).toEqual({ ended: false, cleanedUp: false, cancelledJobs: 0 });
       expect((await getRun(tx, runId))!).toMatchObject({ status: "finished", endedBy: null, endCleanupPending: false });
-    }));
-
-  it("a stage transition that runs after the end plans nothing: no extraction run, no units, no claimed mentions", () =>
-    withRollback(async (tx) => {
-      const v = await scene(tx, "Kolonay", -150.4, -50.4);
-      const { id: runId } = await createRun(tx, { kind: "stage", scope: { type: "system", id: `end-${newId()}` }, stages: [EXTRACT_STAGE], params: { documentVersionIds: [v.versionId] }, triggeredBy: "test" });
-      // the run.advance handler read the run (queued, stage pending) just before the admin's click
-      const boss = stubBoss();
-      expect((await endRunByAdmin(tx, boss, runId, ADMIN)).ended).toBe(true);
-      const planned = await enqueueStage(tx, boss, runId, EXTRACT_STAGE);
-      expect(await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, runId))).toEqual([]);
-      expect(planned).toBe(false);
-      const [stage] = await tx.select().from(runStages).where(eq(runStages.runId, runId));
-      expect(stage).toMatchObject({ status: "pending", total: 0 });
-      const claims = await tx.select({ s: mentions.extractionStatus }).from(mentions).where(eq(mentions.documentVersionId, v.versionId));
-      expect(claims.map((m) => m.s)).toEqual(["pending", "pending"]);
     }));
 
   it("the backfill marks runs ended before the repeatable cleanup as cleaned up, unless something is left open (GR-13, W2-M-2)", () =>

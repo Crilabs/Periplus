@@ -56,7 +56,6 @@ const GROUPS: Array<{ label?: string; items: Array<{ href: string; label: string
   {
     label: "Werkstatt",
     items: [
-      { href: "/compare/converters", label: "Konverter", icon: "converters" },
       { href: "/compare/models", label: "Modellvergleich", icon: "models" },
     ],
   },

@@ -292,7 +292,7 @@ export async function extractUnits(
   if (!run) throw new Error(`extraction run ${job.extractionRunId} does not exist`);
   const result = await submitStageJobBatch(db, deps, {
     task,
-    queue: EXTRACT_QUEUE,
+    queue: EXTRACT_QUEUE as never, // queue dropped in N6; module is deleted in Task 4
     job,
     subjectIds: job.unitIds,
     modelOverride: run.model,

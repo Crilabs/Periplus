@@ -1,23 +1,17 @@
 import { readFileSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
-import type { PgBoss } from "pg-boss";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { makeResponse, type Transport } from "@/lib/adapters/http";
 import { getConfig, getConsolidationConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { externalCalls, geoNames, placeDiscoveryRequests, places, runs, serpQueries, serpResults, sources } from "@/lib/db/schema";
+import { externalCalls, geoNames, placeDiscoveryRequests, places, serpQueries, serpResults, sources } from "@/lib/db/schema";
 import { thinPlaces } from "@/lib/domain/consolidation/followup";
 import { placeQueries } from "@/lib/domain/discovery/queries";
 import { newId } from "@/lib/domain/ids";
 import { candidateTiles } from "@/lib/domain/mentions/scope";
 import { tileIdFor } from "@/lib/domain/tiles";
-import { STAGES } from "@/lib/jobs/stages";
-import { requestPlaceDiscovery } from "@/lib/pipeline/consolidation/followup";
-import { CONSOLIDATION_FOLLOWUP_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { DISCOVERY_PLACE_STAGE, planPlaceDiscovery } from "@/lib/pipeline/discovery";
 import { runQueries } from "@/lib/domain/search/run-queries";
-import { discoveryPlaceHandler } from "@/lib/jobs/handlers/discovery";
-import type { JobContext } from "@/lib/jobs/worker";
 import { sql } from "drizzle-orm";
 import { freezeTextRunParams } from "@/lib/pipeline/text/versions";
 import { insertMention, insertPlace, insertSource } from "@/test/consolidation";
@@ -55,17 +49,6 @@ beforeAll(async () => {
 });
 const DAY_MS = 86_400_000;
 const followup = () => getConsolidationConfig().followup;
-
-function recordingBoss() {
-  const inserted: Array<{ queue: string; data: Record<string, unknown> }> = [];
-  const boss = {
-    insert: async (queue: string, jobs: Array<{ id: string; data: Record<string, unknown> }>) => {
-      inserted.push(...jobs.map((j) => ({ queue, data: j.data })));
-      return jobs.map((j) => j.id);
-    },
-  } as unknown as PgBoss;
-  return { boss, inserted };
-}
 
 /** A Greek subdivision (source languages el, de, en) and the test tile labelled with it. */
 async function areaTile(tx: Db): Promise<string> {
@@ -191,127 +174,11 @@ describe("thin places", () => {
     }));
 });
 
-describe("stage consolidation.followup", () => {
-  it("the followup stage starts one discovery run and records the requests", () =>
-    withRollback(async (tx) => {
-      await areaTile(tx);
-      const thin = await place(tx, `Duenn${newId().slice(0, 8)}`, { languages: ["de", "en"] });
-      const rich = await place(tx, "Reich", { languages: ["de"] });
-      await documents(tx, rich.objectId, 2);
-      const [run] = await tx
-        .insert(runs)
-        .values({ kind: "stage", scopeType: "system", scopeId: "consolidation", stages: [CONSOLIDATION_FOLLOWUP_STAGE], params: { geoObjectIds: [thin.objectId, rich.objectId] }, triggeredBy: "test" })
-        .returning({ id: runs.id });
-      expect(await STAGES[CONSOLIDATION_FOLLOWUP_STAGE]!.plan(tx, { id: run!.id, params: { geoObjectIds: [thin.objectId] } })).toEqual([{ key: "followup" }]);
-
-      const rec = recordingBoss();
-      const result = await requestPlaceDiscovery(tx, rec.boss, run!.id, { today: TODAY });
-      expect(result).toMatchObject({ places: [thin.objectId], skipped: false });
-      const [discovery] = await tx.select().from(runs).where(eq(runs.id, result.discoveryRunId!));
-      expect(discovery).toMatchObject({
-        kind: "event",
-        scopeType: "system",
-        scopeId: "places",
-        stages: ["discovery.place", "discovery.propose"],
-        params: { geoObjectIds: [thin.objectId] },
-        triggeredBy: `consolidation:${run!.id}`,
-      });
-      const requests = await tx.select().from(placeDiscoveryRequests).where(eq(placeDiscoveryRequests.runId, discovery!.id));
-      expect(requests.map((r) => r.geoObjectId)).toEqual([thin.objectId]);
-      // one discovery.place job for the thin place, carrying its queries
-      expect(rec.inserted.map((j) => [j.queue, j.data.key])).toEqual([["discovery.place", thin.objectId]]);
-      const queries = rec.inserted[0]!.data.queries as Array<{ keyword: string; level: string; tileId: string }>;
-      expect(queries.map((q) => q.keyword)).toEqual([`Ankerplatz ${(await nameOf(tx, thin.objectId, "de"))}`, `anchorage ${(await nameOf(tx, thin.objectId, "en"))}`]);
-      expect(queries.every((q) => q.level === "place" && q.tileId === TILE)).toBe(true);
-
-      // a retried job starts nothing again; the request now cools the place down
-      expect(await requestPlaceDiscovery(tx, rec.boss, run!.id, { today: TODAY })).toMatchObject({ skipped: true, discoveryRunId: discovery!.id });
-      expect(await tx.select().from(runs).where(eq(runs.triggeredBy, `consolidation:${run!.id}`))).toHaveLength(1);
-      expect(await thinPlaces(tx, [thin.objectId], followup(), TODAY)).toEqual([]);
-    }));
-
-  it("a retry after the first-stage enqueue failed enqueues that stage instead of skipping (CON-3)", () =>
-    withRollback(async (tx) => {
-      await areaTile(tx);
-      const thin = await place(tx, `Duenn${newId().slice(0, 8)}`, { languages: ["de", "en"] });
-      const [run] = await tx
-        .insert(runs)
-        .values({ kind: "stage", scopeType: "system", scopeId: "consolidation", stages: [CONSOLIDATION_FOLLOWUP_STAGE], params: { geoObjectIds: [thin.objectId] }, triggeredBy: "test" })
-        .returning({ id: runs.id });
-      // the first attempt: run and requests committed, then the job queue failed
-      const down = { insert: async () => { throw new Error("connection terminated"); } } as unknown as PgBoss;
-      await expect(requestPlaceDiscovery(tx, down, run!.id, { today: TODAY })).rejects.toThrow("connection terminated");
-      const [orphan] = await tx.select().from(runs).where(eq(runs.triggeredBy, `consolidation:${run!.id}`));
-      expect(orphan!.status).toBe("queued");
-
-      const rec = recordingBoss();
-      const retried = await requestPlaceDiscovery(tx, rec.boss, run!.id, { today: TODAY });
-      expect(rec.inserted.map((j) => [j.queue, j.data.key])).toEqual([["discovery.place", thin.objectId]]);
-      expect(retried).toEqual({ places: [thin.objectId], discoveryRunId: orphan!.id, skipped: false });
-      expect((await tx.select().from(runs).where(eq(runs.id, orphan!.id)))[0]!.status).toBe("running");
-      // a further retry skips: the stage is planned
-      expect(await requestPlaceDiscovery(tx, rec.boss, run!.id, { today: TODAY })).toMatchObject({ skipped: true });
-      expect(rec.inserted).toHaveLength(1);
-    }));
-
-  it("an evaluation run plans no followup", () =>
-    withRollback(async (tx) => {
-      await areaTile(tx);
-      const thin = await place(tx, "Bewertet");
-      const runId = await insertTestRun(tx);
-      const params = { geoObjectIds: [thin.objectId], evaluation: true };
-      expect(await STAGES[CONSOLIDATION_FOLLOWUP_STAGE]!.plan(tx, { id: runId, params })).toEqual([]);
-    }));
-});
-
 describe("follow-up refinements (ruling M5-H-R2)", () => {
   const withSerpCap = (max: number): AppConfig => {
     const c = getConfig();
     return { ...c, discovery: { ...c.discovery, serp: { ...c.discovery.serp, maxQueriesPerRun: max } } };
   };
-  const consolidationRun = async (tx: Db, geoObjectIds: string[]) => {
-    const [run] = await tx
-      .insert(runs)
-      .values({ kind: "stage", scopeType: "system", scopeId: "consolidation", stages: [CONSOLIDATION_FOLLOWUP_STAGE], params: { geoObjectIds }, triggeredBy: "test" })
-      .returning({ id: runs.id });
-    return run!.id;
-  };
-  const requested = (tx: Db, ids: string[]) =>
-    tx.select({ id: placeDiscoveryRequests.geoObjectId }).from(placeDiscoveryRequests).then((rows) => rows.map((r) => r.id).filter((id) => ids.includes(id)));
-
-  it("a thin place without queries of its own gets no request and no cool-down; the query budget keeps the fewest documents", () =>
-    withRollback(async (tx) => {
-      await areaTile(tx);
-      const noAreaTile = tileIdFor(LON + 0.5, LAT);
-      await insertTestTile(tx, noAreaTile, null);
-      const outside = await place(tx, `Ausserhalb${newId().slice(0, 8)}`, { lon: LON + 0.5, languages: ["de", "en"] });
-      // created first, so the earlier id: only the document count puts the other place first
-      const richer = await place(tx, `Aaa${newId().slice(0, 8)}`, { languages: ["de", "en"] });
-      await documents(tx, richer.objectId, 1);
-      const poorest = await place(tx, `Zzz${newId().slice(0, 8)}`, { languages: ["de", "en"] });
-      const runId = await consolidationRun(tx, [outside.objectId, richer.objectId, poorest.objectId]);
-
-      const rec = recordingBoss();
-      const result = await requestPlaceDiscovery(tx, rec.boss, runId, { today: TODAY, config: withSerpCap(3) });
-      expect(result.places).toEqual([poorest.objectId]);
-      expect(await requested(tx, [outside.objectId, richer.objectId, poorest.objectId])).toEqual([poorest.objectId]);
-      // the place without queries is not cooled down: it is thin again for the next run
-      expect(await thinPlaces(tx, [outside.objectId], followup(), TODAY)).toEqual([outside.objectId]);
-    }));
-
-  it("thin places and the starter judge validity on the run date", () =>
-    withRollback(async (tx) => {
-      await areaTile(tx);
-      const old = await place(tx, `Frueher${newId().slice(0, 8)}`, { languages: ["en"] });
-      // valid on the run date, ended by the database's date
-      await tx.execute(sql`update geo_objects set valid_from = '2025-01-01' where id = ${old.objectId}`);
-      await tx.execute(sql`update places set valid_from = '2025-01-01', valid_to = '2026-01-01' where id = ${old.placeId}`);
-      const runId = await consolidationRun(tx, [old.objectId]);
-      const rec = recordingBoss();
-      const result = await requestPlaceDiscovery(tx, rec.boss, runId, { today: "2025-06-01" });
-      expect(result.places).toEqual([old.objectId]);
-      expect(result.discoveryRunId).not.toBeNull();
-    }));
 
   it("a merged place adds no tile in either candidate-space mapper", () =>
     withRollback(async (tx) => {
@@ -349,30 +216,5 @@ describe("follow-up refinements (ruling M5-H-R2)", () => {
         [first.objectId, ["de", "en"]],
         [third.objectId, ["de"]],
       ]);
-
-      // the stage's job, as enqueued, through the handler's strict job schema
-      const runId = await insertTestRun(tx);
-      adapters.transport = answer();
-      adapters.archive = memoryArchive();
-      const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
-      const ctx = { db: tx, log, boss: recordingBoss().boss, jobId: newId() } as unknown as JobContext;
-      const job = { key: first.objectId, geoObjectId: first.objectId, queries: plan[0]!.queries, runId, stage: DISCOVERY_PLACE_STAGE };
-      await discoveryPlaceHandler(job, ctx);
-      const rows = await tx.select().from(serpQueries).where(eq(serpQueries.runId, runId));
-      expect(rows.map((r) => [r.level, r.scopeId]).sort()).toEqual([["place", first.objectId], ["place", first.objectId]]);
-      const calls = await tx.select({ tileId: externalCalls.tileId }).from(externalCalls).where(eq(externalCalls.runId, runId));
-      expect(calls.every((c) => c.tileId === TILE)).toBe(true);
-      expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ geoObjectId: first.objectId, queries: 2 }), "place discovery done");
-      // the schema refuses a job without a geo object id or with an unknown query field
-      await expect(discoveryPlaceHandler({ key: "x", geoObjectId: "x", queries: [], runId }, ctx)).rejects.toThrow();
-      await expect(discoveryPlaceHandler({ ...job, queries: [{ ...plan[0]!.queries[0]!, extra: 1 }] }, ctx)).rejects.toThrow();
     }));
 });
-
-async function nameOf(tx: Db, objectId: string, language: string): Promise<string> {
-  const [row] = await tx
-    .select({ name: geoNames.name })
-    .from(geoNames)
-    .where(and(eq(geoNames.geoObjectId, objectId), eq(geoNames.language, language), eq(geoNames.isPreferred, true)));
-  return row!.name;
-}

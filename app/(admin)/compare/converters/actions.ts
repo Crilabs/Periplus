@@ -6,20 +6,9 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { OutputNotRateable, rateConverterOutput } from "@/lib/domain/converter-comparison";
 import { CONVERTERS } from "@/lib/domain/sources/crawl-rules";
-import { getBoss } from "@/lib/jobs/boss";
-import { startConverterComparison } from "@/lib/pipeline/compare-converters-run";
 import { requireAdmin } from "@/lib/security/require-admin";
-import { startAndRedirect } from "../../_components/run-start";
 
 const PAGE = "/compare/converters";
-
-/** "Vergleich starten": tops up the sample and converts every page still missing an output. */
-export async function startComparisonAction(): Promise<void> {
-  const admin = await requireAdmin();
-  const db = getDb();
-  const boss = await getBoss();
-  await startAndRedirect(() => startConverterComparison(db, boss, admin.email), PAGE);
-}
 
 const checkbox = z.literal("on").optional().transform((v) => v === "on");
 const ratingFormSchema = z.object({

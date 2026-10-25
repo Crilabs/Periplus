@@ -1,9 +1,8 @@
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { facts, geoObjects, places, reviewDecisions, reviewTasks } from "@/lib/db/schema";
+import { facts, geoObjects, places, reviewDecisions } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
-import { createReviewTask } from "@/lib/domain/review";
 import { testDb, withRollback } from "@/test/db";
 import { seedDeliverySubdivision as seedFixture } from "@/test/fixtures/delivery/subdivision";
 import { buildBayScene } from "@/test/geometry/scene";
@@ -43,24 +42,9 @@ vi.mock("@/lib/pipeline/runs", () => ({ startRun: (...args: unknown[]) => startR
 vi.mock("next/cache", () => ({ revalidatePath: (path: string) => revalidatePath(path), refresh: vi.fn() }));
 const redirect = vi.fn();
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
-/** Runs right after the merge's transaction, before the action goes on (a concurrent commit in that gap). */
-let afterMerge: ((dropGeoObjectId: string) => Promise<void>) | null = null;
-vi.mock("@/lib/domain/place-merge", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/domain/place-merge")>();
-  return {
-    ...actual,
-    mergePlaceInto: async (...args: Parameters<typeof actual.mergePlaceInto>) => {
-      const merged = await actual.mergePlaceInto(...args);
-      await afterMerge?.(merged.dropGeoObjectId);
-      return merged;
-    },
-  };
-});
 
 import {
   mergePlaceAction,
-  recomputeGeoProfileAction,
-  recomputePlaceProfileAction,
   setAnchorAction,
   setPlaceStatusAction,
 } from "../places/[id]/actions";
@@ -89,7 +73,6 @@ async function anchorOrigin(tx: Db, placeId: string): Promise<string | null> {
 beforeEach(() => {
   vi.resetAllMocks();
   bossDown = false;
-  afterMerge = null;
   currentDb = db;
   requireAdmin.mockResolvedValue({ email: ADMIN });
   startRun.mockResolvedValue({ id: "run-1" });
@@ -189,47 +172,8 @@ describe("setAnchorAction", () => {
     }));
 });
 
-describe("„Profil neu berechnen“", () => {
-  it("the place action starts a place-scoped consolidation run and goes to it", () =>
-    withRollback(async (tx) => {
-      currentDb = tx;
-      const scene = await buildBayScene(tx);
-      await recomputePlaceProfileAction(form({ placeId: scene.placeId }));
-      expect(startRun).toHaveBeenCalledTimes(1);
-      expect(startRun.mock.calls[0]![2]).toMatchObject({
-        kind: "stage",
-        scope: { type: "place", id: scene.placeId },
-        stages: ["consolidation.geo", "consolidation.highlights", "consolidation.summary", "consolidation.followup", "images.place"],
-        params: { geoObjectIds: [scene.geoObjectId] },
-        triggeredBy: ADMIN,
-      });
-      expect(redirect).toHaveBeenCalledWith("/runs/run-1");
-    }));
-
-  it("the geo action starts a run for the object; an object without facts returns with the reason", () =>
-    withRollback(async (tx) => {
-      currentDb = tx;
-      const scene = await buildBayScene(tx);
-      await recomputeGeoProfileAction({ geoObjectId: scene.geoObjectId });
-      expect(startRun.mock.calls[0]![2]).toMatchObject({ scope: { type: "place", id: scene.placeId }, params: { geoObjectIds: [scene.geoObjectId] } });
-      await recomputeGeoProfileAction({ geoObjectId: "01a1556d-0000-7000-8000-000000000000" });
-      expect(redirect).toHaveBeenLastCalledWith("/geo/01a1556d-0000-7000-8000-000000000000?error=geo_object_not_consolidatable");
-      expect(startRun).toHaveBeenCalledTimes(1);
-    }));
-
-  it("rejects without admin session", () =>
-    withRollback(async (tx) => {
-      currentDb = tx;
-      const scene = await buildBayScene(tx);
-      requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
-      await expect(recomputePlaceProfileAction({ placeId: scene.placeId })).rejects.toThrow("NEXT_REDIRECT");
-      await expect(recomputeGeoProfileAction({ geoObjectId: scene.geoObjectId })).rejects.toThrow("NEXT_REDIRECT");
-      expect(startRun).not.toHaveBeenCalled();
-    }));
-});
-
 describe("„Mit Ort zusammenlegen“", () => {
-  it("merges, then starts the consolidation of the surviving object after the commit and goes to it", () =>
+  it("merges and goes to the surviving place", () =>
     withRollback(async (tx) => {
       currentDb = tx;
       const f = await seedDeliverySubdivision(tx);
@@ -237,25 +181,8 @@ describe("„Mit Ort zusammenlegen“", () => {
       await mergePlaceAction(form({ placeId: A.placeId, intoPlaceId: M.placeId }));
       const [a] = await tx.select().from(places).where(eq(places.id, A.placeId));
       expect(a).toMatchObject({ status: "rejected", mergedIntoId: M.placeId });
-      expect(startRun).toHaveBeenCalledTimes(1);
-      expect(startRun.mock.calls[0]![2]).toMatchObject({ kind: "stage", params: { geoObjectIds: [M.geoObjectId] }, triggeredBy: ADMIN });
-      expect(redirect).toHaveBeenCalledWith(`/places/${M.placeId}?merged=${A.placeId}&run=run-1`);
-    }));
-
-  it("dismisses a task a consolidation of the merged object opened after the merge locked its tasks (review minor 1)", () =>
-    withRollback(async (tx) => {
-      currentDb = tx;
-      const f = await seedDeliverySubdivision(tx);
-      const { A, M } = f.places;
-      let late: string | undefined;
-      afterMerge = async (dropGeoObjectId) => {
-        late = (await createReviewTask(tx, { kind: "conflict", subjectType: "profile_attribute", subjectId: `${dropGeoObjectId}:holding`, context: { key: "holding:k" } })).id;
-      };
-      await mergePlaceAction(form({ placeId: A.placeId, intoPlaceId: M.placeId }));
-      expect(late).toBeDefined();
-      const [task] = await tx.select().from(reviewTasks).where(eq(reviewTasks.id, late!));
-      expect(task).toMatchObject({ status: "dismissed", context: expect.objectContaining({ dismissedReason: "object_ended" }) });
-      expect(redirect).toHaveBeenCalledWith(`/places/${M.placeId}?merged=${A.placeId}&run=run-1`);
+      expect(startRun).not.toHaveBeenCalled();
+      expect(redirect).toHaveBeenCalledWith(`/places/${M.placeId}?merged=${A.placeId}`);
     }));
 
   it("a refusal returns to the place with the reason; the checkbox confirms a merge across subdivisions", () =>
@@ -276,17 +203,6 @@ describe("„Mit Ort zusammenlegen“", () => {
       expect(redirect).toHaveBeenLastCalledWith(expect.stringMatching(new RegExp(`^/places/${O.placeId}\\?merged=${A.placeId}`)));
     }));
 
-  it("the merge stands when the follow-up run does not start", () =>
-    withRollback(async (tx) => {
-      currentDb = tx;
-      const f = await seedDeliverySubdivision(tx);
-      startRun.mockRejectedValue(new Error("queue down"));
-      await mergePlaceAction({ placeId: f.places.A.placeId, intoPlaceId: f.places.M.placeId });
-      expect(redirect).toHaveBeenCalledWith(`/places/${f.places.M.placeId}?merged=${f.places.A.placeId}&mergedNoRun=1`);
-      const [a] = await tx.select().from(places).where(eq(places.id, f.places.A.placeId));
-      expect(a!.mergedIntoId).toBe(f.places.M.placeId);
-    }));
-
   it("rejects without admin session", async () => {
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
     await expect(mergePlaceAction({ placeId: "0199f0a0-0000-7000-8000-000000000001", intoPlaceId: "0199f0a0-0000-7000-8000-000000000002" })).rejects.toThrow("NEXT_REDIRECT");
@@ -295,7 +211,7 @@ describe("„Mit Ort zusammenlegen“", () => {
 });
 
 describe("„Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the place header (UI-3)", () => {
-  it("sets the status, then starts the consolidation of the place's object after the commit", () =>
+  it("sets the status and starts no run", () =>
     withRollback(async (tx) => {
       currentDb = tx;
       const f = await seedDeliverySubdivision(tx);
@@ -303,18 +219,16 @@ describe("„Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the pla
       await setPlaceStatusAction(form({ placeId: A.placeId, status: "no_anchoring", from: "confirmed" }));
       const [a] = await tx.select().from(places).where(eq(places.id, A.placeId));
       expect(a).toMatchObject({ status: "no_anchoring", statusReason: "review" });
-      expect(startRun).toHaveBeenCalledTimes(1);
-      expect(startRun.mock.calls[0]![2]).toMatchObject({ kind: "stage", params: { geoObjectIds: [A.geoObjectId] }, triggeredBy: ADMIN });
-      expect(redirect).toHaveBeenCalledWith(`/places/${A.placeId}?status=no_anchoring&run=run-1`);
+      expect(startRun).not.toHaveBeenCalled();
+      expect(redirect).toHaveBeenCalledWith(`/places/${A.placeId}?status=no_anchoring`);
     }));
 
-  it("the status stands when the follow-up run does not start; a refusal returns with the reason", () =>
+  it("a refusal returns with the reason", () =>
     withRollback(async (tx) => {
       currentDb = tx;
       const f = await seedDeliverySubdivision(tx);
-      startRun.mockRejectedValue(new Error("queue down"));
       await setPlaceStatusAction({ placeId: f.places.M.placeId, status: "rejected", from: "confirmed" });
-      expect(redirect).toHaveBeenLastCalledWith(`/places/${f.places.M.placeId}?status=rejected&statusNoRun=1`);
+      expect(redirect).toHaveBeenLastCalledWith(`/places/${f.places.M.placeId}?status=rejected`);
       expect((await tx.select().from(places).where(eq(places.id, f.places.M.placeId)))[0]!.status).toBe("rejected");
       await setPlaceStatusAction({ placeId: f.places.M.placeId, status: "rejected", from: "rejected" });
       expect(redirect).toHaveBeenLastCalledWith(`/places/${f.places.M.placeId}?statusError=unchanged`);

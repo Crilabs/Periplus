@@ -16,10 +16,8 @@ import { ADMIN_PLACE_STATUSES, PlaceStatusNotAllowed, setPlaceStatusByAdmin } fr
 import { ProfileChanged, removeProfileEntry } from "@/lib/domain/profile-entry-removal";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 import { getBoss } from "@/lib/jobs/boss";
-import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { nextViewSlot, startImageRun } from "@/lib/pipeline/images-run";
-import { CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
-import { afterPlaceMerge, afterPositionChange, consolidateAfter, geometryAfter } from "@/lib/pipeline/follow-ups";
+import { geometryAfter } from "@/lib/pipeline/follow-ups";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { RUN_SCOPE_REASON_LABELS } from "../../_components/labels";
 import { startAndRedirect } from "../../_components/run-start";
@@ -69,8 +67,7 @@ export async function setAnchorAction(
 /**
  * „Position korrigieren“ (ruling M6-H-R1): sets the place point (`setPlacePosition`), the remedy when the package
  * check `spot_location` finds a spot on land or outside the area. After that commit (never inside it) a geometry run
- * for the place recomputes shelter and depths and consolidates the profile; when the place lacks geometry inputs, a
- * consolidation run takes the new position into the profile instead. Back to the geometry tab with
+ * for the place recomputes shelter and depths. Back to the geometry tab with
  * `position=moved&run=<id>`, `position=moved_no_run` (the position stands), or `position=too_far`.
  */
 export async function setPlacePositionAction(input: FormData | { placeId: string; lon: number; lat: number }): Promise<void> {
@@ -78,26 +75,23 @@ export async function setPlacePositionAction(input: FormData | { placeId: string
   const { placeId, lon, lat } = anchorSchema.parse(fields(input));
   const db = getDb();
   const back = `/places/${placeId}?tab=geometry`;
-  let moved: { geoObjectId: string };
   try {
-    moved = await setPlacePosition(db, { placeId, position: { lon, lat }, decidedBy: admin.email });
+    await setPlacePosition(db, { placeId, position: { lon, lat }, decidedBy: admin.email });
   } catch (e) {
     if (!(e instanceof DecisionNotAllowed)) throw e;
     return redirect(`${back}&position=too_far`);
   }
   revalidatePath(`/places/${placeId}`);
-  const run = await afterPositionChange(db, getBoss, { placeId, geoObjectId: moved.geoObjectId, triggeredBy: admin.email });
+  const run = await geometryAfter(db, getBoss, { placeId, triggeredBy: admin.email });
   redirect(run.status === "started" ? `${back}&position=moved&run=${run.runId}` : `${back}&position=moved_no_run`);
 }
 
-const placeSchema = z.object({ placeId: z.uuid() });
 /** `from`: the status the page showed; another status now refuses with `changed` (W4-2). */
 const placeStatusSchema = z.object({ placeId: z.uuid(), status: z.enum(ADMIN_PLACE_STATUSES), from: z.enum(placeStatusEnum.enumValues) });
 
 /**
  * „Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the place header (spec 09, gesamt review UI-3): sets the status
- * (`setPlaceStatusByAdmin`), then, after that commit, a consolidation run takes it into the profile. Back to the place
- * with `?status=<status>` (and `&run=<id>`, or `&statusNoRun=1` when the run did not start: the status stands), or
+ * (`setPlaceStatusByAdmin`). Back to the place with `?status=<status>`, or
  * with `?statusError=<reason>` when refused.
  */
 export async function setPlaceStatusAction(input: FormData | z.input<typeof placeStatusSchema>): Promise<void> {
@@ -106,9 +100,8 @@ export async function setPlaceStatusAction(input: FormData | z.input<typeof plac
   const db = getDb();
   let target = `/places/${f.placeId}`;
   try {
-    const { geoObjectId } = await setPlaceStatusByAdmin(db, { placeId: f.placeId, status: f.status, from: f.from, decidedBy: admin.email });
-    const run = await consolidateAfter(db, getBoss, { geoObjectIds: [geoObjectId], triggeredBy: admin.email });
-    target += `?status=${f.status}${run.status === "started" ? `&run=${run.runId}` : "&statusNoRun=1"}`;
+    await setPlaceStatusByAdmin(db, { placeId: f.placeId, status: f.status, from: f.from, decidedBy: admin.email });
+    target += `?status=${f.status}`;
     revalidatePath(`/places/${f.placeId}`);
   } catch (e) {
     if (!(e instanceof PlaceStatusNotAllowed)) throw e;
@@ -116,73 +109,6 @@ export async function setPlaceStatusAction(input: FormData | z.input<typeof plac
   }
   redirect(target);
 }
-const geoObjectSchema = z.object({ geoObjectId: z.uuid() });
-
-/**
- * "Profil neu berechnen" of a place: a consolidation run for the place's geo object (scope `place`); a refusal
- * returns to the place page with `?error=<reason>`.
- */
-export async function recomputePlaceProfileAction(input: FormData | { placeId: string }): Promise<void> {
-  const admin = await requireAdmin();
-  const { placeId } = placeSchema.parse(fields(input));
-  const db = getDb();
-  const geoObjectId = await placeGeoObjectId(db, placeId);
-  if (!geoObjectId) throw new Error(`Unknown place ${placeId}`);
-  const boss = await getBoss();
-  await startAndRedirect(
-    () => startConsolidationRun(db, boss, { scope: { geoObjectIds: [geoObjectId] }, triggeredBy: admin.email }),
-    `/places/${placeId}`,
-  );
-}
-
-/**
- * "Profil neu berechnen" of a geo object (geo page): a consolidation run for that object; a refusal returns to the
- * geo page with `?error=<reason>`.
- */
-export async function recomputeGeoProfileAction(input: FormData | { geoObjectId: string }): Promise<void> {
-  const admin = await requireAdmin();
-  const { geoObjectId } = geoObjectSchema.parse(fields(input));
-  const db = getDb();
-  const boss = await getBoss();
-  await startAndRedirect(
-    () => startConsolidationRun(db, boss, { scope: { geoObjectIds: [geoObjectId] }, triggeredBy: admin.email }),
-    `/geo/${geoObjectId}`,
-  );
-}
-
-const regenerateSummarySchema = z.object({
-  geoObjectId: z.uuid(),
-  /** The place page the form is on (it must belong to the geo object); without it the geo page. */
-  placeId: z.uuid().optional(),
-});
-
-/**
- * „Summary neu erzeugen“ on the profile tab (ruling M6-H-R1): a consolidation run of only the summary stage for the
- * object that writes a new summary of its newest profile version even when an `ok` one exists (e.g. one the package
- * check `verbatim_text` rejects); the run page follows. Nothing is decided or written before the run starts. A refusal
- * returns to the page with `?error=<reason>`.
- */
-export async function regenerateSummaryAction(input: FormData | z.input<typeof regenerateSummarySchema>): Promise<void> {
-  const admin = await requireAdmin();
-  const raw = fields(input) as Record<string, unknown>;
-  const f = regenerateSummarySchema.parse({ ...raw, placeId: raw.placeId || undefined });
-  const db = getDb();
-  if (f.placeId && !(await placeBelongsTo(db, f.placeId, f.geoObjectId))) {
-    throw new Error(`Place ${f.placeId} does not belong to geo object ${f.geoObjectId}`);
-  }
-  const boss = await getBoss();
-  await startAndRedirect(
-    () =>
-      startConsolidationRun(db, boss, {
-        scope: { geoObjectIds: [f.geoObjectId] },
-        triggeredBy: admin.email,
-        stagesOnly: [CONSOLIDATION_SUMMARY_STAGE],
-        regenerateSummary: true,
-      }),
-    f.placeId ? `/places/${f.placeId}` : `/geo/${f.geoObjectId}`,
-  );
-}
-
 const removeEntrySchema = z.object({
   geoObjectId: z.uuid(),
   attribute: z.string().min(1).max(64),
@@ -194,9 +120,7 @@ const removeEntrySchema = z.object({
 
 /**
  * „Eintrag entfernen“ on a safety-list entry of the profile tab (place page) or the profile section (geo page): writes
- * the review fact (`removeProfileEntry`), then, after that commit, starts a consolidation run for the object (never
- * inside the decision, ruling M5-F-R4) and returns to the attribute with a notice: `entry_removed` (with `run`),
- * `entry_removed_no_run` when the run did not start (the removal stands), `changed` when the profile has a newer
+ * the review fact (`removeProfileEntry`) and returns to the attribute with a notice: `entry_removed`, `changed` when the profile has a newer
  * version than the one shown, `error` when the entry cannot be removed.
  */
 export async function removeProfileEntryAction(input: FormData | z.input<typeof removeEntrySchema>): Promise<void> {
@@ -213,8 +137,7 @@ export async function removeProfileEntryAction(input: FormData | z.input<typeof 
   let notice: string;
   try {
     await removeProfileEntry(db, { geoObjectId: f.geoObjectId, attribute: f.attribute, entryKey: f.entryKey, version: f.version, decidedBy: admin.email });
-    const run = await consolidateAfter(db, getBoss, { geoObjectIds: [f.geoObjectId], triggeredBy: admin.email });
-    notice = run.status === "started" ? `entry_removed&run=${run.runId}` : "entry_removed_no_run";
+    notice = "entry_removed";
     revalidatePath(f.placeId ? `/places/${f.placeId}` : `/geo/${f.geoObjectId}`);
   } catch (e) {
     if (e instanceof ProfileChanged) notice = "changed";
@@ -233,11 +156,7 @@ const mergeSchema = z.object({
 
 /**
  * „Mit Ort zusammenlegen“ of a confirmed place (ruling M6-P15): merges it into the chosen confirmed place
- * (`mergePlaceInto`). After that commit (never inside the merge, ruling M5-F-R4) it consolidates the merged geo object,
- * which only waits for a consolidation of it still running and dismisses the open tasks that one opened after the
- * merge locked its tasks (`object_ended`, review minor 1; a run's scope refuses a merged object), then starts a
- * consolidation run for the surviving place's geo object and goes to the surviving place with `?merged=<placeId>` (and
- * `&run=<id>`, or `&mergedNoRun=1` when the run did not start: the merge stands). A refusal returns to the place with
+ * (`mergePlaceInto`) and goes to the surviving place with `?merged=<placeId>`. A refusal returns to the place with
  * `?mergeError=<reason>`.
  */
 export async function mergePlaceAction(
@@ -249,14 +168,13 @@ export async function mergePlaceAction(
   const db = getDb();
   let target: string;
   try {
-    const merged = await mergePlaceInto(db, {
+    await mergePlaceInto(db, {
       placeId: f.placeId,
       intoPlaceId: f.intoPlaceId,
       decidedBy: admin.email,
       confirmAcrossSubdivisions: f.confirmAcrossSubdivisions !== undefined,
     });
-    const run = await afterPlaceMerge(db, getBoss, { ...merged, triggeredBy: admin.email });
-    target = `/places/${f.intoPlaceId}?merged=${f.placeId}${run.status === "started" ? `&run=${run.runId}` : "&mergedNoRun=1"}`;
+    target = `/places/${f.intoPlaceId}?merged=${f.placeId}`;
     revalidatePath(`/places/${f.placeId}`);
     revalidatePath(`/places/${f.intoPlaceId}`);
   } catch (e) {

@@ -1,4 +1,3 @@
-import { getConfig } from "@/lib/config";
 import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
@@ -62,7 +61,7 @@ import {
   startPingRun,
   startSeedAction,
 } from "../runs/actions";
-import { consolidateTileAction, geometryTileAction, seedTileAction } from "../tiles/[id]/actions";
+import { geometryTileAction, seedTileAction } from "../tiles/[id]/actions";
 import { pauseQueueAction, resumeQueueAction } from "../jobs/actions";
 import { endRunAction, retryJobAction } from "../runs/[id]/actions";
 import { saveComparisonSelectionAction } from "../quality/actions";
@@ -255,31 +254,6 @@ describe("admin server actions", () => {
       await expect(seedTileAction({ tileId })).rejects.toThrow("NEXT_REDIRECT");
       await expect(startGazetteerAction({ subdivisionKey: "GR-I" })).rejects.toThrow("NEXT_REDIRECT");
       expect(startRun).toHaveBeenCalledTimes(2);
-    }));
-  it("„Konsolidieren“ on the tile page starts a tile-scoped consolidation run; an unknown tile is refused", () =>
-    withRollback(async (tx) => {
-      currentDb = tx;
-      // Open sea outside the pilot box, at a spot no other test uses.
-      const tileId = tileIdFor(24.61, 32.83);
-      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)` });
-      await consolidateTileAction(form({ tileId }));
-      expect(startRun).toHaveBeenCalledWith(
-        tx,
-        expect.anything(),
-        expect.objectContaining({
-          kind: "stage",
-          scope: { type: "tile", id: tileId },
-          stages: ["consolidation.geo", "consolidation.highlights", "consolidation.summary", "consolidation.followup", "images.place"],
-          params: { tileId, rulesVersion: getConfig().consolidation.version },
-          triggeredBy: "admin@example.invalid",
-        }),
-      );
-      expect(redirect).toHaveBeenLastCalledWith("/runs/run-1");
-      await expect(consolidateTileAction({ tileId: "q025:0:719" })).rejects.toThrow();
-      await expect(consolidateTileAction({ tileId: "q025:813" })).rejects.toThrow();
-      requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
-      await expect(consolidateTileAction({ tileId })).rejects.toThrow("NEXT_REDIRECT");
-      expect(startRun).toHaveBeenCalledTimes(1);
     }));
 
   it("startSeedAction rejects a payload with both fields or an unknown tile next to a subdivision", () =>

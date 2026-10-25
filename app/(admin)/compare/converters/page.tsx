@@ -16,7 +16,6 @@ import {
 import { CONVERTERS } from "@/lib/domain/sources/crawl-rules";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { ArchiveMarkdown } from "../../_components/archive-markdown";
-import { Dialog } from "../../_components/dialog";
 import { comparePageError } from "../../_components/labels";
 import {
   Badge,
@@ -39,7 +38,7 @@ import {
   trClass,
   type Tone,
 } from "../../_components/ui";
-import { rateOutputAction, startComparisonAction } from "./actions";
+import { rateOutputAction } from "./actions";
 
 export const metadata: Metadata = { title: "Konverter-Vergleich" };
 
@@ -128,35 +127,6 @@ export default async function Page({ searchParams }: PageProps<"/compare/convert
               Standard <Mono>{fetch.defaultConverter}</Mono>
             </span>
           </>
-        }
-        actions={
-          <Dialog
-            trigger="Vergleich starten …"
-            triggerVariant="primary"
-            title="Vergleich starten"
-            description="Startet einen Lauf, der die Stichprobe ergänzt und fehlende Umwandlungen nachholt."
-          >
-            <div className="space-y-4">
-              <ul className="list-disc space-y-1.5 pl-5 leading-relaxed text-muted">
-                <li>
-                  Füllt die Stichprobe bis auf {CONVERTER_SAMPLE.pages} Seiten auf: je {CONVERTER_SAMPLE.perSource} HTML-Seiten
-                  aus den {CONVERTER_SAMPLE.sources} freigegebenen Quellen mit den meisten Dokumenten. Vorhandene Seiten und
-                  Bewertungen bleiben.
-                </li>
-                <li>
-                  Wandelt jede Seite mit jedem Konverter um, von dem noch kein erfolgreiches Ergebnis vorliegt; fehlgeschlagene
-                  Umwandlungen werden also erneut versucht.
-                </li>
-                <li>Jina und Firecrawl sind externe Dienste und kosten je Seite Geld; die Kosten erscheinen in der Zusammenfassung.</li>
-                <li>Abgelehnt, solange noch ein Vergleichslauf aktiv ist oder alle Seiten schon von allen Konvertern umgewandelt sind.</li>
-              </ul>
-              <form action={startComparisonAction} className="flex justify-end">
-                <Button type="submit" variant="primary">
-                  Vergleich starten
-                </Button>
-              </form>
-            </div>
-          </Dialog>
         }
       />
 

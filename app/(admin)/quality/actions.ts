@@ -8,7 +8,7 @@ import { saveComparisonSelection } from "@/lib/domain/comparison";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { activateCandidate, RegressionGateClosed } from "@/lib/domain/quality/regression";
 import { getBoss } from "@/lib/jobs/boss";
-import { MEASUREMENT_LABEL_MAX, startEvaluation, startMeasurement } from "@/lib/pipeline/quality-run";
+import { MEASUREMENT_LABEL_MAX, startMeasurement } from "@/lib/pipeline/quality-run";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { startAndRedirect } from "../_components/run-start";
 
@@ -90,36 +90,6 @@ export async function startMeasurementAction(input: FormData | { subdivisionKey:
     () => startMeasurement(db, boss, { subdivisionKey, label, ...(from ? { from } : {}), ...(to ? { to } : {}), triggeredBy: admin.email }),
     qualityPath(subdivisionKey),
   );
-}
-
-const evaluationSchema = z
-  .object({
-    subdivisionKey: subdivisionKeySchema,
-    rulesVersion: optional(z.string().regex(/^v[1-9][0-9]*$/)),
-    model: optional(z.string().trim().min(1).max(120)),
-    promptVersion: optional(z.coerce.number().int().min(1)),
-  })
-  .refine((v) => (v.model === undefined) === (v.promptVersion === undefined), "model and prompt version go together");
-
-/**
- * „Bewertung starten“: an evaluation run of a rules version and/or an extraction candidate over the subdivision's comparison
- * set; opens its run page, or returns to `/quality` with the reason of a refused start or invalid input. An empty rules
- * version („unverändert“) leaves the rules out of the candidate.
- */
-export async function startEvaluationAction(
-  input: FormData | { subdivisionKey: string; rulesVersion?: string; model?: string; promptVersion?: number | string },
-): Promise<void> {
-  const admin = await requireAdmin();
-  const parsed = await evaluationSchema.safeParseAsync(fields(input));
-  if (!parsed.success) return invalidInput(input);
-  const { subdivisionKey, rulesVersion, model, promptVersion } = parsed.data;
-  const db = getDb();
-  const boss = await getBoss();
-  const candidate = {
-    ...(rulesVersion ? { rulesVersion } : {}),
-    ...(model && promptVersion ? { extraction: { model, promptVersion } } : {}),
-  };
-  await startAndRedirect(() => startEvaluation(db, boss, { subdivisionKey, candidate, triggeredBy: admin.email }), qualityPath(subdivisionKey));
 }
 
 const activationSchema = z.object({ subdivisionKey: subdivisionKeySchema, evaluationRunId: z.uuid() });

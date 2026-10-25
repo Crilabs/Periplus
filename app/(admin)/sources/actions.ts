@@ -5,21 +5,12 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { DOC_TYPES } from "@/lib/db/schema";
-import { tileExists } from "@/lib/domain/geo-view";
 import { ForbiddenSourceDomain } from "@/lib/domain/sources/forbidden-domains";
 import { createManualSource, InvalidSourceDomain, SourceDomainKnown } from "@/lib/domain/sources/store";
-import { getBoss } from "@/lib/jobs/boss";
-import { startDiscoveryRun, startProposalRun } from "@/lib/pipeline/discovery-run";
-import { startEmbedBackfillRun, startFetchRun, startWikivoyageRun } from "@/lib/pipeline/fetch/run";
-import { startTextRun } from "@/lib/pipeline/text/run";
-import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { requireAdmin } from "@/lib/security/require-admin";
-import { startAndRedirect } from "../_components/run-start";
 
 const fields = (input: FormData | object) => (input instanceof FormData ? Object.fromEntries(input) : input);
 
-const subdivisionSchema = z.object({ subdivisionKey: z.string().min(1) });
-const tileSchema = z.object({ tileId: z.string().regex(/^q025:\d+:\d+$/) });
 const newSourceSchema = z.object({
   domain: z.string().trim().min(1).max(500),
   name: z.string().trim().min(1).max(200),
@@ -46,98 +37,4 @@ export async function createSourceAction(formData: FormData): Promise<void> {
   }
   revalidatePath("/sources");
   redirect(target);
-}
-
-/**
- * "Alle freigegebenen crawlen": one crawl run over every approved source. Sources another run is fetching are
- * skipped (ruling M3-D-R3) and named on the sources page (`?run=<id>&skipped=<ids>`).
- */
-export async function crawlAllApprovedAction(): Promise<void> {
-  const admin = await requireAdmin();
-  let target: string;
-  try {
-    const { id, skipped } = await startFetchRun(getDb(), await getBoss(), {
-      sourceIds: "approved",
-      triggeredBy: admin.email,
-      skipBusy: true,
-    });
-    target = `/sources?run=${id}${skipped.length > 0 ? `&skipped=${skipped.join(",")}` : ""}`;
-  } catch (e) {
-    if (!(e instanceof RunScopeNotReady)) throw e;
-    target = `/sources?error=${e.reason}`;
-  }
-  revalidatePath("/runs");
-  revalidatePath("/sources");
-  redirect(target);
-}
-
-/** "Quellenfindung" for a subdivision. */
-export async function discoveryAreaAction(input: FormData | { subdivisionKey: string }): Promise<void> {
-  const admin = await requireAdmin();
-  const { subdivisionKey } = subdivisionSchema.parse(fields(input));
-  const db = getDb();
-  const boss = await getBoss();
-  await startAndRedirect(() => startDiscoveryRun(db, boss, { subdivisionKey }, admin.email), "/sources");
-}
-
-/** "Quellenfindung" for one existing tile (button of the tile page); refusals return to the tile page. */
-export async function discoveryTileAction(input: FormData | { tileId: string }): Promise<void> {
-  const admin = await requireAdmin();
-  const db = getDb();
-  const { tileId } = await tileSchema.refine(({ tileId }) => tileExists(db, tileId), "unknown tile").parseAsync(fields(input));
-  const boss = await getBoss();
-  await startAndRedirect(() => startDiscoveryRun(db, boss, { tileId }, admin.email), `/tiles/${encodeURIComponent(tileId)}`);
-}
-
-/** "Linkgraph-Vorschläge": proposals from SERP hits and the link graph collected so far. */
-export async function proposalRunAction(): Promise<void> {
-  const admin = await requireAdmin();
-  const db = getDb();
-  const boss = await getBoss();
-  await startAndRedirect(() => startProposalRun(db, boss, admin.email), "/sources");
-}
-
-/** "Wikivoyage" for a subdivision. */
-export async function wikivoyageRunAction(input: FormData | { subdivisionKey: string }): Promise<void> {
-  const admin = await requireAdmin();
-  const { subdivisionKey } = subdivisionSchema.parse(fields(input));
-  const db = getDb();
-  const boss = await getBoss();
-  await startAndRedirect(() => startWikivoyageRun(db, boss, subdivisionKey, admin.email), "/sources");
-}
-
-/** "Einbettungen nachholen": embeds every chunk still without an embedding. */
-export async function embedBackfillAction(): Promise<void> {
-  const admin = await requireAdmin();
-  const db = getDb();
-  const boss = await getBoss();
-  await startAndRedirect(() => startEmbedBackfillRun(db, boss, admin.email), "/sources");
-}
-
-/**
- * "Neue Texte auswerten" on the source list: a text run over every current version (of all sources) the match has not
- * passed with the current configuration; with nothing to do it still starts and finishes at once.
- */
-export async function pendingTextRunAction(): Promise<void> {
-  const admin = await requireAdmin();
-  const db = getDb();
-  const boss = await getBoss();
-  await startAndRedirect(() => startTextRun(db, boss, { pending: true, triggeredBy: admin.email }), "/sources");
-}
-
-const pendingSourceSchema = z.object({ sourceId: z.uuid() });
-
-/**
- * "Neue Texte auswerten" on a source page (UI-10): the same run, but only over the pending versions of this source
- * (`params.sourceIds`, run scope the source); a refusal returns to the source page.
- */
-export async function pendingSourceTextRunAction(formData: FormData): Promise<void> {
-  const admin = await requireAdmin();
-  const { sourceId } = pendingSourceSchema.parse({ sourceId: formData.get("sourceId") });
-  const db = getDb();
-  const boss = await getBoss();
-  await startAndRedirect(
-    () => startTextRun(db, boss, { pending: true, sourceIds: [sourceId], triggeredBy: admin.email }),
-    `/sources/${sourceId}`,
-  );
 }

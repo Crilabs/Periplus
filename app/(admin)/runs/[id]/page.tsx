@@ -45,7 +45,7 @@ import {
   trClass,
   type Tone,
 } from "../../_components/ui";
-import { catchUpConsolidationAction, endRunAction, recheckExtractionRunAction, retryJobAction } from "./actions";
+import { endRunAction, retryJobAction } from "./actions";
 
 /** The tab title: the run's short id (UI-15). */
 export async function generateMetadata({ params }: PageProps<"/runs/[id]">): Promise<Metadata> {
@@ -220,8 +220,7 @@ export default async function Page({ params, searchParams }: PageProps<"/runs/[i
         {blocked && (
           <Notice tone="danger" title="Konsolidierung gesperrt: Belegtreue unter 100 %">
             Nicht jedes Zitat eines Extraktionslaufs wurde im Text gefunden, oder ein Extraktionslauf ist noch nicht
-            geprüft. Bis dahin konsolidiert dieser Lauf nichts. Unter „Extraktionsläufe“ die Belegtreue
-            neu prüfen.
+            geprüft. Bis dahin konsolidiert dieser Lauf nichts. 
           </Notice>
         )}
         {noticeText && <Notice tone="warn">{noticeText}</Notice>}
@@ -234,16 +233,6 @@ export default async function Page({ params, searchParams }: PageProps<"/runs/[i
           <Notice
             tone="warn"
             title={`Konsolidierung übersprungen: ${CONSOLIDATION_SKIP_REASON_LABELS[skip.reason]}`}
-            actions={
-              !skip.catchUpRunId && (
-                <form action={catchUpConsolidationAction}>
-                  <input type="hidden" name="runId" value={run.id} />
-                  <Button type="submit" size="sm">
-                    Konsolidierung nachholen
-                  </Button>
-                </form>
-              )
-            }
           >
             <span title={fmt.dateTime(new Date(skip.at))}>Am {fmt.dateTime(new Date(skip.at))}.</span>{" "}
             {skip.catchUpRunId && (
@@ -464,14 +453,6 @@ function ExtractionRuns({ rows }: { rows: ExtractionRunRow[] }) {
                 <Badge tone={EXTRACTION_STATUS_TONES[r.status]}>{EXTRACTION_RUN_STATUS_LABELS[r.status]}</Badge>
                 {r.blockedReason && (
                   <span className="mt-1 block max-w-56 text-xs text-muted">{EXTRACTION_BLOCK_REASON_LABELS[r.blockedReason]}</span>
-                )}
-                {r.status === "blocked" && (
-                  <form action={recheckExtractionRunAction} className="mt-2">
-                    <input type="hidden" name="extractionRunId" value={r.id} />
-                    <Button type="submit" size="sm">
-                      Belegtreue neu prüfen
-                    </Button>
-                  </form>
                 )}
               </td>
             </tr>

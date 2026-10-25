@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Converter, ConverterName, Converted } from "@/lib/adapters/fetch";
 import { makeResponse, RetryableHttpError, type Transport } from "@/lib/adapters/http";
@@ -272,28 +272,6 @@ describe("startConverterComparison", () => {
     } as unknown as PgBoss;
     return { boss, inserted };
   }
-
-  it("picks the sample and queues only samples without three outputs; refuses without samples", () =>
-    withRollback(async (tx) => {
-      const { boss, inserted } = recordingBoss();
-      await expect(startConverterComparison(tx, boss, "admin")).rejects.toMatchObject({ reason: "no_converter_samples" });
-      expect(inserted).toEqual([]);
-
-      const source = await insertSource(tx);
-      await insertDocuments(tx, source, 6);
-      const done = await insertSample(tx);
-      for (const converter of ["jina", "firecrawl", "local"] as const) {
-        await tx.insert(converterOutputs).values({ sampleId: done.sampleId, converter, mdKey: comparisonMdKey(done.sampleId, converter) });
-      }
-      const started = await startConverterComparison(tx, boss, "admin");
-      expect(started.samples).toBe(5);
-      const own = await tx.select({ id: converterSamples.id }).from(converterSamples).where(eq(converterSamples.sourceId, source.id));
-      expect(inserted.filter((j) => j.queue === "compare.converters").map((j) => (j.data as { sampleId: string }).sampleId).sort()).toEqual(
-        own.map((r) => r.id).sort(),
-      );
-      await expect(startConverterComparison(tx, boss, "admin")).rejects.toMatchObject({ reason: "comparison_run_active" });
-      expect(await tx.select().from(converterSamples).where(inArray(converterSamples.id, [done.sampleId]))).toHaveLength(1);
-    }));
 
   it("a start waits for another start's lock, so two concurrent starts cannot both pass the check", async () => {
     const { boss, inserted } = recordingBoss();

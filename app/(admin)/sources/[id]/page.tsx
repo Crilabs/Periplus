@@ -45,16 +45,12 @@ import {
   thClass,
   trClass,
 } from "../../_components/ui";
-import { pendingSourceTextRunAction } from "../actions";
 import { SOURCE_STATUS_TONES } from "../tones";
 import {
-  crawlAction,
   endSourceAction,
   pauseSourceAction,
   resumeSourceAction,
   saveSourceAction,
-  testCrawlAction,
-  uploadPdfAction,
 } from "./actions";
 
 /** The tab title: the source's name (UI-15). */
@@ -86,10 +82,8 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
   const archivedElsewhere = archivedParam && UUID.test(archivedParam) ? await documentOfOtherSource(db, archivedParam, id) : null;
   // An ended source is shown read-only: no crawl, status change, upload or saving.
   const ended = source.validTo !== null;
-  const uploadable = !ended && source.status !== "rejected";
   const error = sourcePageError(sp.error);
   const endedObjects = param(sp.ended);
-  const endedRun = param(sp.run);
   const invalid = (param(sp.invalid) ?? "").split(",").filter((f) => f !== "");
   const mark = (field: string) =>
     invalid.includes(field) ? (
@@ -168,48 +162,11 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
         }
         actions={
           <>
-            <form action={pendingSourceTextRunAction}>
-              {hidden}
-              <Button variant="ghost" title="Nur diese Quelle: jede aktuelle Version, die der Abgleich noch nicht gesehen hat">
-                Neue Texte auswerten
-              </Button>
-            </form>
-            {uploadable && (
-              <Dialog
-                trigger="PDF hochladen …"
-                title="PDF hochladen"
-                description="Archiviert eine PDF-Datei als Dokument dieser Quelle und startet ihre Verarbeitung. Höchstens 100 MB."
-              >
-                <form action={uploadPdfAction} className="grid gap-4">
-                  {hidden}
-                  <Field label="PDF hochladen (höchstens 100 MB)">
-                    <input
-                      type="file"
-                      name="file"
-                      accept="application/pdf,.pdf"
-                      required
-                      className="text-sm file:mr-3 file:rounded-md file:border file:border-line-strong file:bg-surface file:px-3 file:py-1.5 file:text-sm file:text-ink"
-                    />
-                  </Field>
-                  <div className="flex justify-end">
-                    <Button variant="primary">Hochladen und archivieren</Button>
-                  </div>
-                </form>
-              </Dialog>
-            )}
             {!ended && source.status === "approved" && (
               <>
                 <form action={pauseSourceAction}>
                   {hidden}
                   <Button>Pausieren</Button>
-                </form>
-                <form action={testCrawlAction}>
-                  {hidden}
-                  <Button title="Crawlt höchstens 10 Seiten, um die Crawl-Regeln zu prüfen">Testcrawl 10 Seiten</Button>
-                </form>
-                <form action={crawlAction}>
-                  {hidden}
-                  <Button variant="primary">Crawlen</Button>
                 </form>
               </>
             )}
@@ -224,7 +181,7 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
                 trigger="Quelle beenden …"
                 triggerVariant="danger"
                 title="Quelle beenden"
-                description="Beendet die Quelle endgültig: Sie wird nicht mehr gecrawlt, und ihre Facts zählen in keinem Profil mehr. Danach werden die Objekte mit Facts aus ihr neu konsolidiert. Lässt sich nicht rückgängig machen."
+                description="Beendet die Quelle endgültig: Sie wird nicht mehr gecrawlt. Lässt sich nicht rückgängig machen."
               >
                 <form action={endSourceAction} className="flex justify-end">
                   {hidden}
@@ -240,23 +197,8 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
         {(error || invalid.length > 0 || archivedElsewhere || param(sp.saved) === "1" || endedObjects !== undefined) && (
           <div className="space-y-3">
             {endedObjects !== undefined && (
-              <Notice
-                tone={param(sp.endedNoRun) === "1" ? "warn" : "ok"}
-                title="Quelle beendet"
-                actions={
-                  endedRun &&
-                  UUID.test(endedRun) && (
-                    <ButtonLink href={`/runs/${endedRun}`} size="sm">
-                      Lauf ansehen
-                    </ButtonLink>
-                  )
-                }
-              >
-                {endedObjects === "0"
-                  ? "Ihre Facts zählen nicht mehr. Kein Objekt hatte Facts aus ihr."
-                  : param(sp.endedNoRun) === "1"
-                    ? `Ihre Facts zählen nicht mehr. Die Neuberechnung von ${endedObjects} Objekten ist nicht gestartet: „Profil neu berechnen“ auf den Orten.`
-                    : `Ihre Facts zählen nicht mehr. ${endedObjects} Objekte werden neu konsolidiert.`}
+              <Notice tone="ok" title="Quelle beendet">
+                {endedObjects === "0" ? "Kein Objekt hatte Facts aus ihr." : `${endedObjects} Objekte hatten Facts aus ihr.`}
               </Notice>
             )}
             {error && (
