@@ -60,9 +60,14 @@ jobs:
       - run: npm ci
       - name: Start test services
         run: bash .github/scripts/start-test-services.sh
+      # Playwright's browser download, keyed on the lock file (it pins the Playwright version).
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('package-lock.json') }}
       # The converter tests render pages in Chromium, the PDF tests run pdftotext.
-      - run: npx playwright install --with-deps chromium
-      - run: sudo apt-get update && sudo apt-get install -y poppler-utils
+      - name: Chromium and pdftotext
+        run: bash .github/scripts/install-browsers.sh --pdftotext
       - run: npx vitest run --shard=${{ matrix.shard }}/3
       - name: Service logs on failure
         if: failure()
@@ -80,7 +85,13 @@ jobs:
       - run: npm ci
       - name: Start test services
         run: bash .github/scripts/start-test-services.sh
-      - run: npx playwright install --with-deps chromium
+      # Playwright's browser download, keyed on the lock file (it pins the Playwright version).
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('package-lock.json') }}
+      - name: Chromium
+        run: bash .github/scripts/install-browsers.sh
       # Next's incremental build cache; a hit only speeds the build up, a stale one is ignored by Next.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
