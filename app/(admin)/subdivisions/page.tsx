@@ -106,7 +106,7 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
     <>
       <PageHeader
         title="Länder und Landesteile"
-        description="Je Land seine Landesteile mit Mittelmeerküste. „Aufbauen“ startet Gazetteer, Datensätze, Seed, Geometrie und Discovery für einen Landesteil; „Alle offenen aufbauen“ stellt die nicht begonnenen Landesteile eines Landes nacheinander in die Warteschlange. Abruf, Texte und Paket bleiben eigene Läufe."
+        description="Je Land seine Landesteile mit Mittelmeerküste. „Aufbauen“ startet Gazetteer, Datensätze, Seed, Geometrie und Discovery für einen Landesteil; „Alle offenen aufbauen“ stellt die nicht begonnenen Landesteile eines Landes nacheinander in die Warteschlange. Abruf, Texte und Paket bleiben eigene Läufe. „teilweise“: einzelne Stufen des Aufbaus sind beendet (Einzelläufe), der Aufbau als Ganzes nicht; „läuft“ gilt für jeden Lauf mit dem Landesteil als Umfang. Länder mit einem begonnenen Landesteil sind aufgeklappt."
         actions={
           <form action={rebuildSubdivisionsAction} className="flex items-center gap-2">
             <input
@@ -155,7 +155,7 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
         <ul className="space-y-3" aria-label="Länder">
           {filtered.map((c) => (
             <li key={c.country}>
-              <details className="group rounded-lg border border-line bg-surface" open={c.whole || status !== undefined}>
+              <details className="group rounded-lg border border-line bg-surface" open={c.whole || c.expanded || status !== undefined}>
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3">
                   <span className="min-w-0">
                     <span className="font-medium">{c.name}</span>

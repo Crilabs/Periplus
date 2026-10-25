@@ -56,8 +56,8 @@ export {
   SHELTER_SCALE_WORDS,
 } from "@/lib/domain/facts/labels";
 
-/** The language of a name for display: `und` (ISO 639 „undetermined“, an OSM `name` without language) reads „unbekannt“. */
-export const languageLabel = (code: string): string => (code === "und" ? "unbekannt" : code);
+/** The language of a name for display: `und` (ISO 639 „undetermined“, an OSM `name` without language) reads „ohne Sprache“ (B13). */
+export const languageLabel = (code: string): string => (code === "und" ? "ohne Sprache" : code);
 
 /** German display labels for English enum values. Typed as complete records, so a new enum value fails typecheck. */
 

@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import type { RunKind, RunStatus } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
-import { subdivisionDetail } from "@/lib/domain/subdivisions/view";
+import { subdivisionDetail, subdivisionStageHistory } from "@/lib/domain/subdivisions/view";
+import { SUBDIVISION_BUILD_STAGES } from "@/lib/pipeline/subdivision-build";
 import { requireAdmin } from "@/lib/security/require-admin";
-import { RUN_KIND_LABELS, RUN_STATUS_LABELS, runScopeError } from "../../_components/labels";
+import { RUN_KIND_LABELS, RUN_STATUS_LABELS, runScopeError, STAGE_LABELS } from "../../_components/labels";
 import {
   Badge,
   Button,
@@ -32,10 +33,11 @@ export async function generateMetadata({ params }: PageProps<"/subdivisions/[key
 export default async function Page({ params, searchParams }: PageProps<"/subdivisions/[key]">) {
   await requireAdmin();
   const key = decodeURIComponent((await params).key);
-  const d = await subdivisionDetail(getDb(), key);
+  const [d, stages] = await Promise.all([subdivisionDetail(getDb(), key), subdivisionStageHistory(getDb(), key)]);
   if (!d) notFound();
   const error = runScopeError((await searchParams).error);
   const date = (iso: string | null) => fmt.dateTime(iso ? new Date(iso) : null);
+  const stagesNotRun = SUBDIVISION_BUILD_STAGES.filter((stage) => !stages.some((s) => s.stage === stage));
 
   return (
     <>
@@ -176,6 +178,54 @@ export default async function Page({ params, searchParams }: PageProps<"/subdivi
           )}
         </Panel>
       </div>
+
+      <Panel
+        title="Stufen"
+        description="Je Stufe der jüngste Lauf mit diesem Landesteil als Umfang, der sie beendet hat – auch Einzelläufe. „zuletzt beendet“ ist das Ende dieses Laufs. Stufen des Aufbaus in Laufreihenfolge, dann weitere."
+        className="mb-6"
+        flush
+      >
+        {stages.length === 0 ? (
+          <EmptyState title="Noch keine Stufe beendet">„Aufbauen“ oder ein Einzellauf (Dinge an Land, Recherche) beendet Stufen für diesen Landesteil.</EmptyState>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <th className={thClass}>Stufe</th>
+                <th className={thClass}>zuletzt beendet</th>
+                <th className={thClass}>Lauf</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stages.map((s) => (
+                <tr key={s.stage} className={trClass}>
+                  <td className={tdClass}>
+                    <Mono>{s.stage}</Mono>
+                    {STAGE_LABELS[s.stage] && <span className="ml-2 text-xs text-muted">{STAGE_LABELS[s.stage]}</span>}
+                  </td>
+                  <td className={cx(tdClass, "whitespace-nowrap")}>{s.finishedAt ? date(s.finishedAt) : <span className="text-muted">Lauf läuft noch</span>}</td>
+                  <td className={tdClass}>
+                    <TextLink href={`/runs/${s.runId}`} className="font-mono text-[0.8125rem]" title={s.runId}>
+                      {s.runId.slice(0, 8)}
+                    </TextLink>
+                    <span className="ml-2 text-xs text-muted">{RUN_STATUS_LABELS[s.runStatus as RunStatus] ?? s.runStatus}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+        {stages.length > 0 && stagesNotRun.length > 0 && (
+          <p className="border-t border-line px-4 py-3 text-xs text-muted">
+            Noch nie beendet: {stagesNotRun.map((stage, i) => (
+              <span key={stage}>
+                {i > 0 && ", "}
+                <Mono>{stage}</Mono>
+              </span>
+            ))}
+          </p>
+        )}
+      </Panel>
 
       <Panel title="Läufe" description="Die letzten 20 Läufe mit diesem Landesteil als Umfang." flush>
         {d.runs.length === 0 ? (
