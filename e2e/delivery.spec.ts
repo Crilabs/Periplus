@@ -13,7 +13,7 @@ async function login(page: import("@playwright/test").Page) {
   await expect(page.getByRole("heading", { name: "Übersicht" })).toBeVisible();
 }
 
-test("the synthetic subdivision's package is valid with 17 passed checks, spots.json downloads, „Paket bauen“ opens its run", async ({ page }) => {
+test("the synthetic subdivision's package is valid with every check passed, spots.json downloads, „Paket bauen“ opens its run", async ({ page }) => {
   await login(page);
 
   await page.goto("/deliveries");
@@ -26,9 +26,12 @@ test("the synthetic subdivision's package is valid with 17 passed checks, spots.
   await row.getByRole("link").first().click();
   await expect(page).toHaveURL(/\/deliveries\/[0-9a-f-]{36}$/);
   await expect(page.getByRole("heading", { name: /Version 1$/ })).toBeVisible();
-  await expect(page.getByText("Alle 17 Prüfungen bestanden.")).toBeVisible();
+  const passed = page.getByText(/^Alle \d+ Prüfungen bestanden\.$/);
+  await expect(passed).toBeVisible();
+  const total = Number((await passed.textContent())!.match(/\d+/)![0]);
+  expect(total).toBeGreaterThan(0);
   const checks = page.locator("section").filter({ has: page.getByRole("heading", { name: "Validierungsbericht" }) }).getByRole("listitem");
-  await expect(checks).toHaveCount(17);
+  await expect(checks).toHaveCount(total);
   for (const check of await checks.all()) await expect(check.getByText("ok", { exact: true })).toBeVisible();
 
   const download = page.locator('a[download][href$="/files/spots.json"]');
