@@ -104,7 +104,7 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   },
   berth: {
     attributes: ["occupancy"],
-    note: "port/marina: full months → seasonFull, only empty/moderate → usuallySpace, else unknown; anchorages unknown",
+    note: "sourcesCount = the same independent-source count; port/marina: full months → seasonFull, only empty/moderate → usuallySpace, else unknown; anchorages unknown",
   },
   occupancy: { attributes: ["occupancy"], note: "known months ascending; omitted without occupancy" },
   exclude: {
@@ -121,7 +121,7 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   },
   score: {
     attributes: [],
-    note: "confidence = mean of the confidences of the state's core values (rule values aside), 0 without; popularity ?? 0; quietness null (no value in the state); sourcesCount = distinct facts behind the core values and the facts; newest text date; 3 decimals",
+    note: "confidence = mean of the confidences of the state's core values (rule values aside), 0 without; popularity ?? 0; quietness null (no value in the state); sourcesCount = the independent sources behind the confirmation (decideBerth), 0 without a state; newest text date; 3 decimals",
   },
   externalRefs: { attributes: [], note: "osm_id, wikidata_id; googlePlaceIds {} until M8" },
   images: {
@@ -145,7 +145,8 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
 export type SpotWarning =
   | { code: "fallback_name" }
   | { code: "nearby_without_id"; geoObjectId: string }
-  | { code: "fact_without_subject"; factId: string };
+  | { code: "fact_without_subject"; factId: string }
+  | { code: "safety_fact_without_subject"; factId: string };
 
 /**
  * An excluded spot is always delivered (Teil B "Ausgeschlossene Spots werden mit `exclude.excluded = true` und Grund
@@ -248,12 +249,12 @@ export function mapSpot(src: SpotSource, ctx: { regionId: string | null; cfg: De
     limits: { maxDraft: num(a["max_draft"]), maxLength: num(a["max_length"]), capacity: num(a["capacity"]) },
     mooring: mooring(a),
     services: services(a, nearby.delivered, seasonHints.some((h) => h.kind === "open")),
-    berth: berth(a["occupancy"], isHarbour, state?.core["occupancy"]?.factIds.length ?? 0),
+    berth: berth(a["occupancy"], isHarbour, state ? src.independentSources : 0),
     occupancy: occupancy(a["occupancy"]),
     exclude,
     hazards: hazards(a["hazards"], { ferryLane, cable }),
     seasonNote: seasonNotes(seasonHints, seasonalBans),
-    score: score(state, src.popularity),
+    score: score(state, src.popularity, state ? src.independentSources : 0),
     externalRefs: { googlePlaceIds: {}, osmId: src.osmId, wikidataId: src.wikidataId },
     images: mapImages(src.publicId, src.images),
     provenance: provenance(p, has, {
@@ -263,6 +264,7 @@ export function mapSpot(src: SpotSource, ctx: { regionId: string | null; cfg: De
       prohibitionHazard: ferryLane || cable,
       seasonalBan: seasonalBans.length > 0,
       nearby: nearby.delivered,
+      anchorConfidence: src.anchor?.confidence ?? 1,
     }),
     regionId: ctx.regionId,
     mergedInto: null,
@@ -281,10 +283,9 @@ function anchorPosition(anchor: SpotSource["anchor"]): SpotBody["anchorPosition"
 }
 
 /** The `score` block: confidence from the core values, evidence count and newest date from the state. */
-function score(state: SpotSource["state"], popularity: number | null): SpotBody["score"] {
+function score(state: SpotSource["state"], popularity: number | null, sourcesCount: number): SpotBody["score"] {
   const core = Object.values(state?.core ?? {});
   const rated = core.filter((v) => v.origin !== "rule");
-  const evidence = new Set([...core.flatMap((v) => v.factIds), ...(state?.facts ?? []).flatMap((f) => f.memberIds ?? [f.factId])]);
   const dates = [...core.filter((v) => v.origin === "text").map((v) => v.observedAt), ...(state?.facts ?? []).map((f) => f.observedAt)]
     .map((d) => d?.slice(0, 10) ?? null)
     .filter((d): d is string => d !== null);
@@ -292,7 +293,7 @@ function score(state: SpotSource["state"], popularity: number | null): SpotBody[
     confidence: rated.length === 0 ? 0 : round3(rated.reduce((sum, v) => sum + v.confidence, 0) / rated.length),
     popularity: round3(popularity ?? 0),
     quietness: null,
-    sourcesCount: evidence.size,
+    sourcesCount,
     lastObserved: dates.length === 0 ? null : dates.reduce((x, y) => (y > x ? y : x)),
   };
 }
@@ -358,12 +359,12 @@ const knownOccupancy = (value: unknown): Array<{ month: number; level: "empty" |
         .sort((x, y) => x.month - y.month)
     : [];
 
-function berth(value: unknown, isHarbour: boolean, evidenceCount: number): SpotBody["berth"] {
+function berth(value: unknown, isHarbour: boolean, sourcesCount: number): SpotBody["berth"] {
   if (!isHarbour) return { status: "unknown", months: [], sourcesCount: 0, bookable: null };
   const months = knownOccupancy(value);
   const full = months.filter((e) => e.level === "full").map((e) => e.month);
   const status = full.length > 0 ? "seasonFull" : months.length > 0 ? "usuallySpace" : "unknown";
-  return { status, months: full, sourcesCount: months.length > 0 ? evidenceCount : 0, bookable: null };
+  return { status, months: full, sourcesCount: months.length > 0 ? sourcesCount : 0, bookable: null };
 }
 
 function occupancy(value: unknown): SpotBody["occupancy"] {
@@ -447,7 +448,7 @@ export function mapSources(
 function provenance(
   p: Record<string, ProvenanceInfo>,
   has: (key: string) => boolean,
-  o: { anchorPosition: boolean; depth: boolean; banExcludes: boolean; prohibitionHazard: boolean; seasonalBan: boolean; nearby: DeliveredNearby[] },
+  o: { anchorPosition: boolean; depth: boolean; banExcludes: boolean; prohibitionHazard: boolean; seasonalBan: boolean; nearby: DeliveredNearby[]; anchorConfidence: number },
 ): SpotBody["provenance"] {
   const groups: Record<string, string[]> = {
     shelter: SHELTER_ATTRIBUTES,
@@ -473,7 +474,7 @@ function provenance(
   }
   // the places's anchor position and the services drawn from the things on land are computed values
   const computed: ProvenanceInfo = { origin: "computed", confidence: 1, observedAt: null };
-  if (o.anchorPosition) out["anchorPosition"] = aggregateProvenance([computed]);
+  if (o.anchorPosition) out["anchorPosition"] = aggregateProvenance([{ ...computed, confidence: o.anchorConfidence }]);
   if (reachedOnFoot(o.nearby, SHOP_CATEGORIES)) out["services.shop"] = aggregateProvenance([computed]);
   if (reachedOnFoot(o.nearby, TAVERNA_CATEGORIES)) out["services.taverna"] = aggregateProvenance([computed]);
   return out;

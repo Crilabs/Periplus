@@ -5,6 +5,7 @@ import type { Db } from "@/lib/db/client";
 import type { GeoObjectType, HighlightCategory, PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
 import { berthStates } from "@/lib/db/schema/research-state";
 import type { DocType } from "@/lib/db/schema/sources";
+import { decideBerth, loadEvidence } from "@/lib/domain/research/confirmation";
 import { popularityForPlaces } from "@/lib/domain/consolidation/derived/popularity";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";
@@ -81,6 +82,8 @@ export async function loadSubdivisionScope(
   const areaRows = await loadAreas(db, tileArray, today);
 
   const states = await loadStates(db, spotRows.map((r) => r.placeId));
+  const evidence = await loadEvidence(db, spotRows.map((r) => r.placeId));
+  const confirmationCfg = getConfig().research.confirmation;
   const nearbyObjectRows = await loadNearbyObjects(db, [...states.values()].flatMap((st) => st.nearby.map((n) => n.geoObjectId)), today);
   const objectIds = [...spotRows, ...poiRows, ...regionRows].map((r) => r.geoObjectId);
   const profiles = await latestProfiles(db, [...objectIds, ...passages.map((p) => p.geoObjectId)]);
@@ -98,6 +101,7 @@ export async function loadSubdivisionScope(
       ...r,
       names: names.get(r.geoObjectId) ?? [],
       state,
+      independentSources: decideBerth(r.kind, evidence.get(r.placeId) ?? [], confirmationCfg).independentSources.length,
       nearbyObjects: (state?.nearby ?? []).flatMap((n) => nearbyObjects.get(n.geoObjectId) ?? []),
       popularity: popularity.get(r.geoObjectId) ?? null,
       images: images.get(r.geoObjectId) ?? [],
@@ -208,7 +212,7 @@ async function loadTiles(db: Db, subdivisionId: string, tileArray: SQL, cfg: Del
   }));
 }
 
-type SpotRow = Omit<SpotSource, "names" | "state" | "nearbyObjects" | "popularity" | "images">;
+type SpotRow = Omit<SpotSource, "names" | "state" | "independentSources" | "nearbyObjects" | "popularity" | "images">;
 
 async function loadSpotRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, today: string): Promise<SpotRow[]> {
   const anchorConfidence = getConfig().geometry.anchorArea.positionConfidence;

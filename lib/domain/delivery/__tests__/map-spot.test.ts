@@ -89,6 +89,7 @@ function spotA(
         ? null
         : { placeId: "p", core, gaps: ["prices"], facts: [], landing: [], nearby: [nearbyEntry()], runId: null, updatedAt: UPDATED, ...o.state },
     nearbyObjects: [object()],
+    independentSources: 1,
     popularity: 0.55,
     images: [],
     ...o.src,
@@ -146,7 +147,7 @@ const FIELD_CASES: Record<keyof SpotBody, () => void> = {
   position: () => expect(mapped().position).toEqual({ lat: 35.145, lon: 21.13 }),
   anchorPosition: () => {
     expect(mapped().anchorPosition).toEqual({ lat: 35.1445, lon: 21.1301, confidence: 0.3, source: "computed" });
-    expect(mapped().provenance["anchorPosition"]).toEqual({ source: "computed", confidence: 1, observedAt: null });
+    expect(mapped().provenance["anchorPosition"]).toEqual({ source: "computed", confidence: 0.3, observedAt: null });
   },
   shelter: () => expect(mapped().shelter.sectors.NW).toBe(0.95),
   depth: () => {
@@ -189,6 +190,8 @@ const FIELD_CASES: Record<keyof SpotBody, () => void> = {
   berth: () => {
     expect(mapped().berth).toEqual({ status: "unknown", months: [], sourcesCount: 0, bookable: null });
     expect(mapped(marina()).berth).toEqual({ status: "seasonFull", months: [7, 8], sourcesCount: 1, bookable: null });
+    // the independent sources of the confirmation, not the facts behind occupancy
+    expect(mapped({ ...marina(), independentSources: 3 }).berth!.sourcesCount).toBe(3);
   },
   occupancy: () => {
     expect(mapped().occupancy).toEqual([
@@ -202,10 +205,14 @@ const FIELD_CASES: Record<keyof SpotBody, () => void> = {
   hazards: () => expect(mapped().hazards).toEqual([{ kind: "rock", text: "Fels: Petra" }]),
   seasonNote: () => expect(mapped().seasonNote).toEqual([{ months: [6, 7, 8, 9], text: "Geöffnet" }]),
   score: () => {
-    // the mean confidence of the 22 non-rule core values; one text fact behind them, the newest text date
+    // the mean confidence of the 22 non-rule core values; the confirmation's independent sources, the newest text date
     expect(mapped().score).toEqual({ confidence: 0.77, popularity: 0.55, quietness: null, sourcesCount: 1, lastObserved: "2025-06-10" });
+    // many facts do not raise the count; only the confirmation's sources do
     const withFacts = mapped(spotA({ state: { facts: [fact({ factId: FACT_2, observedAt: "2026-09-01", memberIds: [FACT_2, FACT_3] })] } }));
-    expect(withFacts.score).toMatchObject({ sourcesCount: 3, lastObserved: "2026-09-01" });
+    expect(withFacts.score).toMatchObject({ sourcesCount: 1, lastObserved: "2026-09-01" });
+    expect(mapped(spotA({ src: { independentSources: 4 } })).score.sourcesCount).toBe(4);
+    // a spot without a state (excluded) has none
+    expect(mapped(excludedC({ state: null, src: { independentSources: 4 } })).score.sourcesCount).toBe(0);
   },
   externalRefs: () => expect(mapped().externalRefs).toEqual({ googlePlaceIds: {}, osmId: "way/123456789", wikidataId: null }),
   images: () => {
@@ -336,7 +343,7 @@ describe("mapSpot", () => {
     expect(spot.exclude).toEqual({ excluded: true, reason: "military", detail: "Militärisches Sperrgebiet (ausgeschlossen – keine Schutzwerte)" });
     expect(spot.shelter).toEqual({ sectors: { N: 0, NE: 0, E: 0, SE: 0, S: 0, SW: 0, W: 0, NW: 0 }, swell: 0, source: ORIGIN.rule });
     expect(spot.score).toEqual({ confidence: 0, popularity: 0.55, quietness: null, sourcesCount: 0, lastObserved: null });
-    expect(spot.provenance).toEqual({ anchorPosition: { source: "computed", confidence: 1, observedAt: null } });
+    expect(spot.provenance).toEqual({ anchorPosition: { source: "computed", confidence: 0.3, observedAt: null } });
     expect(spot).toMatchObject({ gaps: [], facts: [], landingPoints: [], nearby: [], berthable: null });
     expect(asOf).toBeNull();
     expect(warnings).toEqual([]);
@@ -489,6 +496,9 @@ describe("mapSpot", () => {
       { code: "nearby_without_id", geoObjectId: "g-gone" },
       { code: "fact_without_subject", factId: FACT_2 },
     ]);
+    // a dropped safety fact is reported louder
+    const safety = mappedWithWarnings(spotA({ state: { facts: [fact({ subject: "landside", subjectName: null, safety: true })] } }));
+    expect(safety.warnings).toEqual([{ code: "safety_fact_without_subject", factId: FACT_2 }]);
   });
 });
 

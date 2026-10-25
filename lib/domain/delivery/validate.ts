@@ -643,6 +643,7 @@ const SPOT_WARNING_DE: Record<SpotWarning["code"], string> = {
   fallback_name: "Ausgeschlossener Spot ohne gültigen Namen, mit Ersatznamen geliefert",
   nearby_without_id: "Ding an Land ohne öffentliche ID, nicht geliefert",
   fact_without_subject: "Landfakt ohne Bezugsnamen, nicht geliefert",
+  safety_fact_without_subject: "Sicherheitsfakt ohne Bezugsnamen, nicht geliefert: Sicherheitshinweis geht verloren",
 };
 
 const HIGHLIGHT_DROPPED_DE: Record<DroppedHighlight["reason"], string> = {

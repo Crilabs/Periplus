@@ -7,6 +7,8 @@ import { addNames } from "@/lib/domain/gazetteer/names";
 import { osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { newPublicId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";
+import { getConfig } from "@/lib/config";
+import { signalPage } from "@/test/research-signals";
 import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { spotSchema } from "@/contract/v2";
 import { insertNamedObject, insertTestSubdivision } from "@/test/text";
@@ -111,6 +113,24 @@ describe("loadSubdivisionScope", () => {
       await tx.execute(sql`update geo_objects set valid_from = current_date - 5, valid_to = current_date - 1 where id = ${f.poiId}`);
       const ended = (await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx))).spots.find((s) => s.publicId === A.publicId)!;
       expect(ended.nearbyObjects).toEqual([]);
+    });
+  });
+
+  it("independentSources counts the confirmation's sources: two pages of one domain are one", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliverySubdivision(tx);
+      const { A, M } = f.places;
+      const config = getConfig();
+      const place = { placeId: A.placeId, objectId: A.geoObjectId };
+      await signalPage(tx, config, place, { domain: "guide-one.example", quote: "We anchored in the northern corner of the bay overnight" });
+      await signalPage(tx, config, place, { domain: "guide-one.example", quote: "Another crew dropped the hook near the beach at sunset" });
+      const count = async () => {
+        const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
+        return [A, M].map((p) => scope.spots.find((s) => s.publicId === p.publicId)!.independentSources);
+      };
+      expect(await count()).toEqual([1, 0]);
+      await signalPage(tx, config, place, { domain: "guide-two.example", quote: "Completely different words about a quiet night at anchor" });
+      expect(await count()).toEqual([2, 0]);
     });
   });
 

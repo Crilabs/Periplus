@@ -71,12 +71,12 @@ export function mapNearby(
   return { delivered, warnings: warnings.sort((a, b) => byId(a.geoObjectId, b.geoObjectId)) };
 }
 
-export type FactWarning = { code: "fact_without_subject"; factId: string };
+export type FactWarning = { code: "fact_without_subject" | "safety_fact_without_subject"; factId: string };
 
 /**
  * The state's facts as contract facts, newest first. A landside fact is assigned to the `nearby` entry whose name
  * (normalized, any of the object's names) equals its `subjectName`: `subject.id` set; otherwise `id: null` with the
- * name (E3). A landside fact without a name is left out with a warning: the contract needs an id or a name.
+ * name (E3). A landside fact without a name is left out with a warning (a louder one for a safety fact): the contract needs an id or a name.
  */
 export function mapFacts(facts: BerthStateFact[], nearby: DeliveredNearby[]): { facts: Fact[]; warnings: FactWarning[] } {
   const out: Fact[] = [];
@@ -86,7 +86,7 @@ export function mapFacts(facts: BerthStateFact[], nearby: DeliveredNearby[]): { 
     if (f.subject === "landside") {
       const name = f.subjectName?.trim() ? f.subjectName.trim() : null;
       if (name === null) {
-        warnings.push({ code: "fact_without_subject", factId: f.factId });
+        warnings.push({ code: f.safety ? "safety_fact_without_subject" : "fact_without_subject", factId: f.factId });
         continue;
       }
       const key = normalizeName(name);
