@@ -304,7 +304,7 @@ describe("checkAsOf", () => {
     };
     const result = await checkAsOf({ baseUrl: "http://localhost:3001/", key: "pk_test", spotId: "sp_01ABC", asOf: "2026-06-07", expectBefore: { dataVersion: 1 }, fetch: stub });
     expect(result).toEqual({ ok: true, status: 200, dataVersion: 1 });
-    expect(seen).toEqual([{ url: "http://localhost:3001/api/v3/spots/sp_01ABC?asOf=2026-06-07", auth: "Bearer pk_test" }]);
+    expect(seen).toEqual([{ url: "http://localhost:3001/api/v4/spots/sp_01ABC?asOf=2026-06-07", auth: "Bearer pk_test" }]);
   });
 
   it("compares the old spot when given, not only its data version (ruling M7-G-R3)", async () => {

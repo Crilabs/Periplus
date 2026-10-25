@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { check, doublePrecision, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import type { CoverageEntry } from "@/contract/v3_0";
+import type { CoverageEntry } from "@/contract";
 import { newId } from "@/lib/domain/ids";
 import { apiClients } from "./auth";
 

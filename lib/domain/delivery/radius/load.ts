@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import type { CoastCollection, CoverageEntry, HighlightsFile, RegionsFile, Spot, SpotsFile, WeatherPointsFile } from "@/contract/v3_0";
+import type { CoastCollection, CoverageEntry, RegionsFile, Spot, SpotsFile, WeatherPointsFile } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";
@@ -112,9 +112,8 @@ export async function loadSourcePackage(
   const delivery = await validDelivery(db, subdivisionId, entry.dataVersion);
   if (!delivery) throw new Error(`subdivision ${entry.key} has no valid package ${entry.dataVersion}`);
   const manifest = await readManifest(archive, delivery);
-  const [spots, highlights, regions, points, coast] = await Promise.all([
+  const [spots, regions, points, coast] = await Promise.all([
     readJsonFile<SpotsFile>(archive, delivery, "spots.json"),
-    readJsonFile<HighlightsFile>(archive, delivery, "highlights.json"),
     readJsonFile<RegionsFile>(archive, delivery, "regions.json"),
     readJsonFile<WeatherPointsFile>(archive, delivery, "weather-points.json"),
     readJsonFile<CoastCollection>(archive, delivery, "coast.geojson"),
@@ -123,11 +122,9 @@ export async function loadSourcePackage(
     coverage: { ...entry, status: "delivered" },
     generatedAt: manifest.generatedAt,
     spots: spots.spots,
-    highlights: highlights.highlights,
     regions: regions.regions,
     weatherPoints: points.points,
-    // interim: the radius package is still 3.0 (task 4); the tile date is the 4.0 `statesAsOf`
-    tiles: manifest.tiles.map((t) => ({ id: t.id, lastRunAt: t.lastRunAt, profilesAsOf: t.statesAsOf })),
+    tiles: manifest.tiles,
     areas: manifest.areas,
     licenses: manifest.licenses,
     imageFiles: manifest.files.filter((f) => isImageFile(f.name)),

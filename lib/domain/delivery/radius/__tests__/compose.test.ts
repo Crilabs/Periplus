@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { Highlight, Region, Spot } from "@/contract/v3_0";
-import { highlightsFileSchema, manifestSchema, regionsFileSchema, spotsFileSchema, weatherPointsFileSchema } from "@/contract/v3_0";
+import type { Region, Spot } from "@/contract";
+import { manifestSchema, regionsFileSchema, spotsFileSchema, weatherPointsFileSchema } from "@/contract/v2";
 import { getConfig } from "@/lib/config";
-import type { DeliveryPackage } from "@/test/fixtures/delivery/package";
-import { HIGHLIGHT, REGION, SPOT_A, SPOT_M, SUBDIVISION_ID, WEATHER_POINT, validPackage } from "@/test/fixtures/delivery/package";
+import type { DeliveryPackage } from "@/lib/domain/delivery/types";
+import { REGION, SPOT_A, SPOT_M, SUBDIVISION_ID, TAVERNA, WEATHER_POINT, validPackage } from "@/test/fixtures/delivery/package-v4";
 import { round5 } from "../../geo";
 import { composeRadiusPackage } from "../compose";
 import { destination } from "../geometry";
@@ -20,8 +20,6 @@ const R = 25;
 const P2_SD = "sd_01J9ZE00000000000000000002";
 const P2_IN = "sp_01J9ZE00000000000000000001";
 const P2_OUT = "sp_01J9ZE00000000000000000002";
-const HL_KEPT = "hl_01J9ZE00000000000000000001";
-const HL_DROPPED = "hl_01J9ZE00000000000000000002";
 const RG_EDGE = "rg_01J9ZE00000000000000000001";
 const RG_PARENT = "rg_01J9ZE00000000000000000002";
 const RG_GRANDPARENT = "rg_01J9ZE00000000000000000003";
@@ -46,7 +44,6 @@ function source(pkg: DeliveryPackage, imageNames: string[] = []): SourcePackage 
     coverage: { ...coverage, status: "delivered" },
     generatedAt: pkg.manifest.generatedAt,
     spots: pkg.files["spots.json"].spots,
-    highlights: pkg.files["highlights.json"].highlights,
     regions: pkg.files["regions.json"].regions,
     weatherPoints: pkg.files["weather-points.json"].points,
     tiles: pkg.manifest.tiles,
@@ -61,18 +58,16 @@ function p1(): SourcePackage {
   pkg.manifest.licenses = [
     { name: "ODbL-1.0", attribution: "© OpenStreetMap contributors", url: "https://opendatacommons.org/licenses/odbl/1-0/", files: ["coast.geojson"], fields: ["spots.json#/spots/*/name"] },
   ];
-  return source(pkg, [`images/${SPOT_A}-title.jpg`, `images/${HIGHLIGHT}-title.jpg`]);
+  return source(pkg, [`images/${SPOT_A}-title.jpg`, `images/${TAVERNA}-title.jpg`]);
 }
 
 /** The second subdivision; `shared` adds the fixture's region to it in that form. */
 function p2(shared?: (r: Region) => Region): SourcePackage {
   const base = validPackage();
   const [spotA] = base.files["spots.json"].spots;
-  const [hl] = base.files["highlights.json"].highlights;
   const [rg] = base.files["regions.json"].regions;
   const [wp] = base.files["weather-points.json"].points;
-  const spot = (id: string, nm: number): Spot => ({ ...spotA!, id, position: northOf(nm), anchorPosition: undefined, highlightIds: [], regionId: RG_EDGE });
-  const highlight = (id: string, spotIds: string[]): Highlight => ({ ...hl!, id, position: northOf(R + 5), spotIds, regionId: null });
+  const spot = (id: string, nm: number): Spot => ({ ...spotA!, id, position: northOf(nm), anchorPosition: undefined, regionId: RG_EDGE });
   const edgeSouth = northOf(R - 1).lat;
   const edgeNorth = northOf(R + 20).lat;
   const [w, e] = [CENTER.lon - 0.2, CENTER.lon + 0.2];
@@ -96,7 +91,6 @@ function p2(shared?: (r: Region) => Region): SourcePackage {
     coverage: { id: P2_SD, key: "XT-ZWEI", name: "Zweiter Landesteil", status: "delivered", dataVersion: 5 },
     generatedAt: "2026-10-21T06:00:00.000Z",
     spots: [spot(P2_IN, R - 0.1), spot(P2_OUT, R + 0.1)],
-    highlights: [highlight(HL_KEPT, [P2_IN, P2_OUT]), highlight(HL_DROPPED, [P2_OUT])],
     regions,
     weatherPoints: [
       { ...wp!, id: WP_MARGIN, position: northOf(R + 1), regionId: null },
@@ -104,8 +98,8 @@ function p2(shared?: (r: Region) => Region): SourcePackage {
       { ...wp!, id: WP_FAR_REGION, position: northOf(R - 5), regionId: RG_FAR },
     ],
     tiles: [
-      { id: "q025:804:502", lastRunAt: "2026-10-20T00:00:00.000Z", profilesAsOf: "2026-10-20" },
-      { id: "q025:900:600", lastRunAt: "2026-10-20T00:00:00.000Z", profilesAsOf: "2026-10-20" },
+      { id: "q025:804:502", lastRunAt: "2026-10-20T00:00:00.000Z", statesAsOf: "2026-10-20" },
+      { id: "q025:900:600", lastRunAt: "2026-10-20T00:00:00.000Z", statesAsOf: "2026-10-20" },
     ],
     areas: [{ id: "ar_01J9ZE00000000000000000001", key: "zwei", names: [{ lang: "de", name: "Zweites Revier" }] }],
     licenses: [
@@ -114,7 +108,7 @@ function p2(shared?: (r: Region) => Region): SourcePackage {
     imageFiles: [
       { name: `images/${P2_IN}-title.jpg`, sha256: "b".repeat(64), bytes: 200 },
       { name: `images/${P2_OUT}-title.jpg`, sha256: "c".repeat(64), bytes: 300 },
-      { name: `images/${HL_DROPPED}-title.jpg`, sha256: "d".repeat(64), bytes: 400 },
+      { name: `images/${TAVERNA}-title.jpg`, sha256: "d".repeat(64), bytes: 400 },
     ],
   };
 }
@@ -133,11 +127,9 @@ describe("composeRadiusPackage", () => {
     expect(ids(out.files["spots.json"].spots)).toEqual([SPOT_A, SPOT_M, P2_IN].sort());
   });
 
-  it("keeps a highlight outside whose only included spot is inside, with trimmed spotIds; drops one without", () => {
+  it("has no highlights file in the composition", () => {
     const out = composeRadiusPackage(input([p1(), p2()]), cfg);
-    const highlights = out.files["highlights.json"].highlights;
-    expect(ids(highlights)).toEqual([HIGHLIGHT, HL_KEPT].sort());
-    expect(highlights.find((h) => h.id === HL_KEPT)!.spotIds).toEqual([P2_IN]);
+    expect(Object.keys(out.files).sort()).toEqual(["regions.json", "spots.json", "weather-points.json"]);
   });
 
   it("takes a region that only crosses the circle, with its parent chain, and trims its spotIds", () => {
@@ -187,19 +179,29 @@ describe("composeRadiusPackage", () => {
     expect(regionsOf(out).find((r) => r.id === RG_EDGE)!.spotIds).toEqual([P2_IN, P2_OUT]);
   });
 
-  it("a region in both packages: once, the higher profileVersion, spotIds the union trimmed to included spots", () => {
-    const pkg = p2((r) => ({ ...r, profileVersion: 2, validFrom: "2026-10-21", name: "Nisida (neu)", spotIds: [P2_IN, P2_OUT] }));
-    // the older package's version is newer here: the profile version decides, not the package age
-    const older = { ...pkg, generatedAt: "2026-10-19T06:00:00.000Z" };
-    const out = composeRadiusPackage(input([p1(), older]), cfg);
+  it("a region in both packages: once, from the younger package, spotIds the union trimmed to included spots", () => {
+    const pkg = p2((r) => ({ ...r, name: "Nisida (neu)", spotIds: [P2_IN, P2_OUT] }));
+    const out = composeRadiusPackage(input([p1(), pkg]), cfg);
     const shared = regionsOf(out).filter((r) => r.id === REGION);
     expect(shared).toHaveLength(1);
-    expect(shared[0]!.profileVersion).toBe(2);
     expect(shared[0]!.name).toBe("Nisida (neu)");
     expect([...shared[0]!.spotIds].sort()).toEqual([SPOT_A, P2_IN].sort());
   });
 
-  it("a region in both packages at the same version but with another name: younger package wins, one warning", () => {
+  it("a spot in both packages: the one with the later asOf wins, whatever the package age; else the younger package", () => {
+    const stale = p2();
+    const a = P1.files["spots.json"].spots.find((s) => s.id === SPOT_A)!;
+    const moved = { ...structuredClone(a), name: "Alte Bucht", asOf: "2026-09-01" };
+    stale.spots.push(moved);
+    const out = composeRadiusPackage(input([p1(), stale]), cfg);
+    expect(out.files["spots.json"].spots.find((s) => s.id === SPOT_A)!.name).toBe(a.name);
+    expect(out.warnings.some((w) => w.startsWith(SPOT_A))).toBe(true);
+    // equal asOf: the younger package (P2)
+    moved.asOf = a.asOf!;
+    expect(composeRadiusPackage(input([p1(), stale]), cfg).files["spots.json"].spots.find((s) => s.id === SPOT_A)!.name).toBe("Alte Bucht");
+  });
+
+  it("a region in both packages with another name: younger package wins, one warning", () => {
     const pkg = p2((r) => ({ ...r, name: "Nisida Nord" }));
     const out = composeRadiusPackage(input([p1(), pkg]), cfg);
     expect(regionsOf(out).find((r) => r.id === REGION)!.name).toBe("Nisida Nord");
@@ -227,9 +229,9 @@ describe("composeRadiusPackage", () => {
     expect(out.manifestDraft.coverage.map((c) => c.key)).toEqual(["XT-AAA", "XT-NISIDA", "XT-ZWEI"]);
     expect(out.manifestDraft.coverage[0]).toEqual(missing);
     expect(out.manifestDraft.tiles).toEqual([
-      { id: "q025:804:501", lastRunAt: null, profilesAsOf: null },
-      { id: "q025:804:502", lastRunAt: "2026-10-20T00:00:00.000Z", profilesAsOf: "2026-10-20" },
-      { id: "q025:805:501", lastRunAt: null, profilesAsOf: null },
+      { id: "q025:804:501", lastRunAt: null, statesAsOf: null },
+      { id: "q025:804:502", lastRunAt: "2026-10-20T00:00:00.000Z", statesAsOf: "2026-10-20" },
+      { id: "q025:805:501", lastRunAt: null, statesAsOf: null },
     ]);
   });
 
@@ -238,7 +240,7 @@ describe("composeRadiusPackage", () => {
     const scope = out.manifestDraft.scope;
     expect(scope).toMatchObject({ type: "radius", key: KEY, homeMarina: { id: SPOT_M, name: "Marina Nisida" }, center: CENTER, days: 1, radiusNm: R });
     expect(scope.type === "radius" && scope.circle.coordinates[0]).toHaveLength(65);
-    expect(out.manifestDraft.schemaVersion).toBe("3.0");
+    expect(out.manifestDraft.schemaVersion).toBe("4.0");
     expect(out.manifestDraft.generatedAt).toBe("2026-10-23T08:00:00.000Z");
     expect(out.manifestDraft.bbox[3]).toBeGreaterThan(CENTER.lat);
     expect(out.manifestDraft.areas.map((a) => a.key)).toEqual(["nisida-test", "zwei"]);
@@ -254,21 +256,20 @@ describe("composeRadiusPackage", () => {
     expect(manifestSchema.omit({ files: true, objectCounts: true }).safeParse(out.manifestDraft).success).toBe(true);
   });
 
-  it("images of included spots and highlights only", () => {
+  it("images of included spots only", () => {
     const out = composeRadiusPackage(input([p1(), p2()]), cfg);
     expect(out.imageFiles.map((f) => f.name).sort()).toEqual(
-      [`images/${SPOT_A}-title.jpg`, `images/${HIGHLIGHT}-title.jpg`, `images/${P2_IN}-title.jpg`].sort(),
+      [`images/${SPOT_A}-title.jpg`, `images/${P2_IN}-title.jpg`].sort(),
     );
   });
 
   it("no new value: every object, without spotIds, equals one of its input versions", () => {
-    const p2Shared = p2((r) => ({ ...r, profileVersion: 2, validFrom: "2026-10-21", spotIds: [P2_IN] }));
+    const p2Shared = p2((r) => ({ ...r, spotIds: [P2_IN] }));
     const packages = [p1(), p2Shared];
     const out = composeRadiusPackage(input(packages), cfg);
-    const inputs = packages.flatMap((p) => [...p.spots, ...p.highlights, ...p.regions, ...p.weatherPoints]);
+    const inputs = packages.flatMap((p) => [...p.spots, ...p.regions, ...p.weatherPoints]);
     const outputs = [
       ...out.files["spots.json"].spots,
-      ...out.files["highlights.json"].highlights,
       ...regionsOf(out),
       ...out.files["weather-points.json"].points,
     ];
@@ -291,14 +292,13 @@ function expectValidFiles(out: ComposedRadius) {
   const f = out.files;
   for (const [schema, file] of [
     [spotsFileSchema, f["spots.json"]],
-    [highlightsFileSchema, f["highlights.json"]],
     [regionsFileSchema, f["regions.json"]],
     [weatherPointsFileSchema, f["weather-points.json"]],
   ] as const) {
     const result = schema.safeParse(file);
     expect(result.error?.issues ?? []).toEqual([]);
   }
-  for (const list of [f["spots.json"].spots, f["highlights.json"].highlights, f["regions.json"].regions, f["weather-points.json"].points]) {
+  for (const list of [f["spots.json"].spots, f["regions.json"].regions, f["weather-points.json"].points]) {
     expect(ids(list)).toEqual([...ids(list)].sort());
   }
 }

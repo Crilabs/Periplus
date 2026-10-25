@@ -4,8 +4,6 @@ import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setSimulationMode } from "@/lib/adapters/simulation";
 import { documents, documentVersions, externalCalls, runs } from "@/lib/db/schema";
-import { buildDelivery } from "@/lib/domain/delivery/build";
-import { spotAsOf } from "@/lib/domain/delivery/read";
 import { parseScenario, type RevisitScenario } from "@/lib/domain/revisit/scenario";
 import { verifyRevisit } from "@/lib/domain/revisit/verify";
 import { REVISIT_STAGES } from "@/lib/pipeline/revisit-run";
@@ -14,7 +12,7 @@ import { maxSeq, recordedState, revisit } from "@/test/revisit/fixture/run";
 
 /*
  * The simulated revisit end to end on the one-tile fixture area (plan Task 14, spec 10 CI criterion), inside
- * withRollback: „Lauf 1“ (a text run over the recorded versions, 2026-05-01) and the package of that state, then two
+ * withRollback: „Lauf 1“ (a text run over the recorded versions, 2026-05-01) and the package of that state (the later package assertions went with contract 4.0; the whole simulation goes in N6), then two
  * revisit runs (2026-06-01 and 2026-06-08) started by `startRevisitRun` and driven job by job like the worker would —
  * the simulated crawl (`fetch.source`, `fetch.url` with the scenario's fetcher, `embed.chunks` with fake embeddings),
  * `revisit.freeze`, every text stage with the fake model, the consolidation. Nothing reaches the network: the crawl's
@@ -34,7 +32,7 @@ afterEach(() => setSimulationMode(undefined));
 
 describe("simulated revisit on the fixture area", () => {
   it(
-    "the simulated revisit shows exactly the scenario's changes and the old spot stays readable",
+    "the simulated revisit shows exactly the scenario's changes",
     () =>
       withRollback(async (tx) => {
         const { archive, fx, fromSeq } = await recordedState(tx);
@@ -81,14 +79,6 @@ describe("simulated revisit on the fixture area", () => {
         // the simulated versions carry the first revisit run
         const simulated = await tx.select({ runId: documentVersions.runId }).from(documentVersions).where(eq(documentVersions.simulated, true));
         expect(new Set(simulated.filter((s) => s.runId !== null && revisits.some((r) => r.id === s.runId)).map((s) => s.runId))).toEqual(new Set([revisits[0]!.id]));
-
-        const after = await buildDelivery(tx, archive, fx.subdivisionId, { now: new Date("2026-06-08T08:00:00Z"), inCallerTransaction: true });
-        expect(after).toMatchObject({ status: "valid", dataVersion: 2 });
-        // the old version is the old value: the taverna open before the revisit, closed after it
-        const old = (await spotAsOf(tx, archive, fx.publicIds.A, "2026-05-15"))!;
-        const now = (await spotAsOf(tx, archive, fx.publicIds.A, "2026-06-09"))!;
-        expect([old.dataVersion, now.dataVersion]).toEqual([1, 2]);
-        expect([old.spot.services?.taverna, now.spot.services?.taverna]).toEqual(["yes", "no"]);
       }),
     TIMEOUT,
   );

@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChangeEntry, Manifest } from "@/contract/v3_0";
+import { changesResponseSchema, type Manifest } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
 import { createApiClient } from "@/lib/domain/api-clients";
@@ -15,7 +17,7 @@ import { eastPackage, insertSecondSubdivision, storeSubdivisionPackage } from "@
 import { radiusPackageRequests, radiusPackages } from "@/lib/db/schema";
 
 /*
- * The radius delivery API (spec 18, plan Task 7): package, files, changes and home marinas under `/api/v3`, called
+ * The radius delivery API (spec 18, plan Task 7): package, files, changes and home marinas under `/api/v4`, called
  * directly with the test transaction as database on the built fixture subdivision.
  */
 
@@ -30,14 +32,14 @@ vi.mock("@/lib/db/client", async (importActual) => ({
   getDb: () => db,
 }));
 
-const packageRoute = await import("../api/v3/radius/package/route");
-const fileRoute = await import("../api/v3/radius/package/[file]/route");
-const imageRoute = await import("../api/v3/radius/package/images/[file]/route");
-const changesRoute = await import("../api/v3/radius/changes/route");
-const homeRoute = await import("../api/v3/home-marinas/route");
+const packageRoute = await import("../api/v4/radius/package/route");
+const fileRoute = await import("../api/v4/radius/package/[file]/route");
+const imageRoute = await import("../api/v4/radius/package/images/[file]/route");
+const changesRoute = await import("../api/v4/radius/changes/route");
+const homeRoute = await import("../api/v4/home-marinas/route");
 
 const NOW = new Date("2040-06-01T08:00:00Z");
-const BASE = "http://localhost/api/v3";
+const BASE = "http://localhost/api/v4";
 
 const request = (path: string, key?: string) => new Request(`${BASE}${path}`, { headers: key ? { authorization: `Bearer ${key}` } : {} });
 const getPackage = (query: string, key?: string) => packageRoute.GET(request(`/radius/package${query}`, key));
@@ -63,19 +65,19 @@ beforeEach(() => {
 });
 afterEach(() => setDeliveryArchive(null));
 
-describe("GET /api/v3/radius/package", () => {
+describe("GET /api/v4/radius/package", () => {
   it("answers the manifest with links to every file, pinned to the package key", () =>
     withRollback(async (tx) => {
       const { key, marina } = await setup(tx);
       const res = await getPackage(`?marina=${marina}&days=1`, key);
       expect(res.status).toBe(200);
-      expect(res.headers.get("periplus-schema-version")).toBe("3.0");
+      expect(res.headers.get("periplus-schema-version")).toBe("4.0");
       expect(res.headers.has("periplus-data-version")).toBe(false);
       const body = (await res.json()) as Manifest & { links: Record<string, string> };
       expect(body.scope.type).toBe("radius");
       expect(body.files.map((f) => f.name).sort()).toEqual(Object.keys(body.links).filter((n) => n !== "manifest.json").sort());
       const pkgKey = new URL(`http://x${body.links["spots.json"]}`).searchParams.get("key")!;
-      expect(body.links["spots.json"]).toBe(`/api/v3/radius/package/spots.json?marina=${marina}&days=1&key=${pkgKey}`);
+      expect(body.links["spots.json"]).toBe(`/api/v4/radius/package/spots.json?marina=${marina}&days=1&key=${pkgKey}`);
     }));
 
   it("links resolve to bytes whose hash is the manifest's", () =>
@@ -123,7 +125,7 @@ describe("GET /api/v3/radius/package", () => {
     }));
 });
 
-describe("GET /api/v3/radius/package/{file}", () => {
+describe("GET /api/v4/radius/package/{file}", () => {
   it("rejects a missing or foreign key with 400 invalid_key, an unlisted file with 404", () =>
     withRollback(async (tx) => {
       const { key, marina } = await setup(tx);
@@ -178,32 +180,37 @@ describe("radius package requests", () => {
     }));
 });
 
-describe("GET /api/v3/radius/changes", () => {
-  it("is empty for the current key and 400 invalid_since for an unknown one", () =>
+describe("GET /api/v4/radius/changes", () => {
+  it("answers 200 invalidSince reload whatever the key (there is no change feed in 4.0)", () =>
     withRollback(async (tx) => {
       const { key, marina } = await setup(tx);
       const body = (await (await getPackage(`?marina=${marina}&days=1`, key)).json()) as { links: Record<string, string> };
       const pkgKey = new URL(`http://x${body.links["spots.json"]}`).searchParams.get("key")!;
-      const res = await getChanges(`?marina=${marina}&days=1&since=${pkgKey}`, key);
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ schemaVersion: "3.0", since: pkgKey, key: pkgKey, changes: [] satisfies ChangeEntry[] });
-      const bad = await getChanges(`?marina=${marina}&days=1&since=ffffffffffffffff`, key);
-      expect(bad.status).toBe(400);
-      expect(((await bad.json()) as { error: { code: string } }).error.code).toBe("invalid_since");
-      expect((await getChanges(`?marina=${marina}&days=1`, key)).status).toBe(400);
-      expect((await getChanges(`?marina=${marina}&days=0&since=${pkgKey}`, key)).status).toBe(400);
-      expect((await getChanges(`?marina=sp_01J9ZZ00000000000000000009&days=1&since=${pkgKey}`, key)).status).toBe(404);
+      for (const query of [`?marina=${marina}&days=1&since=${pkgKey}`, `?marina=${marina}&days=1&since=ffffffffffffffff`, `?marina=${marina}&days=1`]) {
+        const res = await getChanges(query, key);
+        expect(res.status, query).toBe(200);
+        expect(res.headers.get("periplus-schema-version")).toBe("4.0");
+        const answer = await res.json();
+        expect(answer).toEqual({ invalidSince: true, reason: "reload" });
+        expect(changesResponseSchema.safeParse(answer).success).toBe(true);
+      }
     }));
 });
 
-describe("GET /api/v3/home-marinas", () => {
+describe("/api/v3", () => {
+  it("is gone: no route directory of the old version is left", () => {
+    expect(existsSync(fileURLToPath(new URL("../api/v3", import.meta.url)))).toBe(false);
+  });
+});
+
+describe("GET /api/v4/home-marinas", () => {
   it("lists the fixture marina and no anchorage", () =>
     withRollback(async (tx) => {
       const { key, marina, f } = await setup(tx);
       const res = await getHome("?bbox=20,34,23,36", key);
       expect(res.status).toBe(200);
       const body = (await res.json()) as { schemaVersion: string; marinas: Array<{ id: string; name: string; position: { lon: number; lat: number }; subdivision: string }> };
-      expect(body.schemaVersion).toBe("3.0");
+      expect(body.schemaVersion).toBe("4.0");
       const ids = body.marinas.map((m) => m.id);
       expect(ids).toContain(marina);
       expect(ids).not.toContain(f.places.A.publicId);

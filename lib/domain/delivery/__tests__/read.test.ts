@@ -9,11 +9,11 @@ import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
 import { insertTestSubdivision } from "@/test/text";
 import { buildDelivery, type DeliveryRow } from "../build";
-import { changesSince, deliveryFiles, spotAsOf } from "../read";
+import { deliveryFiles, spotAsOf } from "../read";
 import { serializeFile, sha256Hex } from "../serialize";
 
 /*
- * `spotAsOf` and `changesSince` (the latter only for packages of contract 3.0) on hand-written delivery rows (rolled back): a spot that moved between subdivisions
+ * `spotAsOf` on hand-written delivery rows (rolled back): a spot that moved between subdivisions
  * (ruling M6-P13, NOTE of M6-D-R1) and a broken archive.
  */
 
@@ -174,20 +174,5 @@ describe("spotAsOf", () => {
       const d = await insertDelivery(tx, archive, subdivision, 1, { "spots.json": { spots: [] } });
       await insertVersion(tx, { subdivisionId: subdivision.id, publicId: id, version: 1, validFrom: "2040-06-01", deliveryId: d });
       await expect(spotAsOf(tx, archive, id)).rejects.toThrow(/not in spots.json/);
-    }));
-});
-
-describe("changesSince", () => {
-  it("reports not_found without a valid delivery and throws when a change file is missing", () =>
-    withRollback(async (tx) => {
-      const archive = memoryArchive();
-      const subdivision = await insertSubdivision(tx);
-      expect(await changesSince(tx, archive, subdivision.id, 1)).toBe("not_found");
-      await insertDelivery(tx, archive, subdivision, 1, { "spots.json": { spots: [] } });
-      await insertDelivery(tx, archive, subdivision, 2, { "spots.json": { spots: [] } });
-      expect(await changesSince(tx, archive, subdivision.id, 2)).toEqual({ dataVersion: 2, changes: [] });
-      expect(await changesSince(tx, archive, subdivision.id, 3)).toBe("invalid_since");
-      expect(await changesSince(tx, archive, subdivision.id, 0)).toBe("invalid_since");
-      await expect(changesSince(tx, archive, subdivision.id, 1)).rejects.toThrow(/has no changes.json/);
     }));
 });
