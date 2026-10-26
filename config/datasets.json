@@ -10,8 +10,8 @@
     "ratePerMinute": 20
   },
   "seabed": {
-    "wfsUrl": "https://ows.emodnet-seabedhabitats.eu/geoserver/emodnet_open/wfs",
-    "typeName": "emodnet_open:eusm2025_eunis2019_full",
+    "wfsUrl": "https://ows.emodnet-seabedhabitats.eu/geoserver/emodnet_view/wfs",
+    "typeName": "emodnet_view:eusm2025_eunis2019_full",
     "substrateField": "substrate",
     "habitatFields": ["eunis2019d", "all2019d"],
     "substrateMap": {
@@ -29,7 +29,6 @@
       "Rock or other hard substrata": "rock"
     },
     "weedPatterns": ["posidonia", "seagrass", "cymodocea", "zostera"],
-    "sortBy": "objectid",
     "pageSize": 500,
     "timeoutSeconds": 180,
     "ratePerMinute": 20

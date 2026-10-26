@@ -284,6 +284,14 @@ describe("loadConfig", () => {
     expect(c.datasets.bufferKm).toBe(2);
   });
 
+  it("points the seabed layer at the workspace that serves it, paged by its primary key (B18)", () => {
+    const { seabed } = loadConfig("config").datasets;
+    const workspace = new URL(seabed.wfsUrl).pathname.split("/").at(-2);
+    expect(workspace).toBe("emodnet_view");
+    expect(seabed.typeName).toBe(`${workspace}:eusm2025_eunis2019_full`);
+    expect(seabed.sortBy).toBeUndefined();
+  });
+
   it("rejects a restriction layer with an unknown kind", () => {
     const datasets = structuredClone(repoConfig.datasets);
     (datasets.humanActivities.layers[0] as { kind: string }).kind = "wreck";

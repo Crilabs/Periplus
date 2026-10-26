@@ -558,8 +558,8 @@ export const seabedDatasetSchema = z.strictObject({
   /** Source substrate class → seabed type; unmapped classes are skipped. */
   substrateMap: z.record(z.string().min(1), z.enum(seabedTypeEnum.enumValues)),
   weedPatterns: z.array(z.string().trim().min(1)),
-  /** Attribute the WFS pages are sorted by (the layer has no primary key GeoServer could page by). */
-  sortBy: z.string().min(1),
+  /** Attribute the WFS pages are sorted by; only for a layer without a primary key GeoServer could page by. */
+  sortBy: z.string().min(1).optional(),
   pageSize: z.number().int().positive(),
   timeoutSeconds: z.number().int().positive(),
   ratePerMinute: z.number().int().positive(),
