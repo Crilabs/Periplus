@@ -4,7 +4,7 @@ import type { ImagesConfig, ZoomLevel } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { fitCamera } from "./fit";
 import type { PlaceImageInput } from "./place-input";
-import { baseAzimuthFor, candidateAzimuths, firstCameraOverWater, type LonLat, type RenderCamera } from "./render-plan";
+import { baseAzimuthFor, candidateAzimuths, firstCameraOverWater, floorHeightFor, type LonLat, type RenderCamera } from "./render-plan";
 
 export type HarbourFocus = { source: "basin" | "structures"; rings: LonLat[][] };
 
@@ -43,7 +43,7 @@ export async function harbourFocus(db: Db, input: PlaceImageInput, cfg: Pick<Ima
 
 /**
  * Title camera of a marina or port (spec 19): `fitCamera` on `harbourFocus` with `composition.harbour`, no lower than
- * the height of `floorZoom`; the azimuth starts at the rule's base (`baseAzimuthFor`) and turns in
+ * the height of `floorZoom` at the harbour tilt (`floorHeightFor`); the azimuth starts at the rule's base (`baseAzimuthFor`) and turns in
  * `camera.rotateStepDeg` steps to the first camera whose ground point is over water. `null` without a focus or
  * without such a camera.
  */
@@ -56,7 +56,7 @@ export async function planHarbour(
   const focus = await harbourFocus(db, input, cfg);
   if (!focus) return null;
   const h = cfg.composition.harbour;
-  const opts = { tiltDeg: h.tiltDeg, fill: h.fill, centreY: h.centreY, minHeightM: cfg.camera.zooms[floorZoom].heightM, zoom: floorZoom };
+  const opts = { tiltDeg: h.tiltDeg, fill: h.fill, centreY: h.centreY, minHeightM: floorHeightFor(floorZoom, h.tiltDeg, cfg), zoom: floorZoom };
   const cameras = candidateAzimuths(baseAzimuthFor(input) ?? 0, cfg.camera.rotateStepDeg).flatMap((az) => {
     const c = fitCamera(focus.rings, az, opts, cfg);
     return c ? [c] : [];

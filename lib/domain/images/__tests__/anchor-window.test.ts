@@ -8,7 +8,7 @@ import { insertLandBox, metresFrom, SEA } from "@/test/fixtures/land-box";
 import { insertTestGeoObject } from "@/test/text";
 import { coastDirection, planAnchorWindow } from "../anchor-window";
 import { loadPlaceImageInput } from "../place-input";
-import { cameraDetails } from "../render-plan";
+import { cameraDetails, floorHeightFor, foregroundPixelSize } from "../render-plan";
 
 const cfg = getConfig().images;
 
@@ -54,6 +54,8 @@ describe("planAnchorWindow", () => {
       expect(plan.water).toBeGreaterThan(0.3);
       expect(plan.water).toBeLessThan(0.6);
       expect(plan.camera.zoom).toBe("z3");
+      // the floor follows the tilt: a steeper camera stands higher so a source pixel stays as sharp as at the zoom's tilt
+      expect(plan.camera.heightM).toBeGreaterThanOrEqual(floorHeightFor("z3", plan.camera.tiltDeg, cfg) - 1e-9);
     }));
 
   it("open sea gives null", () =>
@@ -77,4 +79,15 @@ describe("planAnchorWindow", () => {
       const input = (await loadPlaceImageInput(tx, await anchorage(tx), cfg))!;
       expect(await planAnchorWindow(tx, input, "z3", cfg)).toEqual(await planAnchorWindow(tx, input, "z3", cfg));
     }));
+});
+
+describe("floorHeightFor", () => {
+  it("keeps the foreground pixel size of the zoom at a steeper tilt", () => {
+    for (const tilt of [40, 45]) {
+      const h = floorHeightFor("z1", tilt, cfg);
+      expect(h).toBeGreaterThan(cfg.camera.zooms.z1.heightM);
+      const atFloor = { ...cfg, camera: { ...cfg.camera, zooms: { ...cfg.camera.zooms, z1: { heightM: h } } } };
+      expect(foregroundPixelSize(0.5, "z1", atFloor, tilt)).toBeCloseTo(foregroundPixelSize(0.5, "z1", cfg), 9);
+    }
+  });
 });

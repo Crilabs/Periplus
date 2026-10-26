@@ -5,7 +5,7 @@ import { fitCamera } from "./fit";
 import type { PlaceImageInput } from "./place-input";
 import { predictShares } from "./prediction";
 import { projectGround } from "./projection";
-import { camerasOverWater, candidateAzimuths, landDistances, type LonLat, type RenderCamera } from "./render-plan";
+import { camerasOverWater, candidateAzimuths, floorHeightFor, landDistances, type LonLat, type RenderCamera } from "./render-plan";
 
 const RAD = Math.PI / 180;
 const KY = 110_540;
@@ -94,7 +94,7 @@ export type AnchorWindowPlan = { camera: RenderCamera; score: number; water: num
  * Title camera of an anchorage or mooring field (spec 19, part A): the anchor window along the coastline
  * (`coastDirection` from the centre). For each window radius the window point lies that far before the shore point
  * towards the centre (the centre itself when it is nearer); each tilt × focus centre × azimuth within `spanDeg` of the
- * direct view onto the shore point is fitted (`fitCamera`, no lower than the height of `floorZoom`), kept when its
+ * direct view onto the shore point is fitted (`fitCamera`, no lower than the height of `floorZoom` at that tilt, `floorHeightFor`), kept when its
  * ground point is over water, and scored (`predictShares`, highlights in frame). The lowest score wins; ties keep the
  * earlier candidate, so the plan is deterministic. `null` without land near the centre or without any camera.
  */
@@ -110,7 +110,6 @@ export async function planAnchorWindow(
   if (!coast) return null;
   const highlights = await highlightsNear(db, centre, w);
   const kx = kxAt(coast.shore[1]);
-  const minHeightM = cfg.camera.zooms[floorZoom].heightM;
 
   const candidates: Array<{ camera: RenderCamera; off: number }> = [];
   for (const radius of w.radiiM) {
@@ -124,7 +123,7 @@ export async function planAnchorWindow(
         for (const az of candidateAzimuths(base, cfg.camera.rotateStepDeg)) {
           const off = angleOff(az, base);
           if (off > w.spanDeg) continue;
-          const camera = fitCamera(rings, az, { tiltDeg, fill: w.fill, centreY, minHeightM, zoom: floorZoom }, cfg);
+          const camera = fitCamera(rings, az, { tiltDeg, fill: w.fill, centreY, minHeightM: floorHeightFor(floorZoom, tiltDeg, cfg), zoom: floorZoom }, cfg);
           if (camera) candidates.push({ camera, off });
         }
       }

@@ -181,6 +181,16 @@ export function foregroundPixelSize(
 }
 
 /**
+ * Lowest height of a camera at `tiltDeg` whose foreground is as sharp as the zoom level at the configured tilt
+ * (spec 19, the floor of a fitted camera): the bottom edge's slant distance `h / sin(tilt + fov/2)` equals the
+ * zoom's, so `foregroundPixelSize` is the same.
+ */
+export function floorHeightFor(zoom: ZoomLevel, tiltDeg: number, cfg: Pick<ImagesConfig, "camera">): number {
+  const c = cfg.camera;
+  return (c.zooms[zoom].heightM * Math.sin((tiltDeg + c.fovDeg / 2) * RAD)) / Math.sin((c.tiltDeg + c.fovDeg / 2) * RAD);
+}
+
+/**
  * Zoom levels at which a source pixel of `resolutionM` stays within `render.maxSourcePixelOnScreen` in the foreground
  * (at the configured tilt); the widest level `z1` is always allowed.
  */
