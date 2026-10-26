@@ -1189,6 +1189,38 @@ export const imagesSchema = z.strictObject({
       pierRadiusM: z.number().positive(),
       pierBufferM: z.number().nonnegative(),
     }),
+    /**
+     * Anchorage and mooring field (spec 19): the anchor window along the coastline. The coast direction is the mean
+     * of the `rayStepDeg` rays up to `rayMaxM` that meet land, each weighted 1 / max(distance, `minRayM`); the window
+     * point lies at most `radiiM` before the first land that way; the focus is a circle of that radius around it and
+     * one of `shoreRadiusM` around the shore point. Every radius × tilt × centre × azimuth (±`spanDeg`) is fitted
+     * at `fill` and scored: |predicted water − `targetWater`| · `score.water` + degrees off the direct view /
+     * `score.offDegPerPoint` + max(0, height − `maxHeightM`) / `score.heightMPerPoint` − highlights ·
+     * `score.highlightFactor`; highlights are POIs within `highlightReachM` in the frame, `highlightWeights` per
+     * category (the highest per category), doubled within `highlightNearM`.
+     */
+    anchorWindow: z.strictObject({
+      fill: z.number().positive().max(1),
+      rayMaxM: z.number().positive(),
+      rayStepDeg: z.number().int().min(1).max(90),
+      minRayM: z.number().positive(),
+      radiiM: z.array(z.number().positive()).min(1),
+      shoreRadiusM: z.number().positive(),
+      tilts: z.array(z.number().positive().max(89)).min(1),
+      centres: z.array(z.number().min(-1).max(1)).min(1),
+      spanDeg: z.number().nonnegative().max(180),
+      targetWater: z.number().min(0).max(1),
+      maxHeightM: z.number().positive(),
+      highlightReachM: z.number().positive(),
+      highlightNearM: z.number().positive(),
+      highlightWeights: z.record(z.string(), z.number().nonnegative()),
+      score: z.strictObject({
+        water: z.number().nonnegative(),
+        offDegPerPoint: z.number().positive(),
+        heightMPerPoint: z.number().positive(),
+        highlightFactor: z.number().nonnegative(),
+      }),
+    }),
     /** Water share before the render (spec 19, part B): a `gridX` × `gridY` grid of view rays cut at sea level; a ray above the horizon or beyond `maxRayM` is sky. */
     prediction: z.strictObject({ gridX: z.number().int().positive(), gridY: z.number().int().positive(), maxRayM: z.number().positive() }),
     /**

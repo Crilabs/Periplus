@@ -298,25 +298,30 @@ async function firstOverWater(db: Db, origins: LonLat[], azimuths: number[], dis
  * none does. One query for all cameras (they may stand at different distances, unlike `firstOverWater`).
  */
 export async function firstCameraOverWater(db: Db, cameras: RenderCamera[]): Promise<number | null> {
-  if (cameras.length === 0) return null;
+  const index = (await camerasOverWater(db, cameras)).indexOf(true);
+  return index < 0 ? null : index;
+}
+
+/** For each camera, whether its ground point (`cameraDetails(c).position`) lies outside `land_polygons`; one query. */
+export async function camerasOverWater(db: Db, cameras: RenderCamera[]): Promise<boolean[]> {
+  if (cameras.length === 0) return [];
   const ground = cameras.map((c) => cameraDetails(c).position);
   const { rows } = await db.execute<{ i: number | string }>(sql`
     select t.i
     from unnest(${`{${ground.map((p) => p[0]).join(",")}}`}::float8[], ${`{${ground.map((p) => p[1]).join(",")}}`}::float8[]) with ordinality as t(lon, lat, i)
-    where not exists (
+    where exists (
       select 1 from land_polygons l
       where l.geom && ST_SetSRID(ST_MakePoint(t.lon, t.lat), 4326) and ST_Intersects(l.geom, ST_SetSRID(ST_MakePoint(t.lon, t.lat), 4326))
-    )
-    order by t.i
-    limit 1`);
-  return rows[0] ? Number(rows[0].i) - 1 : null;
+    )`);
+  const onLand = new Set(rows.map((r) => Number(r.i) - 1));
+  return cameras.map((_, i) => !onLand.has(i));
 }
 
 /**
  * For each bearing, the distance (metres) from `origin` to the first land along it between `fromM` and `maxM` out
  * (`land_polygons` cut by that segment), `null` where there is none. One query over all bearings.
  */
-async function landDistances(db: Db, origin: LonLat, bearings: number[], fromM: number, maxM: number): Promise<Array<number | null>> {
+export async function landDistances(db: Db, origin: LonLat, bearings: number[], fromM: number, maxM: number): Promise<Array<number | null>> {
   if (bearings.length === 0 || fromM >= maxM) return bearings.map(() => null);
   const { rows } = await db.execute<{ i: number | string; m: number | string | null }>(sql`
     with o as (select ST_SetSRID(ST_MakePoint(${origin[0]}::float8, ${origin[1]}::float8), 4326)::geography as p),
