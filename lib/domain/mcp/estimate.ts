@@ -47,7 +47,7 @@ export async function scopeSize(db: Db, kind: StartKind, scope: StartScope): Pro
   if (kind === "delivery") return { unit: "subdivision", count: 1 };
   if (kind === "research") {
     if (!("subdivisionKey" in scope) && !("placeIds" in scope)) throw new Error("A research run takes a subdivision or places");
-    return { unit: "places", count: (await researchCandidates(db, scope)).length };
+    return { unit: "places", count: (await researchCandidates(db, scope as { subdivisionKey: string } | { placeIds: string[] })).length };
   }
   if (kind === "images") {
     if (!("subdivisionKey" in scope)) throw new Error("An image run takes a subdivision");
