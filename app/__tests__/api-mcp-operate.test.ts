@@ -221,6 +221,29 @@ describe("/api/mcp start tools", () => {
       expect(await runCount(tx)).toBe(before);
     }));
 
+  it("a wrong subdivision key in the write tools: German tool errors for unknown, a retired area key and excluded", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token } = await tokenFor(tx);
+      const excluded = `XT-${newId().slice(0, 8)}`;
+      await insertTestSubdivision(tx, excluded, [21.0, 35.0, 21.5, 35.5], { country: "GR", status: "excluded" });
+      const retired = "Revier-Schlüssel saronic ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)";
+      const before = await runCount(tx);
+      const calls: Array<[string, (key: string) => object]> = [
+        ["gazetteer_start", (key) => ({ subdivision: key, confirm: true })],
+        ["images_start", (key) => ({ subdivision: key })],
+        ["seed_start", (key) => ({ subdivision: key, confirm: true })],
+        ["research_start", (key) => ({ subdivision: key })],
+        ["gate_sync_conflicts", (key) => ({ subdivision: key, threshold: 3, placeIds: [] })],
+      ];
+      for (const [tool, args] of calls) {
+        expect(await callTool(token, tool, args("XT-none"))).toEqual({ isError: true, text: "Landesteil XT-none unbekannt" });
+        expect(await callTool(token, tool, args("saronic"))).toEqual({ isError: true, text: retired });
+        expect(await callTool(token, tool, args(excluded))).toEqual({ isError: true, text: `Landesteil ${excluded} ist ausgeschlossen` });
+      }
+      expect(await runCount(tx)).toBe(before);
+    }));
+
   it("subdivision_build twice: the second answers with the running build", () =>
     withRollback(async (tx) => {
       db = tx;

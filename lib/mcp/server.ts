@@ -1,11 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { getEnv } from "@/lib/env";
 import { getReaderDb } from "@/lib/db/reader";
-import { reviewKindEnum, subdivisions } from "@/lib/db/schema";
+import { reviewKindEnum } from "@/lib/db/schema";
 import { budgetStatus, spendBreakdown, spendByService } from "@/lib/domain/costs";
 import { deliveryDetail, listDeliveries } from "@/lib/domain/delivery/view";
 import type { McpCaller } from "@/lib/domain/mcp-tokens";
@@ -16,9 +15,9 @@ import { loadGateInput } from "@/lib/domain/research/gate-report";
 import { listOpenTasks, reviewCounts, reviewTaskDetail } from "@/lib/domain/review-view";
 import { berthStateView, researchView } from "@/lib/domain/research/view";
 import { getRun, listRuns } from "@/lib/domain/runs";
-import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { registerOperateTools } from "./operate";
 import { runTool, ToolError, untrusted } from "./result";
+import { toolSubdivision } from "./subdivision";
 
 /*
  * The Periplus MCP server (plan 2026-10-26-periplus-mcp): acting as the token's owner. One server per request
@@ -37,17 +36,6 @@ export const MCP_INSTRUCTIONS = [
 ].join("\n\n");
 
 const READ = { readOnlyHint: true, openWorldHint: false } as const;
-
-async function subdivisionIdOf(key: string): Promise<string> {
-  const [row] = await getDb().select({ id: subdivisions.id }).from(subdivisions).where(eq(subdivisions.key, key)).limit(1);
-  if (!row) throw new ToolError(`Landesteil ${key} unbekannt`);
-  return row.id;
-}
-
-/** Fails with "Landesteil <key> unbekannt" before a domain function would throw its own message. */
-async function requireKnownSubdivision(key: string): Promise<void> {
-  if (!(await subdivisionByKey(getDb(), key))) throw new ToolError(`Landesteil ${key} unbekannt`);
-}
 
 export function createPeriplusMcpServer(caller: McpCaller): McpServer {
   const server = new McpServer({ name: "periplus", version: "1.0.0" }, { instructions: MCP_INSTRUCTIONS });
@@ -147,7 +135,7 @@ export function createPeriplusMcpServer(caller: McpCaller): McpServer {
           if (!detail) throw new ToolError(`Lieferung ${args.id} unbekannt`);
           return { ...detail, report: untrusted(detail.report) };
         }
-        const subdivisionId = args.subdivision ? await subdivisionIdOf(args.subdivision) : undefined;
+        const subdivisionId = args.subdivision ? (await toolSubdivision(db, args.subdivision, { allowExcluded: true })).id : undefined;
         return listDeliveries(db, { subdivisionId, page: args.page ?? 1 });
       }),
   );
@@ -191,7 +179,7 @@ export function createPeriplusMcpServer(caller: McpCaller): McpServer {
     },
     (args) =>
       runTool("gate_input", caller, async () => {
-        await requireKnownSubdivision(args.subdivision);
+        await toolSubdivision(getDb(), args.subdivision);
         const cfg = getConfig();
         const input = await loadGateInput(getDb(), args.subdivision, cfg);
         const { gitSha, gateConfigHash } = await deployVersion(getDb(), cfg, { GIT_SHA: getEnv().GIT_SHA });
@@ -209,7 +197,7 @@ export function createPeriplusMcpServer(caller: McpCaller): McpServer {
     },
     (args) =>
       runTool("checks", caller, async () => {
-        await requireKnownSubdivision(args.subdivision);
+        await toolSubdivision(getDb(), args.subdivision);
         return subdivisionChecks(getDb(), args.subdivision);
       }),
   );

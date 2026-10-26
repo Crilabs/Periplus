@@ -9,7 +9,6 @@ import type { McpCaller } from "@/lib/domain/mcp-tokens";
 import { estimateCost, measureScope, placeIdsOnTile, recordScopeSize, type ScopeSize, type StartKind, type StartScope } from "@/lib/domain/mcp/estimate";
 import { syncConflictTasks } from "@/lib/domain/research/gate-conflicts";
 import { loadGateInput } from "@/lib/domain/research/gate-report";
-import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { getBoss } from "@/lib/jobs/boss";
 import { pauseQueue, resumeQueue } from "@/lib/jobs/controls";
 import { QUEUES } from "@/lib/jobs/queues";
@@ -25,6 +24,7 @@ import { startSeedRun } from "@/lib/pipeline/seed";
 import { afterBuildRunEnded, startSubdivisionBuild } from "@/lib/pipeline/subdivision-build";
 import { startSubdivisionsBuildRun } from "@/lib/pipeline/subdivisions-run";
 import { runTool, ToolError, type LogFields } from "./result";
+import { toolSubdivision } from "./subdivision";
 
 /*
  * The control tools (end a run, retry a job, pause or resume a queue, sync the gate's conflict tasks) call what the admin
@@ -84,13 +84,6 @@ async function startTool(kind: StartKind, scope: StartScope, confirm: boolean | 
   return { gestartet: true, runId: started.id, pfad: runPath(started.id), umfang, schaetzung };
 }
 
-/** Fails with a German tool error for an unknown or excluded subdivision, before the size would throw a raw error. */
-async function requireStartableSubdivision(key: string): Promise<void> {
-  const sub = await subdivisionByKey(getDb(), key);
-  if (!sub) throw new ToolError(`Landesteil ${key} unbekannt`);
-  if (sub.status === "excluded") throw new ToolError(`Landesteil ${key} ist ausgeschlossen`);
-}
-
 async function requireTile(tileId: string): Promise<void> {
   if (!(await tileExists(getDb(), tileId))) throw new ToolError(`Kachel ${tileId} unbekannt`);
 }
@@ -108,7 +101,7 @@ async function tileOrSubdivision(args: { subdivision?: string; tileId?: string }
     await requireTile(args.tileId!);
     return { tileId: args.tileId! };
   }
-  await requireStartableSubdivision(args.subdivision!);
+  await toolSubdivision(getDb(), args.subdivision!);
   return { subdivisionKey: args.subdivision! };
 }
 
@@ -124,7 +117,7 @@ export function registerOperateTools(server: McpServer, caller: McpCaller): void
       { title, description, inputSchema: { subdivision: subdivisionArg, confirm: confirmArg }, annotations: WRITE },
       (args) =>
         write(name, async () => {
-          await requireStartableSubdivision(args.subdivision);
+          await toolSubdivision(getDb(), args.subdivision);
           return startTool(kind, { subdivisionKey: args.subdivision }, args.confirm, () => start(args.subdivision));
         }),
     );
@@ -225,7 +218,7 @@ export function registerOperateTools(server: McpServer, caller: McpCaller): void
         const field = oneScope(args, ["subdivision", "placeIds", "tileId"] as const);
         let scope: { subdivisionKey: string } | { placeIds: string[] };
         if (field === "subdivision") {
-          await requireStartableSubdivision(args.subdivision!);
+          await toolSubdivision(getDb(), args.subdivision!);
           scope = { subdivisionKey: args.subdivision! };
         } else if (field === "tileId") {
           await requireTile(args.tileId!);
@@ -327,8 +320,7 @@ export function registerOperateTools(server: McpServer, caller: McpCaller): void
         "gate_sync_conflicts",
         caller,
         async () => {
-          const sub = await subdivisionByKey(getDb(), args.subdivision);
-          if (!sub) throw new ToolError(`Landesteil ${args.subdivision} unbekannt`);
+          await toolSubdivision(getDb(), args.subdivision);
           const cfg = getConfig();
           if (!cfg.research.gate.thresholds.includes(args.threshold)) {
             throw new ToolError(`Schwelle ${args.threshold} unzulässig; erlaubt: ${cfg.research.gate.thresholds.join(", ")}`);

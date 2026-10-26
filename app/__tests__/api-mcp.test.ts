@@ -146,6 +146,23 @@ describe("/api/mcp", () => {
       expect(worker.queues).toBeTypeOf("object");
     }));
 
+  it("a wrong subdivision key in the read tools: German tool errors for unknown, a retired area key and excluded", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token } = await tokenFor(tx);
+      const excluded = `XT-${newId().slice(0, 8)}`;
+      await insertTestSubdivision(tx, excluded, [21.0, 35.0, 21.5, 35.5], { country: "GR", status: "excluded" });
+      const retired = "Revier-Schlüssel saronic ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)";
+      for (const tool of ["gate_input", "checks"]) {
+        expect(await callTool(token, tool, { subdivision: "XT-none" })).toEqual({ isError: true, text: "Landesteil XT-none unbekannt" });
+        expect(await callTool(token, tool, { subdivision: "saronic" })).toEqual({ isError: true, text: retired });
+        expect(await callTool(token, tool, { subdivision: excluded })).toEqual({ isError: true, text: `Landesteil ${excluded} ist ausgeschlossen` });
+      }
+      expect(await callTool(token, "deliveries", { subdivision: "XT-none" })).toEqual({ isError: true, text: "Landesteil XT-none unbekannt" });
+      expect(await callTool(token, "deliveries", { subdivision: "saronic" })).toEqual({ isError: true, text: retired });
+      expect((await callTool(token, "deliveries", { subdivision: excluded })).isError).toBe(false);
+    }));
+
   it("no, a malformed, an unknown or a revoked token: one 401 with WWW-Authenticate; an API key is no MCP token", () =>
     withRollback(async (tx) => {
       db = tx;
