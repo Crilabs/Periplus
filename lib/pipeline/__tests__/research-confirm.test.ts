@@ -42,7 +42,8 @@ async function statusDecisions(tx: Db, placeId: string) {
     .from(reviewTasks)
     .innerJoin(reviewDecisions, eq(reviewDecisions.taskId, reviewTasks.id))
     .where(and(eq(reviewTasks.subjectId, placeId), eq(reviewTasks.subjectType, "place_status")))
-    .orderBy(reviewDecisions.decidedAt);
+    // decisions of one test share `NOW`: the time-ordered id (UUIDv7) keeps them in the order they were made
+    .orderBy(reviewDecisions.decidedAt, reviewDecisions.id);
 }
 
 describe("applyBerthVerdicts", () => {
