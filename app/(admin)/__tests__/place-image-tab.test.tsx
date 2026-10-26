@@ -36,7 +36,6 @@ const PLACE: NonNullable<PlaceImageView["place"]> = {
   centre: { lon: 19.37, lat: 36.61, anchor: true },
   cove: { lon: 19.3754, lat: 36.6102 },
   town: null,
-  composition: "open_water",
 };
 const view = (over: Partial<PlaceImageView>): PlaceImageView => ({
   place: null,
@@ -84,9 +83,10 @@ describe("ImageTab", () => {
     expect(out).toContain("Buchtpunkt");
     expect(out).toContain("36.61020, 19.37540");
     const near = html(
-      view({ place: { ...PLACE, composition: "near_town", cove: null, town: { geoObjectId: "t", name: "Poros", distanceM: 960 } }, images: [image], current: image }),
+      view({ place: { ...PLACE, cove: null, town: { geoObjectId: "t", name: "Poros", distanceM: 960 } }, images: [image], current: image }),
     );
-    expect(near).toContain("Ankerplatz bei einem Ort – Poros");
+    expect(near).not.toContain("bei einem Ort");
+    expect(near).toContain("Poros");
     expect(near).toContain("Poros (960 m)");
     expect(near).not.toContain("Buchtpunkt");
   });

@@ -1,5 +1,7 @@
 import type { ImagesConfig } from "@/lib/config";
 import type { Bbox } from "@/lib/domain/tiles";
+import { groundAt } from "./projection";
+import type { RenderCamera } from "./render-plan";
 
 export type { Bbox };
 
@@ -11,9 +13,9 @@ export function metresPerDegreeLon(lat: number): number {
   return METRES_PER_DEGREE * Math.cos((lat * Math.PI) / 180);
 }
 
-/** Square of `coreSizeM` around the place: the area the aerial image of the render must cover in detail. */
-export function coreWindow(lon: number, lat: number, cfg: Pick<ImagesConfig["window"], "coreSizeM">): Bbox {
-  const half = cfg.coreSizeM / 2;
+/** Square of `sizeM` (default `coreSizeM`) around the place: the area the aerial image of the render must cover in detail. */
+export function coreWindow(lon: number, lat: number, cfg: Pick<ImagesConfig["window"], "coreSizeM">, sizeM: number = cfg.coreSizeM): Bbox {
+  const half = sizeM / 2;
   const dLat = half / METRES_PER_DEGREE;
   const dLon = half / metresPerDegreeLon(lat);
   return [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
@@ -27,4 +29,25 @@ export function wideWindow(lon: number, lat: number, cfg: Pick<ImagesConfig["win
   const dLon = cfg.wideMarginDeg;
   const dLat = cfg.wideMarginDeg * 0.75;
   return [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
+}
+
+/** Image points (NDC) whose ground the core window must cover: the corners and middle of the lower two thirds. */
+const FOOTPRINT: Array<[number, number]> = [-1, 0, 1].flatMap((x) => [-1, 0, 1 / 3].map((y) => [x, y] as [number, number]));
+
+/**
+ * Side of the core window for `camera` (spec 19): twice the farthest ground point of the lower two thirds of the
+ * image from the target plus `coreMarginM` on each side, at least `coreSizeM`, at most `coreMaxSizeM` (also when a
+ * point lies beyond the horizon).
+ */
+export function coreSizeFor(camera: RenderCamera, cfg: Pick<ImagesConfig, "window">): number {
+  const w = cfg.window;
+  let farthest = 0;
+  for (const ndc of FOOTPRINT) {
+    const p = groundAt(camera, ndc, w.coreMaxSizeM * 4);
+    if (!p) return w.coreMaxSizeM;
+    const east = (p[0] - camera.target[0]) * metresPerDegreeLon(camera.target[1]);
+    const north = (p[1] - camera.target[1]) * METRES_PER_DEGREE;
+    farthest = Math.max(farthest, Math.abs(east), Math.abs(north));
+  }
+  return Math.min(w.coreMaxSizeM, Math.max(w.coreSizeM, Math.ceil(2 * farthest + 2 * w.coreMarginM)));
 }

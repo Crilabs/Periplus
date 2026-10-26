@@ -21,6 +21,7 @@ import {
   DATASETS_STAGE,
   importBathymetry,
   importRestrictions,
+  importHarbourStructures,
   importRoads,
   importSeabed,
   importSitelinks,
@@ -125,7 +126,7 @@ const rect = (w: number, s: number, e: number, n: number): GeoJSON.Polygon => ({
 /** Scripted services: DTM tiles from the DB, WFS layers by type name, Overpass answers by query kind. */
 function scriptedServices(
   db: Db,
-  answers: { seabed?: Fc; layers?: Record<string, Fc>; cables?: unknown[]; roads?: unknown[]; sitelinks?: Record<string, number> } = {},
+  answers: { seabed?: Fc; layers?: Record<string, Fc>; cables?: unknown[]; roads?: unknown[]; harbour?: unknown[]; sitelinks?: Record<string, number> } = {},
 ) {
   const seen: HttpRequest[] = [];
   const json = (value: unknown) => makeResponse(200, new TextEncoder().encode(JSON.stringify(value)));
@@ -141,7 +142,7 @@ function scriptedServices(
         return json(answers.layers?.[new URL(req.url).searchParams.get("typeNames")!] ?? fc([]));
       case "overpass": {
         const ql = decodeURIComponent(String(req.body).replace(/^data=/, ""));
-        return json({ elements: (ql.includes("cable_submarine") ? answers.cables : answers.roads) ?? [] });
+        return json({ elements: (ql.includes("cable_submarine") ? answers.cables : ql.includes('"man_made"') ? answers.harbour : answers.roads) ?? [] });
       }
       case "wikidata": {
         const ids = new URL(req.url).searchParams.get("ids")!.split("|");
@@ -398,6 +399,38 @@ describe("importVesselDensity and importRoads", () => {
         sql`select osm_id, highway from roads where osm_id in ('way/201', 'way/202', 'way/203') order by osm_id`,
       );
       expect(stored.rows).toEqual([{ osm_id: "way/202", highway: "track" }]);
+    }));
+});
+
+describe("importHarbourStructures", () => {
+  it("harbour structures are stored per way; a closed way becomes a polygon; a rerun keeps them, a vanished way is removed", () =>
+    withRollback(async (db) => {
+      await prepareArea(db);
+      const harbour = [
+        way(301, { man_made: "pier" }, [[23.43, 37.745], [23.431, 37.746]]),
+        way(302, { man_made: "breakwater" }, [[23.35, 37.69], [23.351, 37.69], [23.351, 37.691], [23.35, 37.69]]),
+        way(303, {}, [[23.36, 37.69], [23.37, 37.69]]),
+      ];
+      const archive = memoryArchive();
+      const first = scriptedServices(db, { harbour });
+      const result = await importHarbourStructures(db, { scope: await scopeOf(db) }, { transport: first.transport, archive });
+      expect(result).toMatchObject({ structures: 2, removed: 0 });
+      expect(archive.keys()).toEqual([`datasets/osm-harbour-structures/${result.version}/${AREA}.json`]);
+      expect(decodeURIComponent(String(first.seen[0]!.body))).toContain('way["man_made"~"^(pier|breakwater|groyne)$"]');
+
+      const again = await importHarbourStructures(db, { scope: await scopeOf(db) }, { transport: scriptedServices(db, { harbour }).transport, archive });
+      expect(again).toEqual({ structures: 2, removed: 0, version: result.version });
+
+      const later = await importHarbourStructures(
+        db,
+        { scope: await scopeOf(db) },
+        { transport: scriptedServices(db, { harbour: harbour.slice(1) }).transport, archive },
+      );
+      expect(later).toMatchObject({ structures: 1, removed: 1 });
+      const stored = await db.execute<{ osm_id: string; man_made: string; t: string }>(
+        sql`select osm_id, man_made, ST_GeometryType(geom) as t from harbour_structures where osm_id in ('way/301', 'way/302', 'way/303') order by osm_id`,
+      );
+      expect(stored.rows).toEqual([{ osm_id: "way/302", man_made: "breakwater", t: "ST_Polygon" }]);
     }));
 });
 

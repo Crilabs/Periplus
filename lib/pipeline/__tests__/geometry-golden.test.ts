@@ -58,9 +58,10 @@ type GoldenFile = { rulesVersion: string; places: Record<string, Golden> };
  * Datasets with recorded fixtures. Seabed is missing: on 2026-10-19 the EMODnet Seabed Habitats WFS answered no
  * GetFeature request (every layer, even a 2 km box, timed out after 60–300 s), so the golden values carry
  * `seabed: null`. Record it with `fixtures-record --datasets` once the service is back, add it here and
- * regenerate golden.json. Sitelinks are no geometry input (importance signal of the consolidation, ruling M5-P1).
+ * regenerate golden.json. Sitelinks are no geometry input (importance signal of the consolidation, ruling M5-P1), nor
+ * are the harbour structures (the images stage frames marinas with them, spec 19).
  */
-const RECORDED_DATASETS = DATASET_KINDS.filter((kind) => kind !== "seabed" && kind !== "sitelinks");
+const RECORDED_DATASETS = DATASET_KINDS.filter((kind) => kind !== "seabed" && kind !== "sitelinks" && kind !== "harbour_structures");
 
 type LandFeature = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
 

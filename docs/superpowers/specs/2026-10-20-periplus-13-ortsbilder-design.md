@@ -227,6 +227,13 @@ Stufe 1 gesamt: grob 7–9 Tage.
 
 Nach Teil-Spec 14 liegt die Liefereinheit im Landesteil (Land, Verwaltungseinheit), nicht im Revier. Wo diese Spec „Revier“ sagt, in den Budgets, der Abdeckung, den Kennzahlen und beim Pilot, ist der **Landesteil** gemeint; Reviere sind überlappende Namensgebiete außerhalb der Hierarchie. Der Laufumfang `subdivision` der Bildstufe und die Abdeckung der Landesteil-Seite folgen dem. Die Obergrenze der Bilderzeugungen je Lauf steht in `config/images.json` (`pipeline.maxGenerationsPerRun`), nicht in `config/budgets.json`.
 
+## Hinweis nach Teil-Spec 19
+
+Teil-Spec 19 (`2026-10-26-periplus-19-bildausschnitt-licht-design.md`) ersetzt für das Titelbild die Kameraregeln aus
+Teil B (`camera-3` → `camera-4`: Kamera aus dem Umriss von Becken bzw. Ankerfenster), die Komposition „Ankerplatz bei
+einer Stadt“, die Lichtregel „bei einer Stadt“ (nur `town`/`city` im Bild) und die Boots-Blöcke des Prompts (v2, mit
+Gefahrenstellen). Weitere Ansichten behalten die Zoomstufen dieser Spec.
+
 ## Abweichungen
 
 - **Nach außen nur abgeleitete Fakten** (Gesamtdesign Abschnitt 9): Das Titelbild ist ein aus Luftbildern abgeleitetes Bild, keine Faktenangabe. Zulässig, weil die Luftbilder unter offenen oder dafür erworbenen Lizenzen stehen. Mit Umsetzung in Abschnitt 4 des Gesamtdesigns eintragen.

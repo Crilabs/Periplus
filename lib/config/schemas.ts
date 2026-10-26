@@ -558,8 +558,8 @@ export const seabedDatasetSchema = z.strictObject({
   /** Source substrate class → seabed type; unmapped classes are skipped. */
   substrateMap: z.record(z.string().min(1), z.enum(seabedTypeEnum.enumValues)),
   weedPatterns: z.array(z.string().trim().min(1)),
-  /** Attribute the WFS pages are sorted by (the layer has no primary key GeoServer could page by). */
-  sortBy: z.string().min(1),
+  /** Attribute the WFS pages are sorted by; only for a layer without a primary key GeoServer could page by. */
+  sortBy: z.string().min(1).optional(),
   pageSize: z.number().int().positive(),
   timeoutSeconds: z.number().int().positive(),
   ratePerMinute: z.number().int().positive(),
@@ -630,6 +630,16 @@ export const roadsDatasetSchema = z.strictObject({
   bufferKm: z.number().nonnegative(),
 });
 
+/**
+ * Piers, breakwaters and groynes from OSM (Overpass) per subdivision (spec 19): the harbour outline of a marina or port
+ * without a basin polygon. `manMade` are the `man_made` values kept.
+ */
+export const harbourStructuresDatasetSchema = z.strictObject({
+  manMade: z.array(z.string().regex(/^[a-z_]+$/)).min(1),
+  /** Margin around the area's box for the query, in km. */
+  bufferKm: z.number().nonnegative(),
+});
+
 /** Wikidata sitelink counts (importance signal, ruling M5-P1). */
 export const sitelinksDatasetSchema = z.strictObject({
   /** A count fetched within this many days is reused without a call. */
@@ -644,6 +654,7 @@ export const datasetsSchema = z.strictObject({
   vesselDensity: vesselDensityDatasetSchema,
   cables: cablesDatasetSchema,
   roads: roadsDatasetSchema,
+  harbourStructures: harbourStructuresDatasetSchema,
   sitelinks: sitelinksDatasetSchema,
   /** Margin around an area's box for every dataset request, in km. */
   bufferKm: z.number().nonnegative(),
@@ -1108,6 +1119,12 @@ export const imagesSchema = z.strictObject({
   delivery: z.strictObject({ ktimatologio: z.boolean(), sentinel2: z.boolean(), copernicus_dem: z.boolean() }),
   window: z.strictObject({
     coreSizeM: z.number().positive(),
+    /**
+     * The core window grows with the camera (spec 19): it covers the ground of the lower two thirds of the image plus
+     * `coreMarginM`, at least `coreSizeM`, at most `coreMaxSizeM`.
+     */
+    coreMarginM: z.number().nonnegative(),
+    coreMaxSizeM: z.number().positive(),
     wideMarginDeg: z.number().positive(),
     coreGridM: z.number().positive(),
     wideGridM: z.number().positive(),
@@ -1136,14 +1153,15 @@ export const imagesSchema = z.strictObject({
   light: z.strictObject({
     townRadiusM: z.number().positive(),
     townPlaces: z.array(z.string().min(1)),
-    /** Light of an anchorage or mooring field within `townRadiusM` of a place in `townPlaces`. */
+    /**
+     * Light of an anchorage or mooring field whose town (the nearest place of `townPlaces` within `townRadiusM`) lies
+     * in the image, at least `townInFrameMargin` (NDC) inside the edges (spec 19).
+     */
     nearTown: imageryLightSchema,
+    townInFrameMargin: z.number().min(0).max(1),
     byKind: perKind(imageryLightSchema),
   }),
-  scene: z.strictObject({
-    ...perKind(sceneTextSchema).shape,
-    near_town: sceneTextSchema,
-  }),
+  scene: perKind(sceneTextSchema),
   check: z.strictObject({
     minWaterIoU: z.strictObject({ midday: z.number().min(0).max(1), evening: z.number().min(0).max(1) }),
     maxAttempts: z.number().int().min(1),
@@ -1152,10 +1170,65 @@ export const imagesSchema = z.strictObject({
   pipeline: z.strictObject({ maxGenerationsPerRun: z.number().int().positive() }),
   composition: z.strictObject({
     /**
-     * Anchorage or mooring field near a town: the camera ground point lies `foregroundM` from the centre of the
-     * place, away from the town, so the anchorage is in front and the town behind.
+     * Camera fitted to a focus outline (spec 19, `fit.ts`): the lowest height from `minHeightM` (× `heightStep`, up
+     * to `maxHeightM`) at which the focus keeps `margin` from every edge, takes at most the wanted fill and has its
+     * centre within `centreTolerance` of the wanted point (at most `maxIterations` target moves per height). The
+     * height of the title zoom the imagery allows is the floor (`plan-view.ts`).
      */
-    nearTown: z.strictObject({ foregroundM: z.number().positive() }),
+    fit: z.strictObject({
+      margin: z.number().min(0).max(0.45),
+      minHeightM: z.number().positive(),
+      maxHeightM: z.number().positive(),
+      heightStep: z.number().gt(1),
+      centreTolerance: z.number().positive(),
+      maxIterations: z.number().int().positive(),
+    }),
+    /**
+     * Marina and port (spec 19): the focus is the basin (the water area of a polygon place), else the convex hull of
+     * the harbour structures within `pierRadiusM`, each widened by `pierBufferM`; fitted at `tiltDeg` and `fill` with
+     * the focus centre at NDC `centreY`.
+     */
+    harbour: z.strictObject({
+      tiltDeg: z.number().positive().max(89),
+      fill: z.number().positive().max(1),
+      centreY: z.number().min(-1).max(1),
+      pierRadiusM: z.number().positive(),
+      pierBufferM: z.number().nonnegative(),
+    }),
+    /**
+     * Anchorage and mooring field (spec 19): the anchor window along the coastline. The coast direction is the mean
+     * of the `rayStepDeg` rays up to `rayMaxM` that meet land, each weighted 1 / max(distance, `minRayM`); the window
+     * point lies at most `radiiM` before the first land that way; the focus is a circle of that radius around it and
+     * one of `shoreRadiusM` around the shore point. Every radius × tilt × centre × azimuth (±`spanDeg`) is fitted
+     * at `fill` and scored: |predicted water − `targetWater`| · `score.water` + degrees off the direct view /
+     * `score.offDegPerPoint` + max(0, height − `maxHeightM`) / `score.heightMPerPoint` − highlights ·
+     * `score.highlightFactor`; highlights are POIs within `highlightReachM` in the frame, `highlightWeights` per
+     * category (the highest per category), doubled within `highlightNearM`.
+     */
+    anchorWindow: z.strictObject({
+      fill: z.number().positive().max(1),
+      rayMaxM: z.number().positive(),
+      rayStepDeg: z.number().int().min(1).max(90),
+      minRayM: z.number().positive(),
+      radiiM: z.array(z.number().positive()).min(1),
+      shoreRadiusM: z.number().positive(),
+      tilts: z.array(z.number().positive().max(89)).min(1),
+      centres: z.array(z.number().min(-1).max(1)).min(1),
+      spanDeg: z.number().nonnegative().max(180),
+      targetWater: z.number().min(0).max(1),
+      maxHeightM: z.number().positive(),
+      highlightReachM: z.number().positive(),
+      highlightNearM: z.number().positive(),
+      highlightWeights: z.record(z.string(), z.number().nonnegative()),
+      score: z.strictObject({
+        water: z.number().nonnegative(),
+        offDegPerPoint: z.number().positive(),
+        heightMPerPoint: z.number().positive(),
+        highlightFactor: z.number().nonnegative(),
+      }),
+    }),
+    /** Water share before the render (spec 19, part B): a `gridX` × `gridY` grid of view rays cut at sea level; a ray above the horizon or beyond `maxRayM` is sky. */
+    prediction: z.strictObject({ gridX: z.number().int().positive(), gridY: z.number().int().positive(), maxRayM: z.number().positive() }),
     /**
      * Every other place: the camera looks at the shore ahead (the named cove, else the fetch ray along the view
      * direction) when it is within `maxShoreM`, else at the centre of the place; the target lies far enough inland for

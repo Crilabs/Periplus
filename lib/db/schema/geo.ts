@@ -341,6 +341,19 @@ export const roads = pgTable("roads", {
   createdAt: createdAt(),
 }, (t) => [index("roads_geom_gist").using("gist", t.geom), uniqueIndex("roads_osm_id_unique").on(t.osmId)]);
 
+/**
+ * OSM piers, breakwaters and groynes (spec 19): a way per row, open as a line, closed as a polygon. The images stage
+ * derives the harbour outline of a marina or port without a basin polygon from them. Replaced per subdivision import.
+ */
+export const harbourStructures = pgTable("harbour_structures", {
+  id: uuid("id").primaryKey().$defaultFn(newId),
+  osmId: text("osm_id").notNull(),
+  manMade: text("man_made").notNull(),
+  geom: geometry("geom", "Geometry").notNull(),
+  datasetVersion: text("dataset_version").notNull(),
+  createdAt: createdAt(),
+}, (t) => [index("harbour_structures_geom_gist").using("gist", t.geom), uniqueIndex("harbour_structures_osm_id_unique").on(t.osmId)]);
+
 /** Navily comparison set: place IDs only, never Navily values. */
 export const comparisonSet = pgTable("comparison_set", {
   placeId: uuid("place_id")

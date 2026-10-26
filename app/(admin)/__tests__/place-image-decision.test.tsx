@@ -18,7 +18,6 @@ const PLACE: PlaceImageSubjectView["place"] = {
   centre: { lon: 19.37, lat: 36.61, anchor: true },
   cove: { lon: 19.3754, lat: 36.6102 },
   town: null,
-  composition: "open_water",
 };
 
 const subject = (over: Partial<PlaceImageSubjectView["context"]> = {}, slot = "title", place: PlaceImageSubjectView["place"] = PLACE): PlaceImageSubjectView => ({
@@ -96,9 +95,10 @@ describe("PlaceImageDecision", () => {
     expect(plain).not.toContain("36.61020, 19.37540");
   });
 
-  it("near a town: the type names the town, the place block its distance", () => {
-    const near = render(subject({ light: "evening" }, "title", { ...PLACE, composition: "near_town", town: { geoObjectId: "00000000-0000-4000-8000-000000000009", name: "Poros", distanceM: 960.4 } }));
-    expect(near).toContain("Bild prüfen: Ankerplatz bei einem Ort – Poros");
+  it("near a town: the type stays the kind, the place block names the town and its distance", () => {
+    const near = render(subject({ light: "evening" }, "title", { ...PLACE, town: { geoObjectId: "00000000-0000-4000-8000-000000000009", name: "Poros", distanceM: 960.4 } }));
+    expect(near).toContain("Bild prüfen: Ankerplatz");
+    expect(near).not.toContain("bei einem Ort");
     expect(near).toContain("Poros (960 m)");
     expect(render(subject({}, "title", { ...PLACE, kind: "mooring_field" }))).toContain("Bild prüfen: Bojenfeld");
   });

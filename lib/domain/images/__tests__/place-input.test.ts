@@ -7,7 +7,6 @@ import { geoObjects, places } from "@/lib/db/schema";
 import { insertComputation, insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { insertTestGeoObject, insertTestSubdivision } from "@/test/text";
-import { compositionFor, lightFor } from "../light";
 import { loadPlaceImageInput } from "../place-input";
 
 /*
@@ -87,12 +86,10 @@ describe("loadPlaceImageInput", () => {
       const { objectId } = await insertPlace(tx, { lon: LON, lat: LAT });
       await insertSettlement(tx, 1600, "town");
       expect((await loadPlaceImageInput(tx, objectId, cfg))!.town).toBeNull();
-      const near = await insertSettlement(tx, 1400, "village");
+      const near = await insertSettlement(tx, 1400, "town");
       const input = (await loadPlaceImageInput(tx, objectId, cfg))!;
       expect(input.town?.geoObjectId).toBe(near);
       expect(input.town!.lat).toBeCloseTo(LAT + 1400 / 111_000, 9);
-      expect(lightFor(input, cfg)).toBe("midday");
-      expect(compositionFor(input)).toBe("near_town");
     });
   });
 
@@ -105,26 +102,24 @@ describe("loadPlaceImageInput", () => {
     });
   });
 
-  it("hamlet does not count", async () => {
+  it("a village or hamlet does not count, a city does (spec 19)", async () => {
     await withRollback(async (tx) => {
       const { objectId } = await insertPlace(tx, { lon: LON, lat: LAT });
       await insertSettlement(tx, 600, "hamlet");
-      const input = (await loadPlaceImageInput(tx, objectId, cfg))!;
-      expect(input.town).toBeNull();
-      expect(lightFor(input, cfg)).toBe("midday");
-      expect(compositionFor(input)).toBe("open_water");
+      await insertSettlement(tx, 500, "village");
+      expect((await loadPlaceImageInput(tx, objectId, cfg))!.town).toBeNull();
+      const city = await insertSettlement(tx, 900, "city");
+      expect((await loadPlaceImageInput(tx, objectId, cfg))!.town?.geoObjectId).toBe(city);
     });
   });
 
-  it("marina near a town stays evening, open_water", async () => {
+  it("a marina has no town", async () => {
     await withRollback(async (tx) => {
       const { objectId, placeId } = await insertPlace(tx, { lon: LON, lat: LAT });
       await tx.update(places).set({ kind: "marina" }).where(eq(places.id, placeId));
       await insertSettlement(tx, 600, "town");
       const input = (await loadPlaceImageInput(tx, objectId, cfg))!;
       expect(input.town).toBeNull();
-      expect(lightFor(input, cfg)).toBe("evening");
-      expect(compositionFor(input)).toBe("open_water");
     });
   });
 });

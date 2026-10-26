@@ -3,11 +3,11 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { getEnv, type Env } from "@/lib/env";
 import { loadPlaceImageInput } from "@/lib/domain/images/place-input";
-import { planRender } from "@/lib/domain/images/render-plan";
+import { planView } from "@/lib/domain/images/plan-view";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
-import { aerialIds, initialZoom, keyDone, keyFor, resolveView, titleView, type ImageStageConfig, type ImageView } from "./generate";
+import { aerialIds, imageTaskOf, initialZoom, keyDone, keyFor, resolveView, titleView, type ImageStageConfig, type ImageView } from "./generate";
 import { currentAerialTiles } from "./imagery";
 import { imageModelAvailable } from "./model";
 
@@ -53,11 +53,37 @@ async function eligibleSpots(db: Db, scope: SQL, cfg: ImageStageConfig): Promise
   return rows.map((r) => r.id);
 }
 
+/** The spots of subdivision `key` a run would give a title image (`eligibleSpots`); for the preview script. */
+export async function subdivisionSpots(db: Db, key: string, cfg: ImageStageConfig = getConfig()): Promise<string[]> {
+  return eligibleSpots(db, sql`s.key = ${key}`, cfg);
+}
+
+/**
+ * Whether the slot of a place can have its current key done at all (`keyDone`): only a current image or a review task
+ * made with the current image model and prompt version can carry it, since both are part of the key. Without one the
+ * key is certainly new, so the plan skips the camera planning (spec 19: the fitted camera costs about half a second a
+ * place, and after a prompt or rules change every place is new).
+ */
+export async function mayHaveKeyDone(db: Db, geoObjectId: string, slot: string, cfg: ImageStageConfig): Promise<boolean> {
+  const { model, promptVersion } = imageTaskOf(cfg);
+  const { rows } = await db.execute<{ any: boolean }>(sql`
+    select exists (
+      select 1 from place_images
+      where geo_object_id = ${geoObjectId} and slot = ${slot} and valid_to is null
+        and model = ${model} and prompt_version = ${String(promptVersion)}
+    ) or exists (
+      select 1 from review_tasks
+      where kind = 'place_image' and subject_id = ${`${geoObjectId}:${slot}`}
+        and context @> ${JSON.stringify({ model, promptVersion })}::jsonb
+    ) as any`);
+  return rows[0]!.any;
+}
+
 const inIds = (ids: string[]) => sql`p.geo_object_id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))`;
 
 /**
  * The generation key `generatePlaceImage` would compute for `view` of the place now, without any request: the camera
- * from `planRender` at the view's zoom (else the wanted title zoom), the current aerial tiles of the windows around
+ * from `planView` at the view's zoom (else the wanted title zoom), the current aerial tiles of the windows around
  * its target and, for a title view, the zoom they allow (`resolveView` with `currentAerialTiles`, the job's steps).
  * `null` when the place has no input or one of the tiles is missing (new imagery, so a new key).
  */
@@ -65,14 +91,14 @@ async function plannedKey(db: Db, geoObjectId: string, view: ImageView, cfg: Ima
   const place = await loadPlaceImageInput(db, geoObjectId, cfg.images);
   if (!place || !place.country) return null;
   const country = place.country;
-  const zoom = initialZoom(place, view, cfg.images);
-  const plan = await planRender(db, place, zoom, cfg.images, view.azimuthDeg ?? null);
-  if (!plan.ok) return keyFor(place, { ...view, zoom }, [], cfg);
+  const zoom = initialZoom(view, cfg.images);
+  const plan = await planView(db, place, view, zoom, cfg.images);
+  if (!plan.ok) return keyFor(place, { ...view, zoom }, [], null, cfg);
   const resolved = await resolveView(db, place, view, { zoom, camera: plan.camera }, cfg.images, (target) =>
-    currentAerialTiles(db, { lon: target.lon, lat: target.lat, country }, cfg.images),
+    currentAerialTiles(db, { lon: target.lon, lat: target.lat, country, coreSizeM: target.coreSizeM }, cfg.images),
   );
   if (resolved === null) return null;
-  return keyFor(place, { ...view, zoom: resolved.zoom }, resolved.ok ? aerialIds(resolved.imagery) : [], cfg);
+  return keyFor(place, { ...view, zoom: resolved.zoom }, resolved.ok ? aerialIds(resolved.imagery) : [], resolved.ok ? resolved.camera : null, cfg);
 }
 
 /**
@@ -119,6 +145,10 @@ export async function imageTargets(
   const targets: ImageTarget[] = [];
   for (const c of candidates) {
     if (targets.length >= cfg.images.pipeline.maxGenerationsPerRun) break;
+    if (!(await mayHaveKeyDone(db, c.geoObjectId, c.view.slot, cfg))) {
+      targets.push(c);
+      continue;
+    }
     const key = await plannedKey(db, c.geoObjectId, c.view, cfg);
     if (key !== null && (await keyDone(db, c.geoObjectId, c.view.slot, key, c.force))) continue;
     targets.push(c);
@@ -137,6 +167,10 @@ export async function pendingImageSpotCount(db: Db, subdivisionKey: string, cfg:
   const view = titleView();
   let n = 0;
   for (const id of await eligibleSpots(db, sql`o.subdivision_id = ${sub.id}::uuid`, cfg)) {
+    if (!(await mayHaveKeyDone(db, id, view.slot, cfg))) {
+      n++;
+      continue;
+    }
     const key = await plannedKey(db, id, view, cfg);
     if (key === null || !(await keyDone(db, id, view.slot, key))) n++;
   }

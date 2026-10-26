@@ -1,11 +1,11 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { MockImageModel } from "@/lib/ai/mock-image";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { landPolygons, placeImages, reviewDecisions, runs } from "@/lib/db/schema";
+import { geoObjects, landPolygons, placeImages, reviewDecisions, runs } from "@/lib/db/schema";
 import { createReviewTask } from "@/lib/domain/review";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { createRun } from "@/lib/domain/runs";
@@ -13,11 +13,13 @@ import { STAGES } from "@/lib/jobs/stages";
 import { startBerthFollowupRun } from "@/lib/pipeline/berth-followup-run";
 import { generatePlaceImage, keyDone, type ImageView } from "@/lib/pipeline/images/generate";
 import { setImageModelFactory } from "@/lib/pipeline/images/model";
-import { imageJobs, imageTargets, nextViewSlot } from "@/lib/pipeline/images/stage";
+import { imageJobs, imageTargets, mayHaveKeyDone, nextViewSlot } from "@/lib/pipeline/images/stage";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
 import { startImageRun } from "@/lib/pipeline/images-run";
 import { chromiumInstalled } from "@/test/browser";
+import { insertComputation } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
+import { insertLandBox, metresFrom } from "@/test/fixtures/land-box";
 import {
   checker,
   GOOD,
@@ -153,6 +155,45 @@ describe("imageTargets", () => {
     });
   });
 
+  it("plan and job agree on the key for a marina with a basin and an anchorage in a bay (fitted cameras)", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const at: [number, number] = [IMAGE_LON, IMAGE_LAT];
+      // a bay open to the south around the anchorage, a harbour basin 3 km east
+      await insertLandBox(tx, at, -3_000, -3_000, -180, 3_000);
+      await insertLandBox(tx, at, 220, 300, 2_500, 3_000);
+      await insertLandBox(tx, at, -180, 300, 220, 3_000);
+      await insertLandBox(tx, at, 2_500, -3_000, 3_000, 3_000);
+      const anchorage = await insertSpot(tx, sd.id);
+      const [mlon, mlat] = metresFrom(at, 1_500, 0);
+      const marina = await insertSpot(tx, sd.id, { lon: mlon, lat: mlat, kind: "marina" });
+      const basin = [[-140, -90], [140, -90], [140, 90], [-140, 90], [-140, -90]].map(([e, n]) => metresFrom([mlon, mlat], e!, n!));
+      await tx.update(geoObjects).set({ geom: geomFromGeoJson({ type: "Polygon", coordinates: [basin] }) }).where(eq(geoObjects.id, marina.objectId));
+      await insertComputation(tx, marina.objectId, "anchor_area", { anchor_area: { areaM2: 1 } }, { outputs: { water: { type: "Polygon", coordinates: [basin] }, area: null } });
+      const run = await subdivisionRun(tx, sd.key);
+      const marinaTask = await generateTitle(tx, marina.objectId, run.id);
+      const anchorageTask = await generateTitle(tx, anchorage.objectId, run.id);
+      expect(marinaTask.context.camera!.tiltDeg).toBe(cfg.images.composition.harbour.tiltDeg);
+      expect(cfg.images.composition.anchorWindow.tilts).toContain(anchorageTask.context.camera!.tiltDeg);
+      expect(await imageTargets(tx, run)).toEqual([]);
+    });
+  });
+
+  it("with only Sentinel-2 imagery the fitted camera is at least z1 high", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const marina = await insertSpot(tx, sd.id, { kind: "marina" });
+      const basin = [[-60, -40], [60, -40], [60, 40], [-60, 40], [-60, -40]].map(([e, n]) => metresFrom([IMAGE_LON, IMAGE_LAT], e!, n!));
+      await tx.update(geoObjects).set({ geom: geomFromGeoJson({ type: "Polygon", coordinates: [basin] }) }).where(eq(geoObjects.id, marina.objectId));
+      await insertComputation(tx, marina.objectId, "anchor_area", { anchor_area: { areaM2: 1 } }, { outputs: { water: { type: "Polygon", coordinates: [basin] }, area: null } });
+      const run = await subdivisionRun(tx, sd.key);
+      const task = await generateTitle(tx, marina.objectId, run.id, undefined, undefined, true);
+      expect(task.context.zoom).toBe("z1");
+      expect(task.context.camera!.heightM).toBeGreaterThanOrEqual(cfg.images.camera.zooms.z1.heightM);
+      expect(await imageTargets(tx, run)).toEqual([]);
+    });
+  });
+
   it("targets skip a place with the same generation key: decided task", async () => {
     await withRollback(async (tx) => {
       const sd = await insertImageSubdivision(tx);
@@ -267,6 +308,19 @@ describe("imageTargets", () => {
     });
   });
 
+  it("mayHaveKeyDone: only an image or task under the current model and prompt version can carry the key", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const spot = await insertSpot(tx, sd.id);
+      const run = await subdivisionRun(tx, sd.key);
+      expect(await mayHaveKeyDone(tx, spot.objectId, "title", cfg)).toBe(false);
+      await generateTitle(tx, spot.objectId, run.id);
+      expect(await mayHaveKeyDone(tx, spot.objectId, "title", cfg)).toBe(true);
+      expect(await mayHaveKeyDone(tx, spot.objectId, "title", withPromptVersion(3))).toBe(false);
+      expect(await mayHaveKeyDone(tx, spot.objectId, "view-2", cfg)).toBe(false);
+    });
+  });
+
   it("new prompt version makes the place a target again", async () => {
     await withRollback(async (tx) => {
       const sd = await insertImageSubdivision(tx);
@@ -274,7 +328,7 @@ describe("imageTargets", () => {
       const run = await subdivisionRun(tx, sd.key);
       await generateTitle(tx, spot.objectId, run.id);
       expect(await imageTargets(tx, run)).toEqual([]);
-      expect(await imageTargets(tx, run, withPromptVersion(2))).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
+      expect(await imageTargets(tx, run, withPromptVersion(3))).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
     });
   });
 

@@ -5,21 +5,26 @@
     "copernicus_dem": { "kind": "cog", "countries": "*", "urlTemplate": "https://copernicus-dem-30m.s3.amazonaws.com/{name}/{name}.tif", "resolutionM": 30, "license": "Copernicus-DEM", "attribution": "Gelände © DLR/Airbus, Copernicus", "acquiredAt": null, "timeoutSeconds": 300, "ratePerMinute": 10, "maxBytes": 120000000 }
   },
   "delivery": { "ktimatologio": false, "sentinel2": true, "copernicus_dem": true },
-  "window": { "coreSizeM": 1500, "wideMarginDeg": 0.06, "coreGridM": 4, "wideGridM": 15, "wideSinkM": 3, "whiteThreshold": 245 },
-  "camera": { "tiltDeg": 30, "fovDeg": 50, "width": 1536, "height": 1024, "rotateStepDeg": 10, "defaultZoom": "z1", "rulesVersion": "camera-3",
+  "window": { "coreSizeM": 1500, "coreMarginM": 200, "coreMaxSizeM": 3000, "wideMarginDeg": 0.06, "coreGridM": 4, "wideGridM": 15, "wideSinkM": 3, "whiteThreshold": 245 },
+  "camera": { "tiltDeg": 30, "fovDeg": 50, "width": 1536, "height": 1024, "rotateStepDeg": 10, "defaultZoom": "z1", "rulesVersion": "camera-4",
               "zooms": { "z1": { "heightM": 260 }, "z2": { "heightM": 160 }, "z3": { "heightM": 100 } } },
   "render": { "maxSourcePixelOnScreen": 5, "rendererVersion": "render-1", "timeoutSeconds": 120 },
-  "light": { "townRadiusM": 1500, "townPlaces": ["town", "village"], "nearTown": "midday",
+  "light": { "townRadiusM": 1500, "townPlaces": ["town", "city"], "nearTown": "evening", "townInFrameMargin": 0.05,
              "byKind": { "anchorage": "midday", "mooring_field": "midday", "marina": "evening", "port": "evening" } },
   "scene": {
     "anchorage": { "en": "a sheltered bay with its shore, beach or rocks and the slopes behind", "de": "Bucht mit Ufer und Hängen" },
     "mooring_field": { "en": "a bay with a mooring buoy field, its shore and the slopes behind", "de": "Bucht mit Bojenfeld" },
     "marina": { "en": "a marina with harbour basins, breakwaters and floating pontoons", "de": "Marina mit Becken und Stegen" },
-    "port": { "en": "a harbour town with its quay, waterfront promenade and houses", "de": "Hafenort mit Kai und Promenade" },
-    "near_town": { "en": "a sheltered anchorage with yachts at anchor in front of a town", "de": "Ankerplatz vor einem Ort" }
+    "port": { "en": "a harbour town with its quay, waterfront promenade and houses", "de": "Hafenort mit Kai und Promenade" }
   },
   "check": { "minWaterIoU": { "midday": 0.8, "evening": 0.6 }, "maxAttempts": 2, "waterColour": { "blueOverRedMin": 25, "greenTolerance": 10 } },
   "pipeline": { "maxGenerationsPerRun": 50 },
-  "composition": { "nearTown": { "foregroundM": 450 }, "openWater": { "maxShoreM": 2000, "shoreBelowCentreDeg": 8.3, "zoom": "z2", "coveMinDistanceM": 50 } },
+  "composition": { "fit": { "margin": 0.1, "minHeightM": 100, "maxHeightM": 900, "heightStep": 1.04, "centreTolerance": 0.02, "maxIterations": 15 },
+                   "harbour": { "tiltDeg": 40, "fill": 0.6, "centreY": -0.1, "pierRadiusM": 300, "pierBufferM": 25 },
+                   "anchorWindow": { "fill": 0.6, "rayMaxM": 1500, "rayStepDeg": 10, "minRayM": 50, "radiiM": [100, 150], "shoreRadiusM": 60,
+                                     "tilts": [40, 45], "centres": [-0.1, -0.3, -0.45], "spanDeg": 30, "targetWater": 0.45, "maxHeightM": 350,
+                                     "highlightReachM": 800, "highlightNearM": 500, "highlightWeights": { "food": 3, "beach": 2, "supply": 2, "culture": 1, "active": 1 },
+                                     "score": { "water": 20, "offDegPerPoint": 10, "heightMPerPoint": 50, "highlightFactor": 0.5 } },
+                   "prediction": { "gridX": 32, "gridY": 21, "maxRayM": 20000 }, "openWater": { "maxShoreM": 2000, "shoreBelowCentreDeg": 8.3, "zoom": "z2", "coveMinDistanceM": 50 } },
   "output": { "jpegQuality": 85, "license": "periplus", "credit": "Illustration: Periplus", "altPrefix": "KI-Illustration:" }
 }

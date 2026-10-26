@@ -131,20 +131,16 @@ describe("camera and zoom", () => {
     expect(Math.abs(inlandOffsetM("z1", cfg) - 121)).toBeLessThanOrEqual(1);
   });
 
-  it("title zoom: open water z2 with 0.5 m imagery, z1 with Sentinel-2 only, near town always the default z1", () => {
-    const open = input();
-    expect(titleZoomFor(open, 0.5, cfg)).toBe("z2");
-    expect(titleZoomFor(open, 10, cfg)).toBe("z1");
+  it("title zoom: z2 with 0.5 m imagery, z1 with Sentinel-2 only", () => {
+    expect(titleZoomFor(0.5, cfg)).toBe("z2");
+    expect(titleZoomFor(10, cfg)).toBe("z1");
     // before the imagery is known: the wanted zoom
-    expect(titleZoomFor(open, null, cfg)).toBe("z2");
-    const near = input({ town: { geoObjectId: "00000000-0000-7000-8000-000000000003", lon: LON, lat: LAT + 0.005 } });
-    expect(titleZoomFor(near, 0.5, cfg)).toBe("z1");
-    expect(titleZoomFor(near, null, cfg)).toBe("z1");
+    expect(titleZoomFor(null, cfg)).toBe("z2");
     // a closer wanted level falls back to the next allowed one: 0.7 m allows z1 and z2, not z3
     const z3 = { ...cfg, composition: { ...cfg.composition, openWater: { ...cfg.composition.openWater, zoom: "z3" as const } } };
     expect(allowedZooms(0.7, cfg)).toEqual(["z1", "z2"]);
-    expect(titleZoomFor(open, 0.7, z3)).toBe("z2");
-    expect(titleZoomFor(open, 0.5, z3)).toBe("z3");
+    expect(titleZoomFor(0.7, z3)).toBe("z2");
+    expect(titleZoomFor(0.5, z3)).toBe("z3");
   });
 
   it("foreground pixel size follows the camera tilt", () => {
@@ -423,38 +419,6 @@ describe("planRender", () => {
     });
   });
 
-  it("near_town camera lies 450 m behind the anchorage, away from the town, and looks at the midpoint", async () => {
-    await withRollback(async (tx) => {
-      // Mikro Neorio / Poros (inside the pilot box: rollback only). The town lies ~960 m SSE, so the base azimuth
-      // (town → centre) is ~342°; land north of 37.5083 blocks every candidate from 302° to 32°.
-      const centre: [number, number] = [23.4501, 37.5067];
-      const town = { geoObjectId: "00000000-0000-7000-8000-000000000003", lon: 23.4535, lat: 37.4985 };
-      await insertLand(tx, [box(23.43, 37.5083, 23.47, 37.53)]);
-
-      const plan = await planRender(tx, input({ lon: centre[0], lat: centre[1], openingBearing: 200, town }), "z1", cfg);
-      if (!plan.ok) throw new Error("expected a camera");
-      const { camera } = plan;
-
-      expect(camera.target[0]).toBeCloseTo((centre[0] + town.lon) / 2, 9);
-      expect(camera.target[1]).toBeCloseTo((centre[1] + town.lat) / 2, 9);
-      expect(camera.heightM).toBe(260);
-      expect(camera.zoom).toBe("z1");
-      expect(camera.tiltDeg).toBeCloseTo((Math.atan(260 / camera.distanceM) * 180) / Math.PI, 9);
-      expect(camera.tiltDeg).toBeGreaterThanOrEqual(15);
-      expect(camera.tiltDeg).toBeLessThanOrEqual(22);
-
-      const fromCentre = await groundPoint(tx, camera, centre);
-      expect(Math.abs(fromCentre.distance - 450)).toBeLessThanOrEqual(1);
-      expect(fromCentre.azimuth).toBeGreaterThanOrEqual(270);
-      expect(fromCentre.azimuth).toBeLessThanOrEqual(300);
-      // the camera ground point really is `distanceM` from the target
-      const fromTarget = await groundPoint(tx, camera, camera.target);
-      expect(Math.abs(fromTarget.distance - camera.distanceM)).toBeLessThanOrEqual(0.5);
-    });
-  });
-});
-
-describe("cameraDetails", () => {
   it("cameraDetails of an open_water z1 camera looks back at the target", () => {
     const cam = cameraFor([LON, LAT], 90, "z1", cfg);
     const d = cameraDetails(cam);

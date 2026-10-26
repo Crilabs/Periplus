@@ -52,7 +52,7 @@ Schätzungen. Läufe aus der Oberfläche haben keinen → Schätzung „keine Gr
 | `subdivisions_rebuild` | `confirm` | Systemlauf „Landesteile neu bilden“ |
 | `subdivision_build` | `subdivision`, `confirm` | Aufbau eines Landesteils |
 | `gazetteer_start` | `subdivision`, `confirm` | Gazetteer aufbauen |
-| `datasets_start` | `subdivision`, `confirm` | Datensätze laden |
+| `datasets_start` | `subdivision`, `datasets` (optional, z. B. `["harbour_structures"]`), `confirm` | Datensätze laden (ohne `datasets` alle Arten) |
 | `seed_start` | `subdivision` oder `tileId`, `confirm` | Seed |
 | `geometry_start` | `subdivision` oder `tileId`, `confirm` | Geometrie |
 | `research_start` | `subdivision`, `placeIds` (1–500) oder `tileId`, `confirm` | Recherche (Kachel wird Plätze-Lauf) |

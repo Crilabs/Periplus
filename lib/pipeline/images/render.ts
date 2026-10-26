@@ -162,9 +162,37 @@ export type RenderStoreContext = {
 };
 
 /**
- * Renders a place from its archived imagery and records it: heights from the DEM tiles over the wide window (every
- * `wideGridM`) and the core window (every `coreGridM`), the satellite mosaic of the wide window, the non-blank aerial
- * tiles of the core window. Photo and mask go to `imagery/renders/<geoObjectId>/<renderId>/{photo,mask}.png`, the
+ * Renders a place from its archived imagery without recording it: heights from the DEM tiles over the wide window
+ * (every `wideGridM`) and the core window (every `coreGridM`), the satellite mosaic of the wide window, the non-blank
+ * aerial tiles of the core window.
+ */
+export async function renderFromImagery(
+  archive: Archive,
+  place: PlaceImageInput,
+  camera: RenderCamera,
+  imagery: ImagerySet,
+  cfg: ImagesConfig,
+  deps?: RenderDeps,
+): Promise<{ photo: Uint8Array; mask: Uint8Array }> {
+  const read = async (tile: ImageryTileRef) => {
+    const bytes = await archive.get(tile.fileKey);
+    if (!bytes) throw new Error(`archived imagery ${tile.fileKey} is missing`);
+    return { bbox: tile.bbox, bytes };
+  };
+  const coreBox = coreWindow(place.lon, place.lat, cfg.window, place.coreSizeM);
+  const wideBox = wideWindow(place.lon, place.lat, cfg.window);
+  const dem = (await Promise.all(imagery.dem.map(read))).map((t) => t.bytes);
+  const [wide, core] = await Promise.all([sampleDem(dem, wideBox, cfg.window.wideGridM), sampleDem(dem, coreBox, cfg.window.coreGridM)]);
+  const coreTextures = await Promise.all(imagery.core.filter((t) => !t.blank).map(read));
+  const wideTexture = await wideMosaic(await Promise.all(imagery.wide.map(read)), wideBox);
+  return renderPlace(
+    { camera, wide, core, wideTexture, coreTextures, whiteThreshold: cfg.window.whiteThreshold, sinkM: cfg.window.wideSinkM },
+    { timeoutMs: cfg.render.timeoutSeconds * 1000, ...deps },
+  );
+}
+
+/**
+ * Renders a place from its archived imagery (`renderFromImagery`) and records it. Photo and mask go to `imagery/renders/<geoObjectId>/<renderId>/{photo,mask}.png`, the
  * render to `place_renders` (append-only) with the ids of every imagery tile it was made from.
  */
 export async function renderAndStore(
@@ -176,23 +204,7 @@ export async function renderAndStore(
   ctx: RenderStoreContext,
 ): Promise<{ renderId: string; photoKey: string; maskKey: string }> {
   const cfg = ctx.cfg ?? getConfig().images;
-  const read = async (tile: ImageryTileRef) => {
-    const bytes = await archive.get(tile.fileKey);
-    if (!bytes) throw new Error(`archived imagery ${tile.fileKey} is missing`);
-    return { bbox: tile.bbox, bytes };
-  };
-
-  const coreBox = coreWindow(place.lon, place.lat, cfg.window);
-  const wideBox = wideWindow(place.lon, place.lat, cfg.window);
-  const dem = (await Promise.all(imagery.dem.map(read))).map((t) => t.bytes);
-  const [wide, core] = await Promise.all([sampleDem(dem, wideBox, cfg.window.wideGridM), sampleDem(dem, coreBox, cfg.window.coreGridM)]);
-  const coreTextures = await Promise.all(imagery.core.filter((t) => !t.blank).map(read));
-  const wideTexture = await wideMosaic(await Promise.all(imagery.wide.map(read)), wideBox);
-
-  const { photo, mask } = await renderPlace(
-    { camera, wide, core, wideTexture, coreTextures, whiteThreshold: cfg.window.whiteThreshold, sinkM: cfg.window.wideSinkM },
-    { timeoutMs: cfg.render.timeoutSeconds * 1000, ...ctx.deps },
-  );
+  const { photo, mask } = await renderFromImagery(archive, place, camera, imagery, cfg, ctx.deps);
 
   const renderId = newId();
   const photoKey = `imagery/renders/${place.geoObjectId}/${renderId}/photo.png`;

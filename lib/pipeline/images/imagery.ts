@@ -31,7 +31,8 @@ export type ImagerySet = {
   coreSource: "ktimatologio" | null;
 };
 
-export type ImageryPlace = { geoObjectId: string; lon: number; lat: number; country: string };
+/** Where imagery is fetched: around `lon`, `lat`; `coreSizeM` the side of the core window (default `window.coreSizeM`, spec 19 `coreSizeFor`). */
+export type ImageryPlace = { geoObjectId: string; lon: number; lat: number; country: string; coreSizeM?: number };
 
 type WmsSourceName = "ktimatologio" | "sentinel2";
 type SourceMeta = { license: string; attribution: string; acquiredAt: string | null; watermarked: boolean };
@@ -133,7 +134,7 @@ function aerialGrids(place: Omit<ImageryPlace, "geoObjectId">, cfg: ImagesConfig
     const src = cfg.sources[source];
     if (covers(src.countries, place.country)) grids.push({ source, cells: wmsGrid(bbox, src.resolutionM, src.maxRequestPx) });
   };
-  grid("ktimatologio", coreWindow(place.lon, place.lat, cfg.window));
+  grid("ktimatologio", coreWindow(place.lon, place.lat, cfg.window, place.coreSizeM));
   grid("sentinel2", wideWindow(place.lon, place.lat, cfg.window));
   return grids;
 }

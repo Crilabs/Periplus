@@ -29,7 +29,7 @@ describe("loadImagePlaceInfo", () => {
       await tx.update(geoObjects).set({ subdivisionId: sd.id }).where(eq(geoObjects.id, objectId));
 
       const info = (await loadImagePlaceInfo(tx, objectId, cfg))!;
-      expect(info).toMatchObject({ geoObjectId: objectId, placeId, publicId: "sp_test_info", name: "Ormos Dokos", kind: "anchorage", composition: "open_water", town: null });
+      expect(info).toMatchObject({ geoObjectId: objectId, placeId, publicId: "sp_test_info", name: "Ormos Dokos", kind: "anchorage", town: null });
       expect(info.subdivision).toMatchObject({ key: "XT-image-info" });
       expect(info.centre.anchor).toBe(true);
       expect(info.centre.lon).toBeCloseTo(LON - 480 / 89_390, 9);
@@ -45,7 +45,6 @@ describe("loadImagePlaceInfo", () => {
       await tx.update(geoObjects).set({ tags: { place: "town" } }).where(eq(geoObjects.id, townId));
 
       const info = (await loadImagePlaceInfo(tx, objectId, cfg))!;
-      expect(info.composition).toBe("near_town");
       expect(info.town).toMatchObject({ geoObjectId: townId, name: "Poros" });
       expect(Math.abs(info.town!.distanceM - 1000)).toBeLessThanOrEqual(2);
       expect(info.centre).toEqual({ lon: LON, lat: LAT, anchor: false });

@@ -55,6 +55,8 @@ export function htmlToMarkdown(html: string, url: string, selectors: string[]): 
 /** `htmlToMarkdown` plus the published date Readability reads from the metadata (`article:published_time` …). */
 function convertHtml(html: string, url: string, selectors: string[]) {
   const { document } = parseHTML(html);
+  // linkedom leaves `documentElement` null for a body without any element (empty, plain text); `body` and Readability throw then.
+  if (!document.documentElement) return { markdown: "", title: null, mainChars: 0, publishedHint: null };
   removeAll(document, ALWAYS_REMOVED);
   for (const selector of selectors) removeAll(document, selector);
 

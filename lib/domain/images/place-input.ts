@@ -19,6 +19,8 @@ export type PlaceImageInput = {
   openingBearing: number | null;
   /** `outputs.rays` of the newest fetch computation (fetch in metres per ray, ray i at bearing `i · 360 / length`). */
   rays: number[] | null;
+  /** Side of the core imagery window around `lon`, `lat` (`atTarget`: the camera's `coreSizeFor`); default `window.coreSizeM`. */
+  coreSizeM?: number;
   /** Nearest town within `light.townRadiusM`; only for anchorages and mooring fields. */
   town: { geoObjectId: string; lon: number; lat: number } | null;
   /**
