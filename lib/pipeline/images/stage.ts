@@ -3,7 +3,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { getEnv, type Env } from "@/lib/env";
 import { loadPlaceImageInput } from "@/lib/domain/images/place-input";
-import { planRender } from "@/lib/domain/images/render-plan";
+import { planView } from "@/lib/domain/images/plan-view";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
@@ -57,7 +57,7 @@ const inIds = (ids: string[]) => sql`p.geo_object_id in (select value::uuid from
 
 /**
  * The generation key `generatePlaceImage` would compute for `view` of the place now, without any request: the camera
- * from `planRender` at the view's zoom (else the wanted title zoom), the current aerial tiles of the windows around
+ * from `planView` at the view's zoom (else the wanted title zoom), the current aerial tiles of the windows around
  * its target and, for a title view, the zoom they allow (`resolveView` with `currentAerialTiles`, the job's steps).
  * `null` when the place has no input or one of the tiles is missing (new imagery, so a new key).
  */
@@ -66,7 +66,7 @@ async function plannedKey(db: Db, geoObjectId: string, view: ImageView, cfg: Ima
   if (!place || !place.country) return null;
   const country = place.country;
   const zoom = initialZoom(place, view, cfg.images);
-  const plan = await planRender(db, place, zoom, cfg.images, view.azimuthDeg ?? null);
+  const plan = await planView(db, place, view, zoom, cfg.images);
   if (!plan.ok) return keyFor(place, { ...view, zoom }, [], cfg);
   const resolved = await resolveView(db, place, view, { zoom, camera: plan.camera }, cfg.images, (target) =>
     currentAerialTiles(db, { lon: target.lon, lat: target.lat, country }, cfg.images),

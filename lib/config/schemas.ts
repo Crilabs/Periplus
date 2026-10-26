@@ -1165,8 +1165,8 @@ export const imagesSchema = z.strictObject({
     /**
      * Camera fitted to a focus outline (spec 19, `fit.ts`): the lowest height from `minHeightM` (× `heightStep`, up
      * to `maxHeightM`) at which the focus keeps `margin` from every edge, takes at most the wanted fill and has its
-     * centre within `centreTolerance` of the wanted point (at most `maxIterations` target moves per height).
-     * `floorZoom` is the finest zoom level whose height may be the floor of an automatic title camera.
+     * centre within `centreTolerance` of the wanted point (at most `maxIterations` target moves per height). The
+     * height of the title zoom the imagery allows is the floor (`plan-view.ts`).
      */
     fit: z.strictObject({
       margin: z.number().min(0).max(0.45),
@@ -1175,7 +1175,6 @@ export const imagesSchema = z.strictObject({
       heightStep: z.number().gt(1),
       centreTolerance: z.number().positive(),
       maxIterations: z.number().int().positive(),
-      floorZoom: z.enum(["z1", "z2", "z3"]),
     }),
     /**
      * Marina and port (spec 19): the focus is the basin (the water area of a polygon place), else the convex hull of

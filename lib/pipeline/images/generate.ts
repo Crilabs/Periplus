@@ -15,7 +15,8 @@ import { passesGeometry, toJpeg, waterIoU } from "@/lib/domain/images/checks";
 import { lightFor } from "@/lib/domain/images/light";
 import { loadPlaceImageInput, type PlaceImageInput } from "@/lib/domain/images/place-input";
 import { altText, buildPlacePrompt } from "@/lib/domain/images/prompt";
-import { allowedZooms, cameraDetails, planRender, titleZoomFor, type CameraDetails, type RenderCamera } from "@/lib/domain/images/render-plan";
+import { planView } from "@/lib/domain/images/plan-view";
+import { allowedZooms, cameraDetails, titleZoomFor, type CameraDetails, type RenderCamera } from "@/lib/domain/images/render-plan";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
 import { dismissTasks } from "@/lib/domain/review/task-locks";
 import { createLogger } from "@/lib/logger";
@@ -42,7 +43,7 @@ export type ImageStageConfig = Pick<AppConfig, "images" | "models" | "delivery">
 /**
  * Which image of a place: its slot (`title` from the pipeline, `view-<n>` added by an admin), the zoom level (an
  * admin's choice; without one the composition and the imagery choose it, `titleZoomFor`) and, for an additional
- * view, the bearing the camera rotation starts at (`planRender`'s `azimuthOverride`).
+ * view, the bearing the camera rotation starts at (`planView` → `planRender`'s `azimuthOverride`).
  */
 export type ImageView = { slot: string; zoom?: ZoomLevel; azimuthDeg?: number };
 
@@ -155,7 +156,7 @@ export async function resolveView<T extends AerialTiles>(
   if (view.zoom !== undefined) return { ok: true, ...first, imagery };
   const zoom = titleZoomFor(place, finestResolution(imagery), cfg);
   if (zoom === first.zoom) return { ok: true, ...first, imagery };
-  const plan = await planRender(db, place, zoom, cfg, view.azimuthDeg ?? null);
+  const plan = await planView(db, place, view, zoom, cfg);
   if (!plan.ok) return { ok: false, zoom, reason: "no_water_view" };
   const again = await imageryAt(atTarget(place, plan.camera));
   return again === null ? null : { ok: true, zoom, camera: plan.camera, imagery: again };
@@ -316,7 +317,7 @@ export type GenerateResult = { status: "review" | "no_water_view" | "skipped"; a
 
 /**
  * Generates one image of a place and puts it up for review:
- * 1. the place's input (`loadPlaceImageInput`) and camera (`planRender` at `view.zoom`, else the wanted title zoom
+ * 1. the place's input (`loadPlaceImageInput`) and camera (`planView` at `view.zoom`, else the wanted title zoom
  *    of the composition, rotation from `view.azimuthDeg`); `no_water_view` → a task without candidate, no imagery,
  *    no render; without a usable image model (`ImageModel.available`: no `OPENAI_API_KEY`) → `skipped` before
  *    anything is downloaded or rendered;
@@ -380,7 +381,7 @@ export async function generatePlaceImage(
   };
 
   const firstZoom = initialZoom(place, view, icfg);
-  const plan = await planRender(db, place, firstZoom, icfg, azimuthOverride);
+  const plan = await planView(db, place, view, firstZoom, icfg);
   if (!plan.ok) return noWaterView(firstZoom);
 
   if (!deps.imageModel.available()) {

@@ -20,7 +20,7 @@
   },
   "check": { "minWaterIoU": { "midday": 0.8, "evening": 0.6 }, "maxAttempts": 2, "waterColour": { "blueOverRedMin": 25, "greenTolerance": 10 } },
   "pipeline": { "maxGenerationsPerRun": 50 },
-  "composition": { "fit": { "margin": 0.1, "minHeightM": 100, "maxHeightM": 900, "heightStep": 1.04, "centreTolerance": 0.02, "maxIterations": 15, "floorZoom": "z3" },
+  "composition": { "fit": { "margin": 0.1, "minHeightM": 100, "maxHeightM": 900, "heightStep": 1.04, "centreTolerance": 0.02, "maxIterations": 15 },
                    "harbour": { "tiltDeg": 40, "fill": 0.6, "centreY": -0.1, "pierRadiusM": 300, "pierBufferM": 25 },
                    "anchorWindow": { "fill": 0.6, "rayMaxM": 1500, "rayStepDeg": 10, "minRayM": 50, "radiiM": [100, 150], "shoreRadiusM": 60,
                                      "tilts": [40, 45], "centres": [-0.1, -0.3, -0.45], "spanDeg": 30, "targetWater": 0.45, "maxHeightM": 350,
