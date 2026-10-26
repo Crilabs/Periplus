@@ -6,7 +6,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { deliveries } from "@/lib/db/schema/deliveries";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";
-import { validAtAlias } from "@/lib/domain/timeline";
+import { validAtAlias } from "@/lib/db/valid-at";
 import type { DeliveryRow } from "./build";
 import { sha256Hex } from "./serialize";
 

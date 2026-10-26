@@ -83,18 +83,6 @@ export function ComparisonDecision({
             !!subject.place.publicId && { label: "Öffentliche ID", value: <Mono>{subject.place.publicId}</Mono> },
             { label: "Attribut", value: attribute },
             { label: "Eigener Wert", value: <span className="font-semibold">{subject.ownDisplay ?? "–"}</span> },
-            {
-              label: "Geprüftes Profil",
-              value: subject.evaluationRunId ? (
-                <>
-                  Bewertungslauf <TextLink href={`/runs/${subject.evaluationRunId}`}>{subject.evaluationRunId.slice(0, 8)}</TextLink>
-                </>
-              ) : subject.profileVersion !== null ? (
-                `Version ${subject.profileVersion}`
-              ) : (
-                "–"
-              ),
-            },
           ]}
         />
       </Panel>

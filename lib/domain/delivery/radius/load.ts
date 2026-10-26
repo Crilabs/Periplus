@@ -3,7 +3,7 @@ import type { CoastCollection, CoverageEntry, RegionsFile, Spot, SpotsFile, Weat
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";
-import { validAtAlias } from "@/lib/domain/timeline";
+import { validAtAlias } from "@/lib/db/valid-at";
 import { isImageFile, readJsonFile, readManifest, validDelivery } from "../read";
 import type { SourcePackage } from "./types";
 

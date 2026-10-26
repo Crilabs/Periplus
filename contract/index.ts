@@ -1,9 +1,4 @@
 import { z } from "zod";
-import * as v1 from "./v1";
-import * as v2 from "./v2_0";
-import * as v21 from "./v2_1";
-import * as v22 from "./v2_2";
-import * as v23 from "./v2_3";
 import * as v30 from "./v3_0";
 import {
   coastCollectionSchema,
@@ -20,13 +15,10 @@ import {
  * Periplus Data Contract (spec 08, spec 14, spec 13). The zod schemas in `contract/v2/` are the source of the current version
  * (4.0; the directory name is historic); the JSON schemas under `contract/schema/<version>/` are generated from them
  * (`npm run contract:generate`); every checked-in version is served by `GET /api/v4/schema/<version>/<file>` from
- * `contract/schema/published.ts`. Versions 1.0 (packages per configured area, `contract/v1/`), 2.0 (before the images,
- * `contract/v2_0/`), 2.1 (before the highlight levels, `contract/v2_1/`), 2.2 (before berthable and contact,
- * `contract/v2_2/`) and 2.3 (before the scope, `contract/v2_3/`) stay reproducible from their frozen copies and stay
- * published; 2.1 adds `images` and image files to 2.0, 2.2 adds `spot.highlightLevels` to 2.1 (spec 16), 2.3 adds
- * `spot.berthable` and `spot.contact` to 2.2 (spec 17; all minor, additive). 3.0 (before the new orientation,
- * `contract/v3_0/`) adds `scope` and `coverage` (spec 18; major: the manifest loses `subdivision`, `dataVersion` and
- * `previousDataVersion`, the file envelope loses `subdivision` and `dataVersion`) and is frozen the same way. 4.0 is built
+ * `contract/schema/published.ts`. Version 3.0 (before the new orientation,
+ * `contract/v3_0/`) stays reproducible from its frozen copy and published (N5); it added `scope` and `coverage` (spec 18;
+ * major: the manifest lost `subdivision`, `dataVersion` and `previousDataVersion`, the file envelope lost `subdivision`
+ * and `dataVersion`). Versions 1.0 to 2.3 were removed with the old pipeline (N6). 4.0 is built
  * from berth states (new orientation, major): spots carry free facts, landing points and the things reachable on land
  * (`nearby`), `asOf` and `gaps`; sources, summaries, highlights (`highlights.json`, `highlightIds`, `highlightLevels`),
  * version fields on the spot and the change feed (`changes.json`) are gone, the manifest tile reads `statesAsOf`.
@@ -67,61 +59,6 @@ export const CONTRACT_SCHEMAS: Record<ContractFile, z.ZodType> = {
   "weather-points.json": weatherPointsFileSchema,
 };
 
-/** The zod schemas of the superseded version 1.0, kept to pin its published JSON schemas. */
-const CONTRACT_SCHEMAS_V1: Record<v30.ContractFile, z.ZodType> = {
-  "manifest.json": v1.manifestSchema,
-  "spots.json": v1.spotsFileSchema,
-  "highlights.json": v1.highlightsFileSchema,
-  "regions.json": v1.regionsFileSchema,
-  "coast.geojson": v1.coastCollectionSchema,
-  "weather-points.json": v1.weatherPointsFileSchema,
-  "changes.json": v1.changesFileSchema,
-};
-
-/** The zod schemas of the superseded version 2.0, kept to pin its published JSON schemas. */
-const CONTRACT_SCHEMAS_V2_0: Record<v30.ContractFile, z.ZodType> = {
-  "manifest.json": v2.manifestSchema,
-  "spots.json": v2.spotsFileSchema,
-  "highlights.json": v2.highlightsFileSchema,
-  "regions.json": v2.regionsFileSchema,
-  "coast.geojson": v2.coastCollectionSchema,
-  "weather-points.json": v2.weatherPointsFileSchema,
-  "changes.json": v2.changesFileSchema,
-};
-
-/** The zod schemas of the superseded version 2.1, kept to pin its published JSON schemas. */
-const CONTRACT_SCHEMAS_V2_1: Record<v30.ContractFile, z.ZodType> = {
-  "manifest.json": v21.manifestSchema,
-  "spots.json": v21.spotsFileSchema,
-  "highlights.json": v21.highlightsFileSchema,
-  "regions.json": v21.regionsFileSchema,
-  "coast.geojson": v21.coastCollectionSchema,
-  "weather-points.json": v21.weatherPointsFileSchema,
-  "changes.json": v21.changesFileSchema,
-};
-
-/** The zod schemas of the superseded version 2.2, kept to pin its published JSON schemas. */
-const CONTRACT_SCHEMAS_V2_2: Record<v30.ContractFile, z.ZodType> = {
-  "manifest.json": v22.manifestSchema,
-  "spots.json": v22.spotsFileSchema,
-  "highlights.json": v22.highlightsFileSchema,
-  "regions.json": v22.regionsFileSchema,
-  "coast.geojson": v22.coastCollectionSchema,
-  "weather-points.json": v22.weatherPointsFileSchema,
-  "changes.json": v22.changesFileSchema,
-};
-
-/** The zod schemas of the superseded version 2.3, kept to pin its published JSON schemas. */
-const CONTRACT_SCHEMAS_V2_3: Record<v30.ContractFile, z.ZodType> = {
-  "manifest.json": v23.manifestSchema,
-  "spots.json": v23.spotsFileSchema,
-  "highlights.json": v23.highlightsFileSchema,
-  "regions.json": v23.regionsFileSchema,
-  "coast.geojson": v23.coastCollectionSchema,
-  "weather-points.json": v23.weatherPointsFileSchema,
-  "changes.json": v23.changesFileSchema,
-};
-
 /** The zod schemas of the superseded version 3.0, kept to pin its published JSON schemas. */
 const CONTRACT_SCHEMAS_V3_0: Record<v30.ContractFile, z.ZodType> = {
   "manifest.json": v30.manifestSchema,
@@ -134,11 +71,6 @@ const CONTRACT_SCHEMAS_V3_0: Record<v30.ContractFile, z.ZodType> = {
 };
 
 const SCHEMAS_BY_VERSION: Readonly<Record<string, Readonly<Record<string, z.ZodType>>>> = {
-  "1.0": CONTRACT_SCHEMAS_V1,
-  "2.0": CONTRACT_SCHEMAS_V2_0,
-  "2.1": CONTRACT_SCHEMAS_V2_1,
-  "2.2": CONTRACT_SCHEMAS_V2_2,
-  "2.3": CONTRACT_SCHEMAS_V2_3,
   "3.0": CONTRACT_SCHEMAS_V3_0,
   [SCHEMA_VERSION]: CONTRACT_SCHEMAS,
 };

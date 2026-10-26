@@ -2,9 +2,6 @@ import { eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
-import { markConsolidationSkipped } from "@/lib/domain/consolidation/skipped";
-import { blockUncheckedRuns } from "@/lib/domain/extraction/run-status";
-import { failOpenUnits } from "@/lib/domain/extraction/unit-status";
 import { beginStage, createRun, endCleanupPending, endRun, markEndCleanupDone } from "@/lib/domain/runs";
 import { STAGES } from "@/lib/jobs/stages";
 import { cancelRunJobs, enqueueRunAdvance, enqueueStageJobs } from "@/lib/jobs/enqueue";
@@ -70,8 +67,7 @@ export async function enqueueStage(db: Db, boss: PgBoss, runId: string, stageNam
 /**
  * "Lauf beenden": ends a queued or running run by hand (`endRun`, recording who and when), cancels its jobs that
  * have not started and, after that commit, ends its message batches (`endRunBatches`: unsent ones fail, running ones
- * are cancelled at the provider by their next poll and booked), fails its extraction units that are still open and
- * blocks its extraction runs not checked yet (reason `run_ended`). When every step has run, the cleanup is recorded
+ * are cancelled at the provider by their next poll and booked). When every step has run, the cleanup is recorded
  * on the run (`markEndCleanupDone`).
  * A run an admin ended earlier whose cleanup did not complete (a step threw, e.g. the job queue was unreachable) is
  * cleaned up again: every step is idempotent (ruling GR-8). For any other run that has ended nothing happens.
@@ -87,13 +83,7 @@ export async function endRunByAdmin(
   if (!ended && !(await endCleanupPending(db, runId))) return { ended: false, cleanedUp: false, cancelledJobs: 0 };
   const cancelledJobs = await cancelRunJobs(boss, runId);
   const batches = await endRunBatches(db, boss, runId);
-  // Its stages never finish now: extraction units still open fail here (ruling M4-G-R3).
-  const failedUnits = (await failOpenUnits(db, runId)).length;
-  // Nor does its check stage: its unchecked extraction runs are blocked, never left running (ruling M4-H-R3).
-  const blockedExtractionRuns = (await blockUncheckedRuns(db, runId, "run_ended")).length;
-  // Nor its consolidation, if it has not begun: stored for „Konsolidierung nachholen“ (ruling M5-H-R2).
-  await markConsolidationSkipped(db, runId, "run_ended");
   await markEndCleanupDone(db, runId);
-  createLogger("runs").info({ runId, by, ended, cancelledJobs, batches, failedUnits, blockedExtractionRuns }, "run ended by admin, cleaned up");
+  createLogger("runs").info({ runId, by, ended, cancelledJobs, batches }, "run ended by admin, cleaned up");
   return { ended, cleanedUp: true, cancelledJobs };
 }

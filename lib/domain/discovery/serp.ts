@@ -7,7 +7,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { serpQueries, serpResults } from "@/lib/db/schema";
 import { normalizeUrl, registrableDomain } from "@/lib/domain/sources/urls";
-import type { DiscoveryQuery } from "./queries";
+import type { DiscoveryQuery } from "@/lib/domain/search/queries";
 
 const DAY_MS = 86_400_000;
 

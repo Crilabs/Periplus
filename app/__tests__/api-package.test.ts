@@ -39,7 +39,6 @@ const packageRoute = await import("../api/v4/subdivisions/[subdivision]/package/
 const fileRoute = await import("../api/v4/subdivisions/[subdivision]/package/[file]/route");
 const imageRoute = await import("../api/v4/subdivisions/[subdivision]/package/images/[file]/route");
 const schemaRoute = await import("../api/v4/schema/[version]/[file]/route");
-const schemaRouteV1 = await import("../api/v1/schema/[version]/[file]/route");
 
 const NOW = new Date("2040-06-01T08:00:00Z");
 const LATER = new Date("2040-06-02T08:00:00Z");
@@ -106,7 +105,7 @@ describe("delivery API: authentication", () => {
         (k?: string) => getSubdivisions(k),
         (k?: string) => getPackage(f.subdivisionPublicId, k),
         (k?: string) => getFile(f.subdivisionPublicId, "spots.json", k),
-        (k?: string) => getSchema("2.0", "spots.schema.json", k),
+        (k?: string) => getSchema("3.0", "spots.schema.json", k),
       ];
       for (const call of calls) {
         expect((await call()).status).toBe(401);
@@ -236,10 +235,8 @@ describe("GET /api/v4/subdivisions/[subdivision]/package", () => {
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
       await build(tx, archive, f);
-      // deliveries are append-only; the test transaction plays a package stored before the contract moved to 4.0
-      await tx.execute(sql`alter table deliveries disable trigger deliveries_append_only`);
+      // the test transaction plays a package stored before the contract moved to 4.0
       await tx.execute(sql`update deliveries set schema_version = '2.3'`);
-      await tx.execute(sql`alter table deliveries enable trigger deliveries_append_only`);
 
       expect((await getPackage(f.subdivisionPublicId, key)).headers.get("periplus-schema-version")).toBe("2.3");
       expect((await getFile(f.subdivisionPublicId, "spots.json", key)).headers.get("periplus-schema-version")).toBe("2.3");
@@ -364,7 +361,7 @@ describe("GET /api/v4/subdivisions/[subdivision]/package/[file]", () => {
         await getSubdivisions(key),
         await getPackage(f.subdivisionPublicId, key),
         await getFile(f.subdivisionPublicId, "coast.geojson", key),
-        await getSchema("2.0", "spots.schema.json", key),
+        await getSchema("3.0", "spots.schema.json", key),
       ]) {
         expect(res.status).toBe(200);
         expect(res.headers.get("cache-control")).toBe("private, max-age=60");
@@ -453,23 +450,13 @@ describe("GET /api/v4/subdivisions/[subdivision]/package/images/[file]", () => {
 });
 
 describe("GET /api/v4/schema/[version]/[file]", () => {
-  it("the schema endpoint returns the checked-in JSON schema of every published version; /api/v1 still serves 1.0", () =>
+  it("the schema endpoint returns the checked-in JSON schema of every published version", () =>
     withRollback(async (tx) => {
       db = tx;
       const { key } = await reader(tx);
-      const v1 = (version: string, file: string) =>
-        schemaRouteV1.GET(new Request(`http://localhost/api/v1/schema/${version}/${file}`, { headers: { authorization: `Bearer ${key}` } }), {
-          params: Promise.resolve({ version, file }),
-        });
       for (const file of ["spots.schema.json", "manifest.schema.json", "coast.schema.json", "changes.schema.json"]) {
         for (const [version, res] of [
           ["3.0", await getSchema("3.0", file, key)],
-          ["2.3", await getSchema("2.3", file, key)],
-          ["2.2", await getSchema("2.2", file, key)],
-          ["2.1", await getSchema("2.1", file, key)],
-          ["2.0", await getSchema("2.0", file, key)],
-          ["1.0", await getSchema("1.0", file, key)],
-          ["1.0", await v1("1.0", file)],
         ] as const) {
           expect(res.status, `${version}/${file}`).toBe(200);
           expect(await res.text()).toBe(readFileSync(`contract/schema/${version}/${file}`, "utf8"));
@@ -489,9 +476,10 @@ describe("GET /api/v4/schema/[version]/[file]", () => {
       }
       for (const [version, file] of [
         ["5.0", "spots.schema.json"],
-        ["1.0", "secrets.schema.json"],
-        ["1.0", "spots.json"],
-        ["1.0", "../spots.schema.json"],
+        ["1.0", "spots.schema.json"],
+        ["3.0", "secrets.schema.json"],
+        ["3.0", "spots.json"],
+        ["3.0", "../spots.schema.json"],
       ] as const) {
         const res = await getSchema(version, file, key);
         expect(res.status, `${version}/${file}`).toBe(404);

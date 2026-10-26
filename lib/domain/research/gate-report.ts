@@ -10,7 +10,7 @@ import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { distanceM, type NavilySpot } from "@/lib/domain/quality/navily-sample";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { tileBbox, tileIdFor, tileNeighbours } from "@/lib/domain/tiles";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 import { verdictsIn } from "./gate";
 import { gateDecisions } from "./gate-conflicts";
 import { evaluateGate, emptyAgreement, isExcludedSpot, GATE_CORE_ATTRIBUTES, type CoreAgreement, type GateErrorKind, type GatePlace, type GateRow, type MissReason } from "./gate-navily";

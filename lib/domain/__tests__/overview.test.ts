@@ -66,7 +66,7 @@ describe("overview", () => {
       pause: null,
       pausable: false,
     });
-    expect(result.budgets.map((b) => b.service).sort()).toEqual(["anthropic", "dataforseo", "firecrawl", "jina", "openai", "voyage"]);
+    expect(result.budgets.map((b) => b.service).sort()).toEqual(["anthropic", "dataforseo", "firecrawl", "jina", "openai"]);
     expect(result.recentRuns.length).toBeLessThanOrEqual(5);
     expect(result.recentDeliveries.length).toBeLessThanOrEqual(5);
   });

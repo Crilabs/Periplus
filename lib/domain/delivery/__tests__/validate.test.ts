@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { textShingles } from "@/lib/db/schema";
 import { imageAttributionTexts } from "@/lib/domain/images/delivery-gate";
-import { findArchiveCopies } from "@/lib/domain/documents/archive-copies";
-import { shingleHashes } from "@/lib/domain/documents/shingles";
+import { copyIndex } from "@/lib/domain/documents/archive-copies";
 import { newId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";
 import {
@@ -20,7 +18,6 @@ import {
   TAVERNA,
   validPackage,
 } from "@/test/fixtures/delivery/package-v4";
-import { insertTestVersion } from "@/test/text";
 import type { DeliveryPackage } from "../types";
 import { buildWarnings, CHECK_NAMES, dropCopiedTexts, failedChecksSummary, spotsInMilitaryAreas, validatePackage, type CheckName, type ValidationDeps, type ValidationReport } from "../validate";
 
@@ -318,11 +315,12 @@ describe("validatePackage", () => {
     const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
     return Array.from({ length: n }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}é`);
   }
+  /** The source documents of the package per test transaction (the build loads them with `loadCopyIndex`). */
+  const sourcesOf = new WeakMap<Db, string[]>();
   async function archived(tx: Db, text: string): Promise<void> {
-    const v = await insertTestVersion(tx, [text]);
-    await tx.insert(textShingles).values(shingleHashes(text, 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
+    sourcesOf.set(tx, [...(sourcesOf.get(tx) ?? []), text]);
   }
-  const fromArchive = (tx: Db) => async (text: string) => (await findArchiveCopies(tx, text)).longestRun;
+  const fromArchive = (tx: Db) => async (text: string) => copyIndex(sourcesOf.get(tx) ?? []).longestRun(text);
 
   it("a fact statement copying 16 words of an archived document, with different accents, is a violation (review focus)", async () => {
     await withRollback(async (tx) => {
@@ -467,13 +465,11 @@ describe("buildWarnings", () => {
     ]);
   });
 
-  it("text-only safety values and spots in a military area of the package become warnings (final review I-3, M-7)", () => {
+  it("spots in a military area of the package become warnings (M-7)", () => {
     const out = buildWarnings({
-      undeliveredSafety: [{ file: "regions.json", id: "rg_01J9ZD00000000000000000002", message: "Sperrgebiet laut Text nicht geliefert: Schießgebiet" }],
       militaryAreaSpots: [SPOT_A],
     });
     expect(out.map((f) => [f.file, f.objectId, f.message])).toEqual([
-      ["regions.json", "rg_01J9ZD00000000000000000002", "Sperrgebiet laut Text nicht geliefert: Schießgebiet"],
       ["spots.json", SPOT_A, "Liegt in einem militärischen Sperrgebiet des Pakets (coast.geojson), ist aber nicht ausgeschlossen: Profil oder Status prüfen"],
     ]);
   });

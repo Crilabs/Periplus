@@ -63,7 +63,7 @@ const objectValues = (
 });
 
 describe("deliveries and delivered objects", () => {
-  it.each(["deliveries", "delivered_objects"])("%s rejects UPDATE and DELETE", async (table) => {
+  it.each(["deliveries", "delivered_objects"])("%s can be changed and deleted (no protection since N6)", async (table) => {
     await withRollback(async (tx) => {
       const areaId = await insertArea(tx);
       const delivery = await insertDelivery(tx, areaId);
@@ -72,13 +72,9 @@ describe("deliveries and delivered objects", () => {
         .values(objectValues(areaId, delivery.id))
         .returning({ id: deliveredObjects.id });
       const id = table === "deliveries" ? delivery.id : object!.id;
-
-      const update = await rejectionMessage(tx, (sp) =>
-        sp.execute(sql`update ${sql.identifier(table)} set created_at = now() - interval '1 day' where id = ${id}`),
-      );
-      expect(update).toMatch(new RegExp(`${table} is append-only`));
-      const del = await rejectionMessage(tx, (sp) => sp.execute(sql`delete from ${sql.identifier(table)} where id = ${id}`));
-      expect(del).toMatch(new RegExp(`${table} is append-only`));
+      await tx.execute(sql`update ${sql.identifier(table)} set created_at = now() - interval '1 day' where id = ${id}`);
+      if (table === "deliveries") await tx.execute(sql`delete from delivered_objects where first_delivery_id = ${id}`);
+      await tx.execute(sql`delete from ${sql.identifier(table)} where id = ${id}`);
     });
   });
 

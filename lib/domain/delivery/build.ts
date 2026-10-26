@@ -6,7 +6,7 @@ import { getConfig } from "@/lib/config";
 import type { DeliveryConfig, ImagesConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { deliveredObjects, deliveries, type DeliveryStatus } from "@/lib/db/schema/deliveries";
-import { findArchiveCopies } from "@/lib/domain/documents/archive-copies";
+import { loadCopyIndex } from "@/lib/domain/documents/archive-copies";
 import { newId } from "@/lib/domain/ids";
 import { imageAttributionTexts } from "@/lib/domain/images/delivery-gate";
 import { buildCoast } from "./coast";
@@ -16,7 +16,6 @@ import { manifestSubdivision } from "./read";
 import { contentDigest, contentTypeOf, serializeFile, sha256Hex } from "./serialize";
 import { currentSnapshot, openBuildSnapshot } from "./snapshot";
 import type { DeliveryPackage, SubdivisionScope } from "./types";
-import { undeliveredSafety } from "./map-region";
 import { buildWarnings, dropCopiedTexts, spotsInMilitaryAreas, validatePackage, type ValidationReport } from "./validate";
 import { assignVersions, latestDelivered, type ObjectDraft, type RemovedObject, type VersionedObject } from "./versioning";
 import { buildWeatherPoints } from "./weather-points";
@@ -178,13 +177,9 @@ async function assemble(
     images: imagesCfg,
     scopeTransform: input.scopeTransform,
   });
-  // one lookup per text for the drop pass and the validation (the archive does not change within the snapshot)
-  const copies = new Map<string, Promise<number>>();
-  const findCopies = (text: string) => {
-    let run = copies.get(text);
-    if (run === undefined) copies.set(text, (run = findArchiveCopies(tx, text).then((c) => c.longestRun)));
-    return run;
-  };
+  // the copy check holds every text against the documents the delivered places' facts and landing hints came from
+  const copyIndex = await loadCopyIndex(tx, input.archive, draft.spots.map((s) => s.geoObjectId));
+  const findCopies = async (text: string) => copyIndex.longestRun(text);
   // a copied or foreign fact or landing description leaves its spot with a warning instead of rejecting the package (F3)
   await dropCopiedTexts(draft.spots, { findCopies, cfg });
   const imageBytes = await readImageFiles(input.archive, draft.imageFiles);
@@ -250,7 +245,6 @@ async function assemble(
       mergedNotCarried: notCarried,
       droppedRegions: draft.droppedRegions,
       droppedWeatherPoints: weather.dropped,
-      undeliveredSafety: undeliveredSafety(draft.deliveredRegions, draft.scope.passages),
       militaryAreaSpots: spotsInMilitaryAreas(files["spots.json"].spots, coast),
     }),
   });

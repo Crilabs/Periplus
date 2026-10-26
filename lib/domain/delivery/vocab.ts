@@ -7,7 +7,7 @@ import type {
   spotKind,
 } from "@/contract/v2";
 import type { PlaceKind, RestrictedKind } from "@/lib/db/schema/geo";
-import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
+import type { RuleOrigin } from "@/lib/domain/rules/types";
 
 /*
  * Vocabulary of the delivery (spec 08 "Vokabular-Abbildungen intern → Vertrag stehen als Tabellen"): internal enum
@@ -66,7 +66,10 @@ export const RESTRICTED_REASON: Record<RestrictedKind, ContractRestrictedReason>
 
 export const HOLDING: Record<Holding, "good" | "fair" | "poor"> = { good: "good", moderate: "fair", poor: "poor" };
 
-/** Profile origin → contract source (ruling M6-P3): rule, gazetteer and derived values are computed ones. */
+/** Where a value comes from: a rule origin, the gazetteer (identity fields) or a derived value. */
+export type ProvenanceOrigin = RuleOrigin | "gazetteer" | "derived";
+
+/** Origin → contract source (ruling M6-P3): rule, gazetteer and derived values are computed ones. */
 export const ORIGIN: Record<ProvenanceOrigin, ContractSource> = {
   computed: "computed",
   rule: "computed",
@@ -105,14 +108,6 @@ export const HAZARD_DE: Record<ContractHazardKind, string> = {
   other: "Gefahr",
 };
 
-/** Profile `restricted_zones[].kind` of an area or island (text only, no contract field): German, for the report. */
-export const RESTRICTED_ZONE_DE: Record<"military" | "firing" | "protected" | "other", string> = {
-  military: "Militärisches Sperrgebiet",
-  firing: "Schießgebiet",
-  protected: "Schutzgebiet",
-  other: "Sperrgebiet",
-};
-
 /** `seasonNote[].text` of a season hint kind. */
 export const SEASON_DE: Record<SeasonKind, string> = {
   open: "Geöffnet",
@@ -122,8 +117,8 @@ export const SEASON_DE: Record<SeasonKind, string> = {
   other: "Saisonhinweis",
 };
 
-/** What the contract's provenance needs of a value: a profile attribute's provenance and a berth state's core value both have it. */
-export type ProvenanceInfo = Pick<AttributeProvenance, "origin" | "confidence" | "observedAt">;
+/** What the contract's provenance needs of a value: a berth state's core value has it. */
+export type ProvenanceInfo = { origin: ProvenanceOrigin; confidence: number; observedAt: string | null };
 
 /** Contract order of combined sources (`computed+text`). */
 const COMBINE_ORDER: ContractSource[] = ["computed", "text", "observed", "review"];

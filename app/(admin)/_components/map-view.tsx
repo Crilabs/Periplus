@@ -14,7 +14,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { GeoObjectType, PlaceStatus, RestrictedKind } from "@/lib/db/schema";
 import type { MapLayer } from "@/lib/domain/map-data";
 import { CLIENT_BBOX_DEGREES, MAP_FEATURE_LIMIT, NOT_IN_GEO_OBJECT_LAYER } from "@/lib/domain/map-limits";
-import type { ConfidenceClass } from "@/lib/domain/consolidation/types";
+import type { ConfidenceClass } from "@/lib/domain/rules/types";
 import {
   CONFIDENCE_CLASS_LABELS,
   GEO_OBJECT_TYPE_LABELS,

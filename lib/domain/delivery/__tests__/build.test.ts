@@ -4,15 +4,13 @@ import type { Archive } from "@/lib/adapters/s3";
 import type { Manifest, SpotsFile } from "@/contract";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { berthStates, deliveredObjects, deliveries, places, textShingles } from "@/lib/db/schema";
+import { berthStates, deliveredObjects, deliveries, places } from "@/lib/db/schema";
 import type { BerthStateFact } from "@/lib/db/schema/research-state";
-import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { startWhileLocked, testDb, withRollback } from "@/test/db";
 import { seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
+import { factSourcePage } from "@/test/research-signals";
 import { deleteTestObjects, memoryArchive, testArchive } from "@/test/s3";
-import { insertTestVersion } from "@/test/text";
 import { SubdivisionNotFound } from "../load";
 import { buildDelivery, previousPackage } from "../build";
 import { sha256Hex } from "../serialize";
@@ -129,7 +127,6 @@ function shuffled(scope: SubdivisionScope): SubdivisionScope {
       state: s.state && { ...s.state, facts: mix(s.state.facts), nearby: mix(s.state.nearby), gaps: mix(s.state.gaps) },
     })),
     merged: mix(scope.merged),
-    pois: mix(scope.pois),
     regions: mix(scope.regions).map((r) => ({ ...r, names: mix(r.names) })),
     passages: mix(scope.passages),
   };
@@ -268,9 +265,7 @@ describe("buildDelivery", () => {
       const first = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
       expect(first).toMatchObject({ status: "valid", dataVersion: 1 });
       // the package as a 3.0 deployment stored it: older contract version (its files are never read as the base of this one)
-      await tx.execute(sql`alter table deliveries disable trigger deliveries_append_only`);
       await tx.update(deliveries).set({ schemaVersion: "3.0" }).where(eq(deliveries.id, first.deliveryId));
-      await tx.execute(sql`alter table deliveries enable trigger deliveries_append_only`);
       const second = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date(NOW.getTime() + 86_400_000), inCallerTransaction: true });
       expect(second).toMatchObject({ status: "valid", dataVersion: 2 });
       const rows = await deliveryRows(tx, f.subdivisionId);
@@ -412,32 +407,6 @@ describe("buildDelivery", () => {
     });
   });
 
-  it("a restricted zone known only from the island's text is reported as not delivered (final review I-3)", async () => {
-    await withRollback(async (tx) => {
-      const f = await seedDeliverySubdivision(tx);
-      await insertProfile(
-        tx,
-        f.islandId,
-        { meltemi_exposure: 0.7, ferry_traffic: "high", charter_bases: ["X"], restricted_zones: [{ kind: "military", name: "Kalami" }] },
-        {
-          meltemi_exposure: provenanceEntry("text", { confidence: 0.6 }),
-          ferry_traffic: provenanceEntry("text", { confidence: 0.6 }),
-          charter_bases: provenanceEntry("text", { confidence: 0.6 }),
-          restricted_zones: provenanceEntry("text", { confidence: 0.6 }),
-        },
-        { version: 2, confidence: null },
-      );
-      const result = await buildDelivery(tx, memoryArchive(), f.subdivisionId, { now: NOW, inCallerTransaction: true });
-      expect(result.status).toBe("valid");
-      expect(result.report.warnings).toContainEqual({
-        file: "regions.json",
-        objectId: f.islandPublicId,
-        path: null,
-        message: "Sperrgebiet laut Text nicht geliefert: Militärisches Sperrgebiet Kalami",
-      });
-    });
-  });
-
   it("a fact with a link or a domain name is dropped with a warning, the package stays valid (review focus 5, F3)", async () => {
     await withRollback(async (tx) => {
       const f = await seedDeliverySubdivision(tx);
@@ -470,8 +439,8 @@ describe("buildDelivery", () => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       const words = saltedWords(30);
-      const v = await insertTestVersion(tx, [words.join(" ")]);
-      await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
+      // the page the spot's facts were extracted from holds the words: a delivered text must not copy them
+      await factSourcePage(tx, getConfig(), archive, { placeId: f.places.A.placeId, objectId: f.places.A.geoObjectId }, words.join(" "));
       const copied = `Die Bucht: ${words.slice(2, 18).join(" ")}.`;
       await rewriteStateA(tx, f, { facts: await factsOfA(tx, f, copied), updatedAt: new Date("2026-10-20T08:00:00Z") });
 

@@ -5,15 +5,15 @@ import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documents, documentVersions, pageAssessments, researchHits } from "@/lib/db/schema";
-import { firstWords } from "@/lib/domain/mentions/classification";
+import { firstWords } from "@/lib/domain/research/util/dates";
 import { activeAssessor, storeAssessment } from "@/lib/domain/research/assessment";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import type { QueueName } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import type { BatchDeps, BatchHandlerEntry, BatchItemInput } from "@/lib/pipeline/batches";
-import { submitStageJobBatch } from "@/lib/pipeline/text/stage-batch";
-import { titleOf } from "@/lib/pipeline/text/classify";
+import { submitStageJobBatch } from "@/lib/pipeline/stage-batch";
+import { titleOf } from "@/lib/domain/documents/title";
 import { researchScope } from "./search";
 
 // No import of ../runs here: the job handlers import this module (import cycle through the stage registry).

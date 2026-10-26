@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
@@ -416,19 +416,12 @@ describe("importWikidata", () => {
         .where(or(inArray(geoObjects.wikidataId, qids), inArray(geoObjects.id, Object.values(ids))))
         .orderBy(geoObjects.id);
       const objectIds = objects.map((o) => o.id);
-      const historyCount = async (table: "geo_objects_history" | "geo_names_history") => {
-        const { rows } = await db.execute<{ n: number }>(
-          sql`select count(*)::int as n from ${sql.identifier(table)} where row_id in ${objectIds}`,
-        );
-        return rows[0]!.n;
-      };
       const snapshot = async () => ({
         objects: await db
           .select({ id: geoObjects.id, wikidataId: geoObjects.wikidataId })
           .from(geoObjects)
           .where(or(inArray(geoObjects.wikidataId, qids), inArray(geoObjects.id, Object.values(ids))))
           .orderBy(geoObjects.id),
-        objectHistory: await historyCount("geo_objects_history"),
         names: await db
           .select({ id: geoNames.id, validTo: geoNames.validTo, isPreferred: geoNames.isPreferred })
           .from(geoNames)

@@ -6,7 +6,6 @@ import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../_components/auto-refresh";
 import { Dialog } from "../_components/dialog";
 import { runScopeError } from "../_components/labels";
-import { ReprocessForm } from "./reprocess-form";
 import { RunsTable } from "../_components/runs-table";
 import { SubdivisionOptions } from "../_components/subdivision-options";
 import { Button, cx, inputClass, Notice, PageHeader, Panel } from "../_components/ui";
@@ -15,11 +14,7 @@ import {
   startGazetteerAction,
   startGeometryAction,
   startPingRun,
-  startPlaceWebsiteAction,
-  startReprocessAction,
-  startRevisitAction,
   startSeedAction,
-  startTextRunAction,
 } from "./actions";
 
 export const metadata: Metadata = { title: "Läufe" };
@@ -51,14 +46,6 @@ const RUNS: ScopedRun[] = [
     button: "Seed für Landesteil",
   },
   {
-    id: "place-websites",
-    name: "Marina-Websites",
-    description:
-      "Sucht für Marinas und Häfen des Landesteils die eigene Website (aus OSM und Wikidata, sonst über die Google-Suche mit KI-Prüfung), gibt sie als Quellen frei, ruft sie ab und wertet die neuen Seiten aus. Braucht einen Seed-Lauf.",
-    action: startPlaceWebsiteAction,
-    button: "Marina-Websites suchen",
-  },
-  {
     id: "datasets",
     name: "Datensätze",
     description:
@@ -70,33 +57,9 @@ const RUNS: ScopedRun[] = [
     id: "geometry",
     name: "Geometrie",
     description:
-      "Sucht zuerst unbenannte Buchten an der Küste (neue Ortskandidaten fürs Review), berechnet dann je Ort Fetch, Schutz je Sektor, Öffnung zur See und Schwell und aktualisiert danach Profil und Zusammenfassung. Braucht Tiefendaten und Landpolygone (Datensätze laden).",
+      "Sucht zuerst unbenannte Buchten an der Küste (neue Ortskandidaten fürs Review), berechnet dann je Ort Fetch, Schutz je Sektor, Öffnung zur See und Schwell. Braucht Tiefendaten und Landpolygone (Datensätze laden).",
     action: startGeometryAction,
     button: "Geometrie für Landesteil",
-  },
-  {
-    id: "texts",
-    name: "Texte",
-    description:
-      "Wertet die Texte aus, die Objekte des Landesteils erwähnen, dazu die noch offenen Versionen ihrer Quellen: Erwähnungen zuordnen, Facts mit Zitat extrahieren, Belegtreue prüfen, konsolidieren. Nach neuen oder geänderten Quellen.",
-    action: startTextRunAction,
-    button: "Texte auswerten für Landesteil",
-  },
-  {
-    id: "reprocess",
-    name: "Reprozessieren",
-    description:
-      "Extrahiert jede Erwähnung im Landesteil erneut mit dem aktuell konfigurierten Modell, Prompt und Fact-Schema in einen neuen Extraktionslauf; die alten Facts bleiben. Nach einer Änderung an Modell, Prompt oder Schema.",
-    action: startReprocessAction,
-    button: "Reprozessieren für Landesteil (Stufen 6–7)",
-  },
-  {
-    id: "revisit",
-    name: "Revisit",
-    description:
-      "Ruft alle freigegebenen Quellen erneut ab und wertet aus, was sich geändert hat: neue Fassungen, verschwundene Seiten, Facts, Konsolidierung und Änderungsereignisse des Landesteils. Der zweite Durchgang nach dem ersten vollen Lauf. Solange er läuft, startet kein Crawl dieser Quellen.",
-    action: startRevisitAction,
-    button: "Revisit für Landesteil",
   },
 ];
 
@@ -152,9 +115,6 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
                       </h3>
                       <p className="mt-0.5 leading-relaxed text-muted text-pretty">{run.description}</p>
                     </div>
-                    {run.id === "reprocess" ? (
-                      <ReprocessForm options={options} action={run.action} button={run.button} />
-                    ) : (
                     <form action={run.action} className="flex flex-wrap items-end gap-2">
                       <label htmlFor={`${run.id}-scope`} className="sr-only">
                         Landesteil
@@ -171,7 +131,6 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
                         {run.button}
                       </Button>
                     </form>
-                    )}
                   </li>
                 ))}
               </ol>

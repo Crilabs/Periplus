@@ -2,7 +2,6 @@ import sharp from "sharp";
 import { getConfig, type AppConfig } from "@/lib/config";
 import { getEnv } from "@/lib/env";
 import { httpCall, type CallContext, type HttpResponse, type Transport } from "./http";
-import { assertNotSimulated } from "./simulation";
 
 export type ImageEditRequest = {
   task: "generate-place-image";
@@ -65,7 +64,6 @@ export function createOpenAiImageModel(transport: Transport, config: Pick<AppCon
   return {
     available: () => getEnv().OPENAI_API_KEY !== undefined,
     async edit(req, ctx) {
-      assertNotSimulated("openai", "images.edit");
       const key = getEnv().OPENAI_API_KEY;
       if (!key) throw new Error("OPENAI_API_KEY is not set");
       const task = config.models.imageTasks[req.task];

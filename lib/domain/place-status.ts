@@ -2,9 +2,8 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { places, reviewDecisions, reviewTasks, type PlaceStatus } from "@/lib/db/schema";
-import { lockOpenPlaceTasks } from "@/lib/domain/consolidation/task-locks";
+import { lockOpenPlaceTasks } from "@/lib/domain/review/task-locks";
 import { recheckExclusion } from "@/lib/domain/geometry/restrictions";
-import { deleteHighlightSelections } from "@/lib/domain/highlights/selections";
 import { newPublicId } from "@/lib/domain/ids";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 
@@ -88,8 +87,6 @@ export async function setPlaceStatusByAdmin(
           : { status: input.status, statusReason: "review", updatedAt: sql`now()` },
       )
       .where(eq(places.id, place.id));
-    // a rejected place selects no highlights any more (spec 16)
-    if (input.status === "rejected") await deleteHighlightSelections(tx, place.geoObjectId);
     if (input.status === "confirmed") {
       await recheckExclusion(tx, { id: place.id, geoObjectId: place.geoObjectId }, getConfig().geometry.restriction.minShare);
     }

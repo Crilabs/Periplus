@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Transport } from "@/lib/adapters/http";
 import { ImageOutputInvalid, type ImageModel } from "@/lib/adapters/openai-image";
@@ -8,6 +9,7 @@ import { getConfig, type AppConfig, type ImagesConfig, type ImageryLight, type Z
 import type { Db } from "@/lib/db/client";
 import { placeImages, placeRenders, reviewDecisions, reviewTasks, type PlaceKind } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
+import { canonicalJson } from "@/lib/domain/facts/schema";
 import { newId } from "@/lib/domain/ids";
 import { passesGeometry, toJpeg, waterIoU } from "@/lib/domain/images/checks";
 import { lightFor } from "@/lib/domain/images/light";
@@ -15,8 +17,7 @@ import { loadPlaceImageInput, type PlaceImageInput } from "@/lib/domain/images/p
 import { altText, buildPlacePrompt } from "@/lib/domain/images/prompt";
 import { allowedZooms, cameraDetails, planRender, titleZoomFor, type CameraDetails, type RenderCamera } from "@/lib/domain/images/render-plan";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
-import { dismissTasks } from "@/lib/domain/consolidation/task-locks";
-import { valueFingerprint } from "@/lib/domain/review-decisions";
+import { dismissTasks } from "@/lib/domain/review/task-locks";
 import { createLogger } from "@/lib/logger";
 import { ensureImagery, type AerialTiles } from "./imagery";
 import { renderAndStore } from "./render";
@@ -94,8 +95,11 @@ export function generationKey(input: {
   azimuthDeg: number | null;
   rulesVersion: string;
 }): string {
-  return valueFingerprint({ ...input, imageryTileIds: [...input.imageryTileIds].sort() });
+  return fingerprint({ ...input, imageryTileIds: [...input.imageryTileIds].sort() });
 }
+
+/** A stable fingerprint of a value (first 16 hex characters of the SHA-256 of its canonical JSON). */
+const fingerprint = (value: unknown): string => createHash("sha256").update(canonicalJson(value)).digest("hex").slice(0, 16);
 
 /** The model and prompt version of the image task (part of the generation key). */
 export function imageTaskOf(cfg: Pick<AppConfig, "models">): { model: string; promptVersion: number } {

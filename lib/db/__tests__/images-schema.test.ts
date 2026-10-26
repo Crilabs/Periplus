@@ -93,38 +93,16 @@ async function insertImage(tx: Db, geoObjectId: string, renderId: string, patch:
 }
 
 describe("images schema", () => {
-  it("place_renders is append-only", async () => {
-    await withRollback(async (tx) => {
-      const render = await insertRender(tx, await insertTestGeoObject(tx));
-      const msg = await rejectionMessage(tx, (d) => d.update(placeRenders).set({ zoom: "z3" }).where(eq(placeRenders.id, render.id)));
-      expect(msg).toContain("is append-only");
-      const del = await rejectionMessage(tx, (d) => d.delete(placeRenders).where(eq(placeRenders.id, render.id)));
-      expect(del).toContain("is append-only");
-    });
-  });
-
-  it("imagery_tiles and place_images refuse delete", async () => {
+  it("place_renders, imagery_tiles and place_images can be deleted (no protection since N6)", async () => {
     await withRollback(async (tx) => {
       const geo = await insertTestGeoObject(tx);
       const tile = await insertTile(tx);
+      const render = await insertRender(tx, geo);
       const image = await insertImage(tx, geo, (await insertRender(tx, geo)).id);
-      expect(await rejectionMessage(tx, (d) => d.delete(imageryTiles).where(eq(imageryTiles.id, tile.id)))).toContain("rows are never deleted");
-      expect(await rejectionMessage(tx, (d) => d.delete(placeImages).where(eq(placeImages.id, image.id)))).toContain("rows are never deleted");
-      expect(await rejectionMessage(tx, (d) => d.execute(sql`truncate imagery_tiles`))).toBeTruthy();
-    });
-  });
-
-  it("records history of ending a tile and an image", async () => {
-    await withRollback(async (tx) => {
-      const geo = await insertTestGeoObject(tx);
-      const tile = await insertTile(tx);
-      const image = await insertImage(tx, geo, (await insertRender(tx, geo)).id);
-      await tx.update(imageryTiles).set({ validTo: sql`current_date` }).where(eq(imageryTiles.id, tile.id));
-      await tx.update(placeImages).set({ validTo: sql`current_date` }).where(eq(placeImages.id, image.id));
-      const t = await tx.execute(sql`select count(*)::int as n from imagery_tiles_history where row_id = ${tile.id}`);
-      const i = await tx.execute(sql`select count(*)::int as n from place_images_history where row_id = ${image.id}`);
-      expect(t.rows[0]).toEqual({ n: 1 });
-      expect(i.rows[0]).toEqual({ n: 1 });
+      await tx.update(placeRenders).set({ zoom: "z3" }).where(eq(placeRenders.id, render.id));
+      await tx.delete(placeImages).where(eq(placeImages.id, image.id));
+      await tx.delete(imageryTiles).where(eq(imageryTiles.id, tile.id));
+      await tx.delete(placeRenders).where(eq(placeRenders.id, render.id));
     });
   });
 

@@ -8,7 +8,7 @@ import { latestComputations } from "@/lib/domain/facts/computations";
 import type { LonLat } from "@/lib/domain/geo-view";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
 import type { Bbox } from "@/lib/domain/tiles";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 
 export type { RestrictedKind };
 

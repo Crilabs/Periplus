@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import type { SpotsFile } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
-import { validAtAlias } from "@/lib/domain/timeline";
+import { validAtAlias } from "@/lib/db/valid-at";
 import { readJsonFile, validDelivery } from "../read";
 import type { LonLat } from "../types";
 import { isHomeMarina } from "./load";

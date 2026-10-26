@@ -56,7 +56,6 @@ function ordered(scope: SubdivisionScope): SubdivisionScope {
     tiles: [...scope.tiles].sort((a, b) => cmp(a.id, b.id)),
     spots: [...scope.spots].map((s) => ({ ...s, names: [...s.names].sort(byName) })).sort(byPublicId),
     merged: [...scope.merged].sort(byPublicId),
-    pois: [...scope.pois].sort(byPublicId),
     regions: [...scope.regions].map((r) => ({ ...r, names: [...r.names].sort(byName) })).sort(byPublicId),
     passages: [...scope.passages].sort((a, b) => cmp(a.geoObjectId, b.geoObjectId)),
   };
@@ -89,7 +88,7 @@ export async function draftSubdivision(db: Db, subdivisionId: string, today: str
   // only delivered regions are parents (ruling M6-C-R2 NOTE): a nameless one is skipped to the next ancestor
   const regionPublicIds = new Map(named.regions.map((r) => [r.geoObjectId, r.publicId]));
   const regions = named.regions.map((r) => ({
-    body: mapRegion(r, { regionPublicIds, spotIds: spotIdsByRegion.get(r.publicId) ?? [], cfg }),
+    body: mapRegion(r, { regionPublicIds, spotIds: spotIdsByRegion.get(r.publicId) ?? [] }),
     geoObjectId: r.geoObjectId,
   }));
 

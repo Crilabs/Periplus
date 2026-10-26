@@ -1,13 +1,12 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Manifest, SpotsFile } from "@/contract";
 import type { Db } from "@/lib/db/client";
-import { berthStates, deliveries, geoObjects, runs, subdivisions, textShingles } from "@/lib/db/schema";
+import { berthStates, deliveries, geoObjects, runs, subdivisions } from "@/lib/db/schema";
 import { setDeliveryArchive } from "@/lib/domain/delivery/archive";
 import { buildDelivery } from "@/lib/domain/delivery/build";
 import { sha256Hex } from "@/lib/domain/delivery/serialize";
-import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { createRun, endRun } from "@/lib/domain/runs";
 import { newId } from "@/lib/domain/ids";
 import { deliveryBuildHandler, deliveryBuildStage } from "@/lib/jobs/handlers/delivery";
@@ -18,7 +17,6 @@ import { startDeliveryRun } from "@/lib/pipeline/delivery-run";
 import { testDb, withRollback } from "@/test/db";
 import { COMMITTED_SHIFT, endCommittedDeliverySubdivision, seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { deleteTestObjects, testArchive, testObjectContentType } from "@/test/s3";
-import { insertTestVersion } from "@/test/text";
 
 /*
  * The run "Paket bauen" (plan Task 10): stage plan and starter in withRollback (no worker); the job handler on the
@@ -116,7 +114,6 @@ describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
     const triggeredBy = someone();
     let f: DeliveryFixture | undefined;
     let runId: string | undefined;
-    const chunkIds: string[] = [];
     const row = async (id: string) => (await db.select().from(deliveries).where(eq(deliveries.id, id)))[0]!;
     const visible = async (xid: string, deliveryId: string) =>
       (
@@ -193,23 +190,11 @@ describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
       const a = (await readJson<SpotsFile>(`${v2.storagePrefix}spots.json`)).spots.find((s) => s.id === f!.places.A.publicId)!;
       expect(a).toMatchObject({ asOf: "2026-10-23", shelter: { sectors: { E: 0.8 } } });
       expect(v2.fileHashes).not.toHaveProperty("changes.json");
-
-      // 4. the same content once A's fact statement turns out copied: the fact is dropped (F3), a new valid package, not unchanged
-      const archived = await insertTestVersion(db, [`Vorher ${words.join(" ")} nachher.`]);
-      chunkIds.push(...archived.chunkIds);
-      await db.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: archived.chunkIds[0]! })));
-      const third = jobContext(db, runId);
-      await expect(deliveryBuildHandler(job, third.ctx)).resolves.toBeUndefined();
-      expect(third.logs).toEqual([{ level: "info", msg: "delivery built", fields: expect.objectContaining({ status: "valid", dataVersion: 3 }) }]);
-      const v3 = await row(third.logs[0]!.fields.deliveryId as string);
-      expect(v3).toMatchObject({ status: "valid", dataVersion: 3, previousDeliveryId: v2.id });
-      const a3 = (await readJson<SpotsFile>(`${v3.storagePrefix}spots.json`)).spots.find((s) => s.id === f!.places.A.publicId)!;
-      expect(a3.facts.some((x) => x.text.includes(words[0]!))).toBe(false);
+      // a copied fact is dropped (F3): covered in build.test.ts inside a transaction (its source page cannot be removed again)
     } finally {
       if (f) {
         const stored = await db.select().from(deliveries).where(eq(deliveries.subdivisionId, f.subdivisionId));
         await deleteTestObjects(stored.flatMap((d) => (d.storagePrefix ? Object.keys(d.fileHashes).map((file) => `${d.storagePrefix}${file}`) : [])));
-        if (chunkIds.length > 0) await db.delete(textShingles).where(inArray(textShingles.chunkId, chunkIds));
         await endCommittedDeliverySubdivision(db, f);
       }
       if (runId) await endRun(db, runId, "test");

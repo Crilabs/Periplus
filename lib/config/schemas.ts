@@ -4,7 +4,6 @@ import {
   geoObjectTypeEnum,
   placeKindEnum,
   placeStatusEnum,
-  HIGHLIGHT_CATEGORIES,
   poiCategoryEnum,
   restrictedKindEnum,
   seabedTypeEnum,
@@ -18,7 +17,7 @@ import { CONTRACT_FILES, SCHEMA_VERSION } from "@/contract";
 import { PROVENANCE_SOURCES, RADIUS_MAX_DAYS } from "@/contract/v2";
 import { COPY_SHINGLE_WORDS } from "@/lib/domain/documents/shingles";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
-import { CONVERTERS, crawlRulesPatchSchema, regexPattern } from "@/lib/domain/sources/crawl-rules";
+import { CONVERTERS, regexPattern } from "@/lib/domain/sources/crawl-rules";
 
 export const queueConfigSchema = z.strictObject({
   concurrency: z.number().int().min(1),
@@ -29,7 +28,7 @@ export const queueConfigSchema = z.strictObject({
   expireInSeconds: z.number().int().min(1).optional(),
 });
 
-export const BUDGET_SERVICES = ["anthropic", "voyage", "dataforseo", "firecrawl", "jina", "openai"] as const;
+export const BUDGET_SERVICES = ["anthropic", "dataforseo", "firecrawl", "jina", "openai"] as const;
 export type BudgetService = (typeof BUDGET_SERVICES)[number];
 
 export const queuesSchema = z.record(z.string(), queueConfigSchema);
@@ -120,8 +119,6 @@ export const modelsSchema = z
         message: "must be longer than providerTimeoutSeconds",
       })
       .refine((b) => b.reservationHours > b.maxHours, { path: ["reservationHours"], message: "must be longer than maxHours" }),
-    /** Models compared on the same extraction units (spec 06). */
-    comparison: z.strictObject({ models: z.array(z.string().min(1)).min(2) }),
   })
   .superRefine((models, ctx) => {
     for (const [name, task] of Object.entries(models.tasks)) {
@@ -134,11 +131,6 @@ export const modelsSchema = z
         ctx.addIssue({ code: "custom", path: ["imageTasks", name, "model"], message: `no price for model ${task.model}` });
       }
     }
-    models.comparison.models.forEach((model, i) => {
-      if (!(model in models.pricesEurPerMTok)) {
-        ctx.addIssue({ code: "custom", path: ["comparison", "models", i], message: `no price for model ${model}` });
-      }
-    });
   });
 
 const configKey = z.string().regex(/^[a-z][a-z0-9-]*$/, "must be lower case letters, digits and dashes");
@@ -342,8 +334,6 @@ export const gazetteerSchema = z.strictObject({
     uncertainDistanceFactor: z.number().min(1),
     wikidataLinkDistanceM: z.number().positive(),
     geonamesNewObjectRadiusM: z.number().positive(),
-    /** Spec 16: two selected highlights of a category with similar names closer than this get a pair task. */
-    highlightPairM: z.number().positive(),
     /** Decides a pair of geo objects without a person where the sources make it clear (`autoPairDecision`). */
     autoDecidePairs: z.boolean(),
   }),
@@ -461,17 +451,10 @@ export const restrictionsSchema = z.strictObject({
   ),
 });
 
-/** Pilot and full-operation target of a metric; `direction` says whether the value must reach (min) or stay under (max) it. */
-const metricTarget = z.strictObject({
-  pilot: z.number().min(0).nullable(),
-  full: z.number().min(0).nullable(),
-  direction: z.enum(["min", "max"]),
-});
 
 /**
- * `config/quality.json`: the M2 spot check (`navilySample`) and the quality measurement of spec 10 (targets,
- * thresholds of the metrics, the Navily comparison, the extrapolation). One source per threshold (ruling M7-P1): the
- * spot check reads the protected threshold and the seabed share from `navily`.
+ * `config/quality.json`: the M2 spot check (`navilySample`), the comparison set and the Navily comparison assistant.
+ * One source per threshold (ruling M7-P1): the spot check reads the protected threshold and the seabed share from `navily`.
  */
 export const qualitySchema = z.strictObject({
   navilySample: z.strictObject({
@@ -482,34 +465,6 @@ export const qualitySchema = z.strictObject({
     /** Per-sector rates are only reported from this many matched places on (no reconstruction of single spots). */
     minMatchedForSectorRates: positiveInt,
   }),
-  /** Spec 10 „Zielwerte“: pilot and full operation per metric (keys of `METRIC_KEYS`). */
-  targets: z.strictObject({
-    coverage: metricTarget,
-    coverage_navily: metricTarget,
-    multi_source: metricTarget,
-    /** The datendienst Mehrbefund („mindestens 2 Dokumenten“), the acceptance metric (ruling M7-P12). */
-    multi_document: metricTarget,
-    fact_precision: metricTarget,
-    quote_fidelity: metricTarget,
-    shelter_confidence: metricTarget,
-    route_reconstruction: metricTarget,
-    cost_per_place: metricTarget,
-    review_minutes_per_100: metricTarget,
-  }),
-  /** Pilot: „Review-Aufwand für den zweiten Lauf unter 60 Minuten“. */
-  secondRunReviewMinutesMax: z.number().positive(),
-  /** Pilot success criteria with a count: „Routen-Rekonstruktion an mindestens 3 Törnberichten“, „10 von 10 Änderungen“. */
-  pilotCriteria: z.strictObject({ minTripReports: positiveInt, revisitChanges: positiveInt }),
-  /** A review duration counts at most this long (a tab left open must not skew the effort). */
-  reviewDurationCapMinutes: z.number().positive(),
-  /** „Anteil Orte mit Beobachtung < 18 Monate“. */
-  recentObservationMonths: positiveInt,
-  /** Shelter confidence: a text fact confirms a computed sector within this deviation. */
-  shelterConfirmTolerance: share,
-  /** Tile size check: places per tile, target range. */
-  placesPerTile: z
-    .strictObject({ min: z.number().int().min(0), max: positiveInt })
-    .refine((r) => r.min <= r.max, "min must not exceed max"),
   /** „im Pilot 50 Orte, je weiterem Revier 20–30“. */
   comparisonSet: z
     .strictObject({ pilotSize: positiveInt, perSubdivisionMin: positiveInt, perSubdivisionMax: positiveInt })
@@ -540,10 +495,6 @@ export const qualitySchema = z.strictObject({
     /** `checked_by` of machine-accepted proposals. */
     proposalVersion: z.string().min(1).max(120),
   }).refine((n) => n.prohibitedTypes.every((t) => n.excludedTypes.includes(t)), { error: "prohibitedTypes must be part of excludedTypes", path: ["prohibitedTypes"] }),
-  /** Mediterranean extrapolation of the cost report; `placesPerSubdivision` null = measured in the pilot. */
-  extrapolation: z
-    .strictObject({ subdivisionsMin: positiveInt, subdivisionsMax: positiveInt, placesPerSubdivision: positiveInt.nullable() })
-    .refine((e) => e.subdivisionsMin <= e.subdivisionsMax, "subdivisionsMin must not exceed subdivisionsMax"),
 });
 
 /** EMODnet Seabed Habitats WFS (EUSeaMap substrate layer) and the mapping of its classes to `seabed_type`. */
@@ -684,7 +635,6 @@ export const discoverySchema = z.strictObject({
     /** Pause before the first further attempt; it doubles with each attempt. */
     taskRetryDelayMs: z.number().int().nonnegative(),
   }),
-  templates: z.strictObject({ area: z.array(queryTemplateSchema), tile: z.array(queryTemplateSchema) }),
   /** A named bay becomes a tile query with an anchor area of at least this size or this many Wikidata names. */
   bay: z.strictObject({ minAnchorAreaM2: z.number().positive(), minWikidataNames: positiveInt }),
   /**
@@ -701,9 +651,6 @@ export const discoverySchema = z.strictObject({
     crawl: z.strictObject({ maxDepth: z.number().int().min(0).max(10), maxPagesPerStartUrl: positiveInt }),
   }),
   proposals: z.strictObject({
-    minSerpHits: positiveInt,
-    minLinkingSources: positiveInt,
-    maxHitsInContext: positiveInt,
     /** Registrable domains never proposed. */
     ignoreDomains: z.array(domainName),
     /** In order of precedence; patterns match `host + pathname`, case-insensitive. */
@@ -712,7 +659,7 @@ export const discoverySchema = z.strictObject({
   }),
 });
 
-/** `config/fetch.json`: fetching, conversion, chunking and the converter decision. */
+/** `config/fetch.json`: fetching, conversion and the converter decision. */
 export const fetchSchema = z.strictObject({
   defaultConverter: z.enum(CONVERTERS),
   /**
@@ -732,9 +679,6 @@ export const fetchSchema = z.strictObject({
   trackingParams: z.array(z.string().regex(/^[A-Za-z0-9_.-]+\*?$/, "must be a parameter name, optionally ending in *")),
   /** ISO 639-3 (language detection) → ISO 639-1 code stored on documents. */
   languages: z.record(z.string().regex(/^[a-z]{3}$/), z.string().regex(/^[a-z]{2}$/)),
-  chunk: z
-    .strictObject({ targetWords: positiveInt, maxWords: positiveInt, maxOverlapWords: z.number().int().nonnegative() })
-    .refine((c) => c.targetWords <= c.maxWords, "targetWords must not exceed maxWords"),
   pdf: z.strictObject({
     extractor: z.literal("pdftotext"),
     modelFallback: z.boolean(),
@@ -746,36 +690,7 @@ export const fetchSchema = z.strictObject({
   firecrawl: z.strictObject({ endpoint: z.url(), eurPerCredit: eur, timeoutMs: positiveInt }),
 });
 
-/** `config/embeddings.json`: embedding provider, model and dimension of `chunks.embedding`. */
-export const embeddingsSchema = z.strictObject({
-  provider: z.literal("voyage"),
-  endpoint: z.url(),
-  model: z.string().min(1),
-  dimension: positiveInt,
-  batchSize: positiveInt,
-  eurPerMTok: eur,
-  ratePerMinute: z.number().positive(),
-  timeoutMs: positiveInt,
-});
-
-/** `config/sources-whitelist.json`: sources created as approved without a proposal. */
-export const whitelistSchema = z
-  .array(
-    z.strictObject({
-      domain: domainName,
-      name: z.string().trim().min(1),
-      type: docType,
-      changeRate,
-      crawlRules: crawlRulesPatchSchema,
-    }),
-  )
-  .superRefine((entries, ctx) => {
-    const domains = entries.map((e) => e.domain);
-    const dup = domains.find((d, i) => domains.indexOf(d) !== i);
-    if (dup) ctx.addIssue({ code: "custom", message: `duplicate domain ${dup}` });
-  });
-
-/** `config/mentions.json`: finding mentions of gazetteer objects in chunks (spec 06). */
+/** `config/mentions.json`: name matching of gazetteer objects in the text of an area file (spec 14). */
 export const mentionsSchema = z
   .strictObject({
     /** Exact matches only for names with at least this many characters. */
@@ -786,16 +701,10 @@ export const mentionsSchema = z
     sureSimilarity: share,
     /** `similarity` from here up to `sureSimilarity` is ambiguous. */
     uncertainSimilarity: share,
-    maxNgramWords: positiveInt,
     /** At most this many candidate objects go to the disambiguation. */
     maxCandidates: positiveInt,
-    /** The disambiguation sees at most this many characters of the chunk around the name. */
-    disambiguationContextChars: positiveInt,
     /** Tile ring around the tiles a document touches; 2 is a test switch. */
     neighbourRing: z.union([z.literal(1), z.literal(2)]),
-    versionsPerJob: positiveInt,
-    /** Object types matched against the whole text first, to find the tiles a document touches. */
-    prepassTypes: z.array(geoObjectType).min(1),
     /** Normalized words that never form a mention on their own. */
     stopNames: z.array(z.string().min(1).refine((n) => n === normalizeName(n), "must be normalized (normalizeName)")),
     /**
@@ -806,8 +715,6 @@ export const mentionsSchema = z
       z.string().regex(/^[a-z]{2}$/, "ISO 639-1 language code"),
       z.array(z.string().min(1).refine((n) => n === normalizeName(n), "must be normalized (normalizeName)")),
     ),
-    /** Normalized capitalised words that never belong to a new-name hint (sentence starts, common nouns). */
-    nameHintStopWords: z.array(z.string().min(1).refine((n) => n === normalizeName(n), "must be normalized (normalizeName)")),
   })
   .refine((m) => m.uncertainSimilarity < m.sureSimilarity, "uncertainSimilarity must be below sureSimilarity");
 
@@ -828,33 +735,19 @@ export const nameAffixesSchema = z
     if (dup) ctx.addIssue({ code: "custom", message: `duplicate affix ${dup}` });
   });
 
-/** `config/extraction.json`: classification, extraction units, quote check, geocoding and the model comparison. */
+/** `config/extraction.json`: batch size, route limits, quote check and geocoding of the research. */
 export const extractionSchema = z.strictObject({
   quote: z
     .strictObject({ minChars: positiveInt, maxChars: positiveInt })
     .refine((q) => q.minChars < q.maxChars, "minChars must be below maxChars"),
-  unit: z.strictObject({ neighbourChunks: z.number().int().nonnegative(), maxChunksPerUnit: positiveInt }),
-  maxFactsPerUnit: positiveInt,
   unitsPerBatch: positiveInt,
-  /** The classification reads title, URL and the first this many words. */
-  classifyWords: positiveInt,
   /** Documents with more words in sections go to the route extraction. */
   routeSectionWords: positiveInt,
   /** At most this many stops of a route section are looked at (the prompt says so too). */
   routeMaxStops: positiveInt,
   /** Limits of a route stop, enforced when it is stored and stated in the prompt: name length, top of the Beaufort scale. */
   routeStop: z.strictObject({ nameMaxChars: positiveInt, maxBeaufort: positiveInt }),
-  /**
-   * Longest proper name a highlight's `poi_name` may carry, enforced when facts are stored and stated in the facts
-   * prompt (the fact schema's `properName` caps every stored name too).
-   */
-  properNameMaxChars: positiveInt,
-  /** A highlight POI matches a gazetteer POI within this distance. */
-  poiMatchRadiusM: meters,
-  poiSimilarity: share,
   geocode: z.strictObject({
-    minDocuments: positiveInt,
-    minSources: positiveInt,
     radiusKm: z.number().positive(),
     limit: positiveInt,
     endpoint: z.url(),
@@ -862,18 +755,6 @@ export const extractionSchema = z.strictObject({
   }),
   /** Observation dates before this are treated as wrong. */
   earliestDate: z.iso.date(),
-  /** M4 acceptance (`npm run check:texts`): more than this share of the match's mentions without a model call. */
-  acceptance: z.strictObject({ minDeterministicShare: share }),
-  comparison: z.strictObject({
-    units: positiveInt,
-    minSources: positiveInt,
-    ratingSample: positiveInt,
-    numericTolerance: share,
-    /** Estimated system prompt tokens per unit (cost estimate before the start). */
-    systemTokens: positiveInt,
-    /** Estimated output tokens per unit incl. thinking (cost estimate before the start). */
-    outputTokensPerUnit: positiveInt,
-  }),
 });
 
 /** `config/consolidation/active.json`: the rules version `AppConfig.consolidation` holds. */
@@ -882,16 +763,6 @@ export const consolidationActiveSchema = z.strictObject({
 });
 
 const positive = z.number().positive();
-const ascending = (values: number[]) => values.every((v, i) => i === 0 || v > values[i - 1]!);
-/** Positive weights summing to 1 (a weighted mean that needs no normalisation). */
-const weightSet = <K extends string>(keys: readonly K[]) =>
-  z
-    .record(z.enum(keys as readonly [K, ...K[]]), positive)
-    .refine((w) => Math.abs(Object.values<number>(w).reduce((a, b) => a + b, 0) - 1) < 1e-9, "weights must sum to 1");
-const sentenceRange = z
-  .tuple([positiveInt, positiveInt])
-  .refine(([min, max]) => min <= max, "minimum sentences must not exceed the maximum");
-const month = z.number().int().min(1).max(12);
 const attributePattern = z.string().regex(/^[a-z_]+(\.([A-Za-z_]+|\*))?$/, "must be an attribute key or <prefix>.*");
 
 /**
@@ -918,11 +789,6 @@ export const consolidationSchema = z.strictObject({
     })
     .refine((c) => c.classes[0].min > c.classes[1].min && c.classes[1].min > 0, "class minima must descend to low = 0"),
   conflict: z.strictObject({ minRatio: z.number().gt(1) }),
-  /**
-   * `additiveLists`: safety lists whose added entries are always `changed`, judged per entry and never held back as
-   * uncertain (ruling M5-F-R3 I-3, "Jede Nennung gilt"); removals and changed entries go through the uncertain gate.
-   */
-  change: z.strictObject({ minIndependent: positiveInt, strongWeight: share, additiveLists: z.array(attributePattern) }),
   expiry: z.strictObject({ cycles: positiveInt, defaultCycleDays: positiveInt }),
   rules: z.strictObject({
     shelter: z.strictObject({
@@ -945,78 +811,9 @@ export const consolidationSchema = z.strictObject({
     /** Identity key of a list entry per attribute merged by `union`; [] = the element itself (ruling M5-P3). */
     union: z.strictObject({ keys: z.record(attributePattern, z.array(z.string().min(1))) }),
   }),
-  profileConfidence: weightSet(["shelter", "depth", "seabed", "exclude"]),
-  /** The attributes (keys or `<prefix>.*`) whose confidences each group of `profileConfidence` averages. */
-  profileConfidenceGroups: z.strictObject({
-    shelter: z.array(attributePattern).min(1),
-    depth: z.array(attributePattern).min(1),
-    seabed: z.array(attributePattern).min(1),
-    exclude: z.array(attributePattern).min(1),
-  }),
-  quietness: z.strictObject({
-    settlementFullM: meters,
-    roadFullM: meters,
-    ferryLaneRadiusM: meters,
-    ferryLaneValue: share,
-    occupancyMonths: z.array(month).min(1),
-    occupancy: z.strictObject({ empty: share, moderate: share, full: share }),
-    text: z.strictObject({ quiet: share, moderate: share, busy: share, noisy: share }),
-    ferryTraffic: z.strictObject({ none: share, low: share, moderate: share, high: share }),
-    weights: weightSet(["settlement", "road", "occupancy", "text", "ferry"]),
-    /** Known parts a quietness value needs (ruling M5-E-R2); fewer → no value, a gap. */
-    minParts: z.number().int().min(1).max(5),
-  }),
-  importance: z
-    .strictObject({
-      sitelinksPerPoint: positive,
-      maxSitelinkPoints: z.number().nonnegative(),
-      categoryBonus: z.strictObject(
-        Object.fromEntries(HIGHLIGHT_CATEGORIES.map((c) => [c, z.number().nonnegative()])) as Record<
-          (typeof HIGHLIGHT_CATEGORIES)[number],
-          z.ZodNumber
-        >,
-      ),
-      /** Score limits between the importance levels 1–5. */
-      thresholds: z.array(z.number()).length(4),
-      /** Radius of meaning per importance level, nautical miles. */
-      radiusNm: z.array(positive).length(5),
-      maxSpotIds: positiveInt,
-      /** Importance bonus per OSM tag (`<key>=<value>`) or Wikidata class (`wikidata:<Qid>`); optional: v1 predates it. */
-      tagBonus: z.record(z.string(), z.number().nonnegative()).optional(),
-    })
-    .refine((i) => ascending(i.thresholds), "importance thresholds must ascend")
-    .refine((i) => ascending(i.radiusNm), "importance radii must ascend"),
-  /** Highlight selection per place (spec 16); optional: v1 predates it. */
-  highlights: z
-    .strictObject({
-      maxPerCategory: positiveInt,
-      /** Reach in km per importance level 1–5 (index = importance − 1). */
-      reachKm: z.array(positive).length(5),
-      /** Weight per importance level 1–5 for the highlight level of a place. */
-      levelWeights: z.array(z.number().nonnegative()).length(5),
-      /** Weighted-sum limits between the levels none / some / many. */
-      levelThresholds: z.array(z.number()).length(2),
-      /** Importance given to a POI that a text names but no source rates. */
-      textNameImportance: z.number().int().min(1).max(5),
-    })
-    .refine((h) => ascending(h.levelThresholds), "highlight level thresholds must ascend")
-    .optional(),
-  severity: z.strictObject({
-    safety: z.array(attributePattern),
-    /** A shelter sector changing by more than this is a safety change. */
-    shelterDelta: share,
-    notable: z.array(attributePattern),
-  }),
   gaps: z.strictObject({
     /** Attributes whose absence is no gap, per place kind. */
     ignore: z.partialRecord(z.enum(placeKindEnum.enumValues), z.array(attributePattern)),
-  }),
-  followup: z.strictObject({ minDocuments: positiveInt, cooldownDays: positiveInt, maxPlacesPerRun: positiveInt }),
-  summary: z.strictObject({
-    levels: z.array(z.enum(["place", "poi"])).min(1),
-    sentences: z.strictObject({ place: sentenceRange, poi: sentenceRange }),
-    maxAttempts: positiveInt,
-    lowConfidence: confidence,
   }),
 });
 
@@ -1064,9 +861,6 @@ export const deliverySchema = z.strictObject({
     /** A spot this close to a region polygon belongs to it (bays of an island), nautical miles (ruling M6-C-R1). */
     memberMarginNm: positive,
     simplifyToleranceM: positive,
-    character: z
-      .strictObject({ meltemiHigh: share, meltemiLow: share })
-      .refine((c) => c.meltemiLow < c.meltemiHigh, "meltemiLow must be below meltemiHigh"),
   }),
   weather: z.strictObject({
     regionBufferNm: positive,
@@ -1091,7 +885,6 @@ export const deliverySchema = z.strictObject({
     .refine((r) => r.maxDays <= RADIUS_MAX_DAYS, { message: `maxDays must not exceed the contract's ${RADIUS_MAX_DAYS}`, path: ["maxDays"] }),
   /** `popularity` is normalised within this distance of each place, across subdivisions (spec 18), nautical miles. */
   popularity: z.strictObject({ neighbourhoodNm: positive }),
-  highlights: z.strictObject({ maxSpotIds: positiveInt }),
   validation: z.strictObject({
     maxWaterDistanceNm: positive,
     spotDuplicateM: positive,
@@ -1108,13 +901,12 @@ export const deliverySchema = z.strictObject({
     maxCopiedWords: z.number().int().min(COPY_SHINGLE_WORDS),
     /** Top-level domains by which a bare domain name in a text is recognised (`foreign_content`): `example.com` blocks the package. */
     domainTlds: z.array(z.string().regex(/^[a-z]{2,24}$/)).min(1),
-    /** Copy checks (`text_shingles` queries) running at once. */
+    /** Copy checks running at once (pure lookups against the package's copy index). */
     copyCheckConcurrency: positiveInt,
     /** Below this `score.confidence` the summary must carry `lowConfidenceNote`. */
     lowConfidence: confidence,
     lowConfidenceNote: z.string().trim().min(1),
   }),
-  severity: z.strictObject({ shelterDelta: share }),
   /**
    * Domains whose content never leaves Periplus (Navily, Google): a domain (and its subdomains) or `label.*` for that
    * registrable label on any ICANN public suffix (`google.*`, SEC-4).
@@ -1155,8 +947,6 @@ export type ExtractionConfig = z.infer<typeof extractionSchema>;
 export type SourceTypesConfig = Record<DocType, { weight: number; changeRate: ChangeRate }>;
 export type DiscoveryConfig = z.infer<typeof discoverySchema>;
 export type FetchConfig = z.infer<typeof fetchSchema>;
-export type EmbeddingsConfig = z.infer<typeof embeddingsSchema>;
-export type WhitelistConfig = z.infer<typeof whitelistSchema>;
 export type DatasetsConfig = z.infer<typeof datasetsSchema>;
 export type QueueConfig = z.infer<typeof queueConfigSchema>;
 export type GeometryConfig = z.infer<typeof geometrySchema>;
@@ -1212,8 +1002,6 @@ export type AppConfig = {
   sourceTypes: SourceTypesConfig;
   discovery: DiscoveryConfig;
   fetch: FetchConfig;
-  embeddings: EmbeddingsConfig;
-  whitelist: WhitelistConfig;
   mentions: MentionsConfig;
   nameAffixes: NameAffixesConfig;
   extraction: ExtractionConfig;

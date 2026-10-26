@@ -23,7 +23,6 @@ const at = (day: Date, hours: number) => new Date(day.getTime() + hours * 3_600_
 
 const budgets = (anthropic: number): AppConfig["budgets"] => ({
   anthropic: { dailyEur: anthropic },
-  voyage: { dailyEur: 1 },
   dataforseo: { dailyEur: 1 },
   firecrawl: { dailyEur: 1 },
   jina: { dailyEur: 1 },
@@ -65,7 +64,7 @@ describe("costs", () => {
       const status = await budgetStatus(tx, budgets(2), at(day, 2));
       const a = status.find((s) => s.service === "anthropic");
       expect(a).toEqual({ service: "anthropic", spentEur: 0.5, budgetEur: 2, ratio: 0.25 });
-      expect(status).toHaveLength(6);
+      expect(status).toHaveLength(5);
     }));
 });
 

@@ -22,7 +22,7 @@ import type { QueueName } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import type { BatchDeps, BatchHandlerEntry, BatchItemInput } from "@/lib/pipeline/batches";
-import { submitStageJobBatch } from "@/lib/pipeline/text/stage-batch";
+import { submitStageJobBatch } from "@/lib/pipeline/stage-batch";
 import { failUnit, GENERATED_REASON, skipUnit } from "./extract";
 import { researchScope } from "./search";
 

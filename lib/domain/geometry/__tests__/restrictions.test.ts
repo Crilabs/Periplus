@@ -52,15 +52,8 @@ async function rowsWithPrefix(tx: Db, prefix: string) {
   return rows;
 }
 
-async function historyCount(tx: Db, ids: string[]): Promise<number> {
-  const { rows } = await tx.execute<{ n: number }>(sql`
-    select count(*)::int as n from restricted_areas_history
-    where row_id in (select unnest(${`{${ids.join(",")}}`}::uuid[]))`);
-  return rows[0]!.n;
-}
-
 describe("upsertRestrictedAreas", () => {
-  it("re-import: unchanged rows write no history, a changed geometry updates the same row, a missing one ends", () =>
+  it("re-import: a changed geometry updates the same row, a missing one ends", () =>
     withRollback(async (tx) => {
       const prefix = `test:mil-${crypto.randomUUID()}/`;
       const a: RestrictedFeature = { kind: "military", sourceRef: `${prefix}a`, geometry: await utmRect(tx, 0, 0, 500, 500) };
@@ -85,7 +78,6 @@ describe("upsertRestrictedAreas", () => {
       const ids = first.map((r) => r.id);
 
       expect(await upsertRestrictedAreas(tx, input([a, b, c]))).toEqual({ inserted: 0, updated: 0, unchanged: 3, ended: 0 });
-      expect(await historyCount(tx, ids)).toBe(0);
 
       const bChanged = { ...b, geometry: await utmRect(tx, 1000, 0, 1600, 500) };
       expect(await upsertRestrictedAreas(tx, input([a, bChanged, c]))).toEqual({
@@ -96,7 +88,6 @@ describe("upsertRestrictedAreas", () => {
       });
       const afterUpdate = await rowsWithPrefix(tx, prefix);
       expect(afterUpdate.map((r) => r.id)).toEqual(ids);
-      expect(await historyCount(tx, ids)).toBe(1);
       const { rows: area } = await tx.execute<{ a: number }>(
         sql`select ST_Area(ST_Transform(geom, 32634)) as a from restricted_areas where source_ref = ${b.sourceRef}`,
       );
@@ -143,7 +134,6 @@ describe("upsertRestrictedAreas", () => {
       });
       const rows = await rowsWithPrefix(tx, prefix);
       expect(rows.map((r) => r.id)).toEqual([before!.id]);
-      expect(await historyCount(tx, [before!.id])).toBe(1);
       const { rows: kind } = await tx.execute<{ kind: string }>(sql`select kind from restricted_areas where id = ${before!.id}::uuid`);
       expect(kind[0]!.kind).toBe("aquaculture");
     }));
@@ -275,29 +265,19 @@ describe("applyExclusion", () => {
   };
   const reason = `restricted:military:${hit.restrictedAreaId}`;
 
-  async function historyOf(tx: Db, id: string) {
-    const { rows } = await tx.execute<{ old_row: { status: string; status_reason: string | null } }>(
-      sql`select old_row from places_history where row_id = ${id}::uuid order by history_id`,
-    );
-    return rows.map((r) => r.old_row);
-  }
-
   const restrictedTask = (tx: Db, id: string) =>
     tx
       .select({ status: reviewTasks.status, context: reviewTasks.context })
       .from(reviewTasks)
       .where(and(eq(reviewTasks.subjectId, id), sql`${reviewTasks.context}->>'reason' = 'restricted'`));
 
-  it("candidate → excluded: no_anchoring, history row written, open task dismissed", () =>
+  it("candidate → excluded: no_anchoring, open task dismissed", () =>
     withRollback(async (tx) => {
       const candidate = await insertPlace(tx, "candidate");
       await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: candidate, context: {} });
       expect(await applyExclusion(tx, candidate, [hit])).toBe("excluded");
       expect(await placeOf(tx, candidate)).toEqual({ status: "no_anchoring", statusReason: reason, publicId: null });
       expect(await taskStatus(tx, candidate)).toEqual(["dismissed"]);
-      const history = await historyOf(tx, candidate);
-      expect(history).toHaveLength(1);
-      expect(history[0]).toMatchObject({ status: "candidate", status_reason: null });
       // Already excluded: no second change.
       expect(await applyExclusion(tx, candidate, [hit])).toBe("unchanged");
     }));
@@ -308,7 +288,6 @@ describe("applyExclusion", () => {
       const confirmed = await insertPlace(tx, "confirmed", publicId);
       expect(await applyExclusion(tx, confirmed, [hit])).toBe("review_opened");
       expect(await placeOf(tx, confirmed)).toEqual({ status: "confirmed", statusReason: null, publicId });
-      expect(await historyOf(tx, confirmed)).toHaveLength(0);
       expect(await restrictedTask(tx, confirmed)).toEqual([
         {
           status: "open",

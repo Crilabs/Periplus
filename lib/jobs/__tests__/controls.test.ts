@@ -11,7 +11,7 @@ describe("queue controls", () => {
   it("pauseForBudget pauses until next UTC midnight and resumeQueue clears it", async () => {
     const q = `q-${newId()}`;
     const now = new Date("2030-03-05T22:30:00Z");
-    await pauseForBudget(db, new BudgetExceeded("voyage", 2, 1), [q], now);
+    await pauseForBudget(db, new BudgetExceeded("jina", 2, 1), [q], now);
     expect(await isQueuePaused(db, q, now)).toBe(true);
     expect(await isQueuePaused(db, q, new Date("2030-03-05T23:59:59Z"))).toBe(true);
     expect(await isQueuePaused(db, q, new Date("2030-03-06T00:00:00Z"))).toBe(false);

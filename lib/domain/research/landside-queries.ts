@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { ResearchConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { berthStates, geoObjects, wikidataSitelinks } from "@/lib/db/schema";
-import { namesByLanguage, queryKey, type DiscoveryQuery } from "@/lib/domain/discovery/queries";
+import { namesByLanguage, queryKey, type DiscoveryQuery } from "@/lib/domain/search/queries";
 
 type LandsideConfig = ResearchConfig["landside"];
 

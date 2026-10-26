@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
-import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
+import { activeRulesVersion } from "@/lib/domain/rules/active";
 import { RESEARCH_ASSESS_STAGE } from "@/lib/pipeline/research/assess";
 import { RESEARCH_FETCH_STAGE } from "@/lib/pipeline/research/fetch";
 import { RESEARCH_LANDSIDE_EXTRACT_STAGE } from "@/lib/pipeline/research/landside-extract";
@@ -54,7 +54,7 @@ export async function startBerthFollowupRun(db: Db, boss: PgBoss, placeIds: stri
     kind: "event",
     scope: { type: "system", id: BERTH_FOLLOWUP_SCOPE },
     stages: [...BERTH_FOLLOWUP_STAGES],
-    params: { placeIds: rows.map((r) => r.id), images: { geoObjectIds }, rulesVersion: await activeRulesVersion(db) },
+    params: { placeIds: rows.map((r) => r.id), images: { geoObjectIds }, rulesVersion: activeRulesVersion() },
     triggeredBy,
   });
 }

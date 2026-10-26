@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type { ExcludeReason } from "@/lib/domain/consolidation/exclude";
+import type { ExcludeReason } from "@/lib/domain/places/exclude";
 import {
   CONTRACT_FILES,
   CONTRACT_SCHEMAS,
@@ -98,8 +98,8 @@ describe("Periplus Data Contract 4.0", () => {
     expect(coverageEntry.safeParse({ id: SUBDIVISION_ID, key: "XT", name: "X", status: "delivered", dataVersion: 3 }).success).toBe(true);
     expect(coverageEntry.safeParse({ id: SUBDIVISION_ID, key: "XT", name: "X", status: "missing", dataVersion: null }).success).toBe(true);
   });
-  it("publishes 2.3, 3.0 and 4.0", () => {
-    expect(publishedJsonSchema("2.3", "manifest.schema.json")).not.toBeNull();
+  it("publishes 3.0 and 4.0 (1.0 to 2.3 are gone, N6)", () => {
+    for (const gone of ["1.0", "2.0", "2.1", "2.2", "2.3"]) expect(publishedJsonSchema(gone, "manifest.schema.json"), gone).toBeNull();
     expect(publishedJsonSchema("3.0", "manifest.schema.json")).toEqual(contractJsonSchema("3.0", "manifest.schema.json"));
     expect(publishedJsonSchema("4.0", "manifest.schema.json")).toEqual(contractJsonSchema("4.0", "manifest.schema.json"));
   });
@@ -213,7 +213,7 @@ describe("Periplus Data Contract 4.0", () => {
     ]);
   });
 
-  it.each(["1.0", "2.0", "2.1", "2.2", "2.3", "3.0", "4.0"])("checked-in JSON schemas of %s equal the generated ones", (version) => {
+  it.each(["3.0", "4.0"])("checked-in JSON schemas of %s equal the generated ones", (version) => {
     for (const f of version === "4.0" ? CONTRACT_FILES : LEGACY_FILES) {
       expect(readJson(`contract/schema/${version}/${jsonSchemaFileName(f)}`), f).toEqual(
         contractJsonSchema(version, jsonSchemaFileName(f)),
@@ -221,21 +221,7 @@ describe("Periplus Data Contract 4.0", () => {
     }
   });
 
-  it("2.0 names the subdivision where 1.0 named the area", () => {
-    const manifest = SAMPLE_FILES["manifest.json"];
-    const { scope } = manifest;
-    if (scope.type !== "subdivision") throw new Error("sample is a subdivision package");
-    expect(scope.subdivision).toMatchObject({ key: "GR-I" });
-    expect(manifestSchema.safeParse({ ...manifest, area: scope.subdivision }).success).toBe(false);
-    expect(manifestSchema.safeParse({ ...manifest, scope: { ...scope, subdivision: { ...scope.subdivision, id: manifest.areas[0]!.id } } }).success).toBe(false);
-    expect(manifestSchema.safeParse({ ...manifest, schemaVersion: "1.0" }).success).toBe(false);
-    const envelopeOnly = { ...SAMPLE_FILES["spots.json"], area: manifest.areas[0]!.id };
-    expect(CONTRACT_SCHEMAS["spots.json"].safeParse(envelopeOnly).success).toBe(false);
-    const regions = SAMPLE_FILES["regions.json"];
-    expect(CONTRACT_SCHEMAS["regions.json"].safeParse({ ...regions, scope: { type: "subdivision", id: manifest.areas[0]!.id, dataVersion: 2 } }).success).toBe(false);
-  });
-
-  it("the 2.0 manifest lists the touching areas by ar_ id", () => {
+  it("the manifest lists the touching areas by ar_ id", () => {
     const manifest = SAMPLE_FILES["manifest.json"];
     expect(manifestSchema.safeParse({ ...manifest, areas: [] }).success).toBe(true);
     expect(manifestSchema.safeParse(omit(manifest, "areas")).success).toBe(false);
@@ -256,7 +242,7 @@ describe("Periplus Data Contract 4.0", () => {
     camera: { position: [23.33, 37.6], heightM: 260, viewBearingDeg: 281.5, tiltDeg: 18, fovDeg: 50 },
   };
 
-  it("2.1 spot validates with image and without", () => {
+  it("a spot validates with image and without", () => {
     expect(spotSchema.safeParse(ex).success).toBe(true);
     expect(spotSchema.safeParse({ ...ex, images: [IMAGE] }).success).toBe(true);
     expect(spotSchema.safeParse({ ...ex, images: [IMAGE, { ...IMAGE, slot: "view-1", file: `images/${ex.id}-view-1.jpg`, camera: null }] }).success).toBe(true);
@@ -273,7 +259,7 @@ describe("Periplus Data Contract 4.0", () => {
     }
   });
 
-  it("2.2 highlightLevels: the frozen 3.0 spot validates them, 4.0 has none", () => {
+  it("the 3.0 spot still validates highlightLevels, 4.0 has none", () => {
     const ex30 = TEIL_B_V3_0;
     const spot30 = v30.spotSchema;
     expect(spot30.safeParse({ ...ex30, highlightLevels: { culture: "many", food: "none", beach: "some" } }).success).toBe(true);
@@ -285,85 +271,18 @@ describe("Periplus Data Contract 4.0", () => {
     ] as const) {
       expect(spot30.safeParse({ ...ex30, highlightLevels }).success, name).toBe(false);
     }
-    // 2.1 does not know the field
-    expect(JSON.stringify(contractJsonSchema("2.1", "spots.schema.json"))).not.toContain("highlightLevels");
-    expect(JSON.stringify(contractJsonSchema("2.2", "spots.schema.json"))).toContain("highlightLevels");
+    expect(JSON.stringify(contractJsonSchema("3.0", "spots.schema.json"))).toContain("highlightLevels");
     expect(JSON.stringify(contractJsonSchema("4.0", "spots.schema.json"))).not.toContain("highlightLevels");
   });
 
-  it("the 2.1 manifest lists image files beside the contract files", () => {
+  it("the manifest lists image files beside the contract files", () => {
     const manifest = SAMPLE_FILES["manifest.json"];
     const entry = { name: `images/${ex.id}-title.jpg`, sha256: "a".repeat(64), bytes: 10 };
     expect(manifestSchema.safeParse({ ...manifest, files: [...manifest.files, entry] }).success).toBe(true);
     expect(manifestSchema.safeParse({ ...manifest, files: [...manifest.files, { ...entry, name: "secret.jpg" }] }).success).toBe(false);
   });
 
-  // the 2.0 files as published on 2026-10-19 (sha256 of the checked-in bytes): 2.1 is additive, 2.0 never changes
-  const FROZEN_2_0: Record<string, string> = {
-    "changes.schema.json": "9d76ca62e505a45e42e4560bf056fc2d4fa4a5cf784517a46bfff8e97c0487d6",
-    "coast.schema.json": "278fd6907afd93f16f94663e301edd277ba3a5f09ee685a5ae6438073bbdaf47",
-    "highlights.schema.json": "23433956130821c813c5a64857e31e7adf9f4421515177edf9d095a5d019ee5e",
-    "manifest.schema.json": "e65467cb72f8f7b4e2d12f7e73a09da6b19fab9aac3751721fdcc5f212acc519",
-    "regions.schema.json": "6a8aceb605480fb22788af83fb32ce53f000cc75148ea54e3517cff56fd3bf96",
-    "spots.schema.json": "127749c51999f7d11234835d4624a8f8b23e8c7f54a1e94c90c4f05a38c91998",
-    "weather-points.schema.json": "9c60f78a1f36e3f14f0b6c151dac7b71b4d28e2d48e7786090ed8f3180925071",
-  };
-
-  it("2.0 schema files are unchanged", () => {
-    expect(readdirSync("contract/schema/2.0").sort()).toEqual(Object.keys(FROZEN_2_0).sort());
-    for (const [file, sha] of Object.entries(FROZEN_2_0)) {
-      expect(createHash("sha256").update(readFileSync(`contract/schema/2.0/${file}`)).digest("hex"), file).toBe(sha);
-      expect(publishedJsonSchema("2.0", file), file).toEqual(readJson(`contract/schema/2.0/${file}`));
-    }
-    // and 2.0 still rejects what only 2.1 knows
-    const spots20 = contractJsonSchema("2.0", "spots.schema.json") as { $defs?: unknown };
-    expect(JSON.stringify(spots20)).not.toContain("images");
-    expect(JSON.stringify(contractJsonSchema("2.1", "spots.schema.json"))).toContain("images");
-  });
-
-  // the 2.1 files as published on 2026-10-21: 2.2 is additive, 2.1 never changes
-  const FROZEN_2_1: Record<string, string> = {
-    "changes.schema.json": "24082f23f053ce6c100011d90e157c9e8a0df9bb2e305a7b4e8f96466da5dfd9",
-    "coast.schema.json": "c1d8ce6edf126a97a3e3871e1eeff8135c2e3a0086bf8ed917cc51e16e0c39d9",
-    "highlights.schema.json": "e2d8cdfaa65326cd2a26ee5f34e097180e7f8084435a44342478a4d76defc9b5",
-    "manifest.schema.json": "aea97978f9dd76899e7c08350ac522504db9d1627b8b14db61c13a057911edec",
-    "regions.schema.json": "052a6c75b26896743c10af319e3c86e59c829bb7ebd82da46dc00122f9b9ea03",
-    "spots.schema.json": "579ec293c6aadcd7fb6630164a2eadb748857b23654b22acd66317a0335e23fe",
-    "weather-points.schema.json": "e301bbfcd06b0c93d4895350f0e250e1393b42e0a337476ad65ae42fdf2b6f4d",
-  };
-
-  it("2.1 schema files are unchanged", () => {
-    expect(readdirSync("contract/schema/2.1").sort()).toEqual(Object.keys(FROZEN_2_1).sort());
-    for (const [file, sha] of Object.entries(FROZEN_2_1)) {
-      expect(createHash("sha256").update(readFileSync(`contract/schema/2.1/${file}`)).digest("hex"), file).toBe(sha);
-      expect(publishedJsonSchema("2.1", file), file).toEqual(readJson(`contract/schema/2.1/${file}`));
-    }
-  });
-
-  // the 2.2 files as published on 2026-10-22 (sha256 of the checked-in bytes): 2.3 is additive, 2.2 never changes
-  const FROZEN_2_2: Record<string, string> = {
-    "changes.schema.json": "8b29c4688284e7dbac10ef2b17d01473d7c1fe0deacd1b730e9635f5f033a3e2",
-    "coast.schema.json": "0f3f14def652befbde09c3c7542aa22f4de9497cb26646c6f88e8b15baeb8dcf",
-    "highlights.schema.json": "8b4bbfa76d9eb0915e0c67109d276fa8089ba762dd5a1a249dbbe8a4f5e6c41c",
-    "manifest.schema.json": "78d876c90ae0fa2e80715b0125178b4655fee0c470f0bf66c5bd96201463b204",
-    "regions.schema.json": "571088c5166f38882a54f63669ca6b5a56b8eb3ee6d27d9472e0923027830970",
-    "spots.schema.json": "8c1f96553beefe97a1a76dffe123aa5e8b6760160e3561d183108a4a65d45e8d",
-    "weather-points.schema.json": "ead00fd4e22cb3a7297496f92a0e4ae5c379acdb450f28d7fb561b59c0bd76a7",
-  };
-
-  it("2.2 schema files are unchanged", () => {
-    expect(readdirSync("contract/schema/2.2").sort()).toEqual(Object.keys(FROZEN_2_2).sort());
-    for (const [file, sha] of Object.entries(FROZEN_2_2)) {
-      expect(createHash("sha256").update(readFileSync(`contract/schema/2.2/${file}`)).digest("hex"), file).toBe(sha);
-      expect(publishedJsonSchema("2.2", file), file).toEqual(readJson(`contract/schema/2.2/${file}`));
-    }
-    // 2.1 and 2.2 know neither berthable nor contact
-    expect(JSON.stringify(contractJsonSchema("2.1", "spots.schema.json"))).not.toContain("berthable");
-    expect(JSON.stringify(contractJsonSchema("2.2", "spots.schema.json"))).not.toContain("berthable");
-    expect(JSON.stringify(contractJsonSchema("2.3", "spots.schema.json"))).toContain("berthable");
-  });
-
-  it("2.3 spot carries berthable and contact (each nullable, required)", () => {
+  it("a spot carries berthable and contact (each nullable, required)", () => {
     expect(spotSchema.safeParse(ex).success).toBe(true);
     expect(spotSchema.safeParse({ ...ex, berthable: null, contact: null }).success).toBe(true);
     expect(spotSchema.safeParse({ ...ex, berthable: false, contact: { vhf: null, phone: null, url: null } }).success).toBe(true);
@@ -373,7 +292,7 @@ describe("Periplus Data Contract 4.0", () => {
     for (const url of ["javascript:alert(1)", "ftp://marina.example", "upload://doc"]) {
       expect(spotSchema.safeParse({ ...ex, contact: { vhf: null, phone: null, url } }).success, url).toBe(false);
     }
-    expect(JSON.stringify(contractJsonSchema("2.3", "spots.schema.json"))).toContain("^https?://");
+    expect(JSON.stringify(contractJsonSchema("4.0", "spots.schema.json"))).toContain("^https?://");
     expect(spotSchema.safeParse({ ...ex, contact: { vhf: "71", phone: null, url: null, extra: 1 } }).success).toBe(false);
   });
 
@@ -395,7 +314,7 @@ describe("Periplus Data Contract 4.0", () => {
       for (const file of files) expect(publishedJsonSchema(version, file), `${version}/${file}`).toEqual(readJson(`contract/schema/${version}/${file}`));
     }
     expect(Object.keys(PUBLISHED_SCHEMAS[SCHEMA_VERSION]!)).toEqual(CONTRACT_FILES.map(jsonSchemaFileName));
-    for (const [version, file] of [["5.0", "spots.schema.json"], ["2.0", "spots.json"], ["1.0", "spots.json"], ["1.0", "constructor"], ["__proto__", "spots.schema.json"]]) {
+    for (const [version, file] of [["5.0", "spots.schema.json"], ["3.0", "spots.json"], ["2.3", "spots.schema.json"], ["1.0", "constructor"], ["__proto__", "spots.schema.json"]]) {
       expect(publishedJsonSchema(version!, file!), `${version}/${file}`).toBeNull();
     }
   });
@@ -404,8 +323,9 @@ describe("Periplus Data Contract 4.0", () => {
     expect(contractJsonSchema("5.0", "spots.schema.json")).toBeNull();
     expect(contractJsonSchema("4.0", "highlights.schema.json")).toBeNull();
     expect(contractJsonSchema("4.0", "changes.schema.json")).toBeNull();
-    expect(contractJsonSchema("2.0", "spots.json")).toBeNull();
-    expect(contractJsonSchema("1.0", "../package.json")).toBeNull();
+    expect(contractJsonSchema("3.0", "spots.json")).toBeNull();
+    expect(contractJsonSchema("2.3", "spots.schema.json")).toBeNull();
+    expect(contractJsonSchema("3.0", "../package.json")).toBeNull();
     expect(contractJsonSchema("__proto__", "spots.schema.json")).toBeNull();
   });
   // the 3.0 files as published (sha256 of the checked-in bytes): 4.0 is a new major version, 3.0 never changes

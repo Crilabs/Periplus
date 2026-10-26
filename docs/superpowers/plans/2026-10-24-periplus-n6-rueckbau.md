@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Den alten quellengetriebenen Ansatz vollständig entfernen (Erwähnungen, alte Extraktion, Klassifikation, Quellenfreigabe, Crawl, Profile/Zeitachse, Zusammenfassungen, alte Highlights, Revisit-Simulation, Vergleiche, alte Vertragsversionen), die geteilten Helfer an neutrale Orte verschieben und das Schema auf eine neue Basis-Migration bringen.
+**Goal:** Den alten quellengetriebenen Ansatz vollständig entfernen (Erwähnungen, alte Extraktion, Klassifikation, Quellenfreigabe, Crawl, Profile/Zeitachse, Zusammenfassungen, alte Highlights, Revisit-Simulation, Vergleiche, alte Vertragsversionen), die geteilten Helfer an neutrale Orte verschieben und die alten Tabellen mit einer fortlaufenden Migration entfernen.
 
-**Architecture:** Reihenfolge nach den Kopplungen (Bestandsaufnahme vom 24.10.2026 auf dem Stand von N4b, Anhang A; vor Task 1 gegen `main` nach N5 auffrischen): (1) geteilte Helfer verschieben, (2) `facts`, `documents/store`, Bilder-Zielauswahl, Tor und Bestätigung von Profilen und Erwähnungen lösen, (3) Queues/Stufen/Handler kappen, (4) Dateien und Admin-Seiten löschen, (5) Schema bereinigen und eine Basis-Migration erzeugen, (6) Doku.
+**Architecture:** Reihenfolge nach den Kopplungen (Bestandsaufnahme vom 24.10.2026 auf dem Stand von N4b, Anhang A; vor Task 1 gegen `main` nach N5 auffrischen): (1) geteilte Helfer verschieben, (2) `facts`, `documents/store`, Bilder-Zielauswahl, Tor und Bestätigung von Profilen und Erwähnungen lösen, (3) Queues/Stufen/Handler kappen, (4) Dateien und Admin-Seiten löschen, (5) Schema bereinigen (fortlaufende Migration) und Archiv übernehmen, (6) Doku.
 
 **Tech Stack:** wie bisher.
 
@@ -12,16 +12,17 @@
 
 ## Global Constraints
 
-- **Voraussetzung:** N5 (Vertrag 4.0) ist auf `main`; die Lieferung liest nur noch `berth_states`. Branch `feat/n6-rueckbau` von `main`.
+- **Voraussetzung:** Branch `feat/n6-rueckbau` auf `feat/n5-vertrag-4` gestapelt (Ziel: N5 und N6 am 26.10.2026 07:00 auf Produktion, Christian 25.10.). Tasks 1–3 laufen parallel zu N5 Tasks 4–5; vor Task 4 wird der fertige N5-Stand in diesen Branch gemergt.
+- **Ruling (25.10., Zeitplan und Produktion):** keine Basis-Migration und kein Neuaufsetzen der Produktion: Produktion ist leer bis auf den Admin-Benutzer (geprüft 25.10.), dessen Passwort nur Christian kennt. Task 5 entfernt Tabellen, Enums und Trigger mit einer weiteren fortlaufenden Migration, die der normale Deploy anwendet. Zusammenfassen der Migrationen bleibt möglich, ist aber nicht Teil von N6.
 - Nach JEDER Aufgabe: volle Suite grün (`npx vitest run`), `tsc`, `lint`, `npm run build`. Kein Rückbau-Schritt darf eine Funktion des neuen Ansatzes ändern; Verhaltensänderungen nur dort, wo das Design sie verlangt.
 - Was bleibt (nicht löschen): Gerüst (Gazetteer, Landesteile, Reviere, Kacheln, Seed, Geometrie, Datensätze), `computations` und berechnete `facts`, KI-Batch-Infrastruktur, Archiv (`documents`, `document_versions`, S3), `sources` (als Domänen-Tabelle für Dokumente), SERP-Tabellen, `place_websites`, Ortsbilder, Navily-Tor und Vergleichswerkzeuge, Lieferung 4.0, Review-Grundlage mit Arten `place_candidate`, `failed_job`, `place_image`, `research_conflict`.
 - Nur anfügend bleiben Archiv (`document_versions`) und Kosten (`external_calls`); History-Tabellen und `record_history`-Trigger fallen weg (Design 7.2).
-- Produktion wird aus der neuen Basis neu aufgesetzt; das Archiv wird per Skript übernommen (Design 9) — eigene Aufgabe, Ausführung nach Freigabe des Merges.
+- Das Archiv wird per Skript aus der Dev-Datenbank und dem Dev-S3 in die Produktion übernommen (Design 9; Prüfplan Attika 2, A2/T0): Quellen, Dokumente, Dokumentversionen mit S3-Objekten, SERP-Anfragen und -Ergebnisse. Recherche-Tabellen nicht (sie hängen an Dev-Plätzen).
 - Code englisch, Oberfläche deutsch; Commit-Trailer wie bisher.
 
 ## Review Focus
 
-- Nach dem Rückbau läuft ein kompletter Recherche-Lauf + Folgekette + Paketbau auf einer frischen DB aus der Basis-Migration (End-to-End-Test Task 6).
+- Nach dem Rückbau läuft ein kompletter Recherche-Lauf + Folgekette + Paketbau auf der Test-DB nach allen Migrationen (End-to-End-Test Task 6).
 - Kein verbleibender Import zeigt auf gelöschte Module (tsc), kein Queue-Name ohne Handler (Worker-Start-Test).
 - Die Dokument-Ansicht funktioniert ohne Chunks (liest das Markdown aus dem Archiv).
 - Das Navily-Tor misst Kernwerte gegen `berth_states`, nicht mehr gegen Profile (gebaut in Plan `2026-10-25-periplus-tor-kernwerte.md`; nach dem Rückbau muss der Tor-Test unverändert grün sein).
@@ -58,17 +59,15 @@ Gemäß Bestandsaufnahme Abschnitte 1.1–1.13, 1.16, 1.19 (Domänen-, Pipeline-
 
 - [ ] Steps: löschen in mehreren Commits je Bereich, nach jedem volle Suite + build, commit-Präfix `chore(n6): remove …`.
 
-### Task 5: Schema bereinigen und Basis-Migration
+### Task 5: Schema bereinigen (fortlaufende Migration) und Archiv-Übernahme
 
-- Tabellen, Enums, Trigger der Bestandsaufnahme 1.1–1.15 entfernen; `facts` auf berechnete und Review-Zeilen beschränken (FKs zu `mentions`, `chunks`, `extraction_runs` und zugehörige CHECKs entfernen); History-Tabellen und `record_history`/`forbid_delete`-Trigger entfernen; Review-Arten bereinigen.
-- Alle Migrationen zu einer Basis-Migration `0000_base` zusammenfassen (drizzle-kit aus dem bereinigten Schema), alte Migrationen archivieren (`drizzle/archive/`), Test-DB-Setup auf die Basis.
-- Datenübernahme-Skript `scripts/migrate-archive.ts`: Dokumente, Versionen, Quellen-Domänen, SERP, Recherche-Tabellen, Geo-Gerüst, Plätze, Bilder aus der alten DB in eine frische DB (für Produktion, Design 9).
+- Tabellen, Enums, Trigger der Bestandsaufnahme 1.1–1.15 entfernen (Drizzle-Schema + eine Migration `drop_old_pipeline`, erzeugt mit `drizzle-kit generate`, von Hand ergänzt um Trigger/Funktionen); `facts` auf berechnete und Review-Zeilen beschränken (FKs zu `mentions`, `chunks`, `extraction_runs` und zugehörige CHECKs entfernen; bestehende Text-Fact-Zeilen löschen die Migration mit); History-Tabellen und `record_history`-Trigger entfernen; Review-Arten bereinigen. Die Migration muss auf einer DB mit Daten (Dev) und auf einer leeren DB (Produktion, Test) laufen.
+- `scripts/migrate-archive.ts`: liest aus `--from <DATABASE_URL>` und `--from-s3 <env-Präfix>`, schreibt in die DB/S3 der Umgebung; kopiert `sources`, `documents`, `document_versions` (+ S3-Objekte, SHA-256 geprüft), `serp_queries`, `serp_results`; idempotent (vorhandene IDs werden übersprungen), Trockenlauf `--dry-run` mit Zählung; nur anfügende Tabellen bleiben unverändert. Test gegen die Test-DB (zweites Schema oder zwei Transaktionen).
 
-- [ ] Steps: Schema, Basis-Migration, Skript mit Test gegen eine Kopie, volle Suite auf frischer Test-DB, commit `chore(db): one base migration for the realigned schema (N6)`.
-
+- [ ] Steps: Schema + Migration, Skript mit Test, volle Suite, commit `chore(db): drop the old pipeline's tables (N6)` und `feat(ops): copy the archive into another environment (N6)`.
 ### Task 6: End-to-End und Doku
 
-- End-to-End-Test auf frischer DB: Gerüst-Fixture → Recherche-Lauf (MockModel) → Bestätigung → Folgekette → Paket 4.0.
+- End-to-End-Test auf der Test-DB (nach allen Migrationen): Gerüst-Fixture → Recherche-Lauf (MockModel) → Bestätigung → Folgekette → Paket 4.0.
 - `CLAUDE.md`, Gesamtdesign (Abschnitte 4, 6, 7, 10), Runbook (Befehle, Betrieb ohne alte Stufen), `docs/pilot/pruefung/befunde.md` (erledigte Befunde schließen).
 
 - [ ] Steps: Test, Doku, commit `docs: realigned system after removal (N6)`.

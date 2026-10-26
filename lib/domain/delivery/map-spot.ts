@@ -2,7 +2,7 @@ import { httpUrl } from "@/contract/v2/common";
 import type { SpotBody } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { PlaceKind } from "@/lib/db/schema/geo";
-import { excludeValue, type ExcludeReason } from "@/lib/domain/consolidation/exclude";
+import { excludeValue, type ExcludeReason } from "@/lib/domain/places/exclude";
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { round5 } from "./geo";
@@ -118,7 +118,7 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   },
   score: {
     attributes: [],
-    note: "confidence = mean of the confidences of the state's core values (rule values aside), 0 without; popularity ?? 0; quietness null (no value in the state); sourcesCount = the independent sources behind the confirmation (decideBerth), 0 without a state; newest text date; 3 decimals",
+    note: "confidence = mean of the confidences of the state's core values (rule values aside), 0 without; popularity = the independent sources log-normalised within the 50 nm neighbourhood (spec 18), 0 without a value; quietness null (no value in the state); sourcesCount = the independent sources behind the confirmation (decideBerth), 0 without a state; newest text date; 3 decimals",
   },
   externalRefs: { attributes: [], note: "osm_id, wikidata_id; googlePlaceIds {} until M8" },
   images: {
@@ -255,7 +255,7 @@ export function mapSpot(src: SpotSource, ctx: { regionId: string | null; cfg: De
     exclude,
     hazards: hazards(a["hazards"], { ferryLane, cable }),
     seasonNote: seasonNotes(seasonHints, seasonalBans),
-    score: score(state, src.popularity, state ? src.independentSources : 0),
+    score: score(state, state ? src.independentSources : 0, state ? src.popularity : 0),
     externalRefs: { googlePlaceIds: {}, osmId: src.osmId, wikidataId: src.wikidataId },
     images: mapImages(src.publicId, src.images),
     provenance: provenance(p, has, {
@@ -284,7 +284,7 @@ function anchorPosition(anchor: SpotSource["anchor"]): SpotBody["anchorPosition"
 }
 
 /** The `score` block: confidence from the core values, evidence count and newest date from the state. */
-function score(state: SpotSource["state"], popularity: number | null, sourcesCount: number): SpotBody["score"] {
+function score(state: SpotSource["state"], sourcesCount: number, popularity: number): SpotBody["score"] {
   const core = Object.values(state?.core ?? {});
   const rated = core.filter((v) => v.origin !== "rule");
   const dates = [...core.filter((v) => v.origin === "text").map((v) => v.observedAt), ...(state?.facts ?? []).map((f) => f.observedAt)]
@@ -292,7 +292,7 @@ function score(state: SpotSource["state"], popularity: number | null, sourcesCou
     .filter((d): d is string => d !== null);
   return {
     confidence: rated.length === 0 ? 0 : round3(rated.reduce((sum, v) => sum + v.confidence, 0) / rated.length),
-    popularity: round3(popularity ?? 0),
+    popularity: round3(popularity),
     quietness: null,
     sourcesCount,
     lastObserved: dates.length === 0 ? null : dates.reduce((x, y) => (y > x ? y : x)),

@@ -6,7 +6,6 @@ import { computations, facts, geoObjects, reviewDecisions, reviewTasks } from "@
 import { newId } from "@/lib/domain/ids";
 import type { Db } from "@/lib/db/client";
 import { withRollback } from "@/test/db";
-import { insertTestExtractionRun, insertTestMention } from "@/test/text";
 
 /** drizzle wraps driver errors ("Failed query"); the Postgres message lives on `cause`. */
 async function rejectionMessage(tx: Db, run: (tx: Db) => Promise<unknown>): Promise<string> {
@@ -42,7 +41,7 @@ async function insertComputation(tx: Db, geoObjectId: string): Promise<string> {
 async function insertReviewDecision(tx: Db): Promise<string> {
   const [task] = await tx
     .insert(reviewTasks)
-    .values({ kind: "conflict", subjectType: "place", subjectId: newId(), context: {} })
+    .values({ kind: "place_candidate", subjectType: "place", subjectId: newId(), context: {} })
     .returning({ id: reviewTasks.id });
   const [decision] = await tx
     .insert(reviewDecisions)
@@ -69,7 +68,7 @@ async function insertFact(tx: Db, values: PgInsertValue<typeof facts>): Promise<
 }
 
 describe("computations and facts", () => {
-  it.each(["computations", "facts"])("%s rejects UPDATE and DELETE", async (table) => {
+  it.each(["computations", "facts"])("%s can be changed and deleted (no protection since N6)", async (table) => {
     await withRollback(async (tx) => {
       const geoObjectId = await insertGeoObject(tx);
       const computationId = await insertComputation(tx, geoObjectId);
@@ -77,15 +76,12 @@ describe("computations and facts", () => {
         table === "computations"
           ? computationId
           : await insertFact(tx, factValues(geoObjectId, { computationId }));
-
-      const update = await rejectionMessage(tx, (sp) =>
-        sp.execute(sql`update ${sql.identifier(table)} set created_at = now() - interval '1 day' where id = ${id}`),
-      );
-      expect(update).toMatch(new RegExp(`${table} is append-only`));
-      const del = await rejectionMessage(tx, (sp) =>
-        sp.execute(sql`delete from ${sql.identifier(table)} where id = ${id}`),
-      );
-      expect(del).toMatch(new RegExp(`${table} is append-only`));
+      if (table === "computations") {
+        // facts of the computation first: they reference it
+        await tx.delete(facts).where(sql`${facts.computationId} = ${id}`);
+      }
+      await tx.execute(sql`update ${sql.identifier(table)} set created_at = now() - interval '1 day' where id = ${id}`);
+      await tx.execute(sql`delete from ${sql.identifier(table)} where id = ${id}`);
     });
   });
 
@@ -103,31 +99,6 @@ describe("computations and facts", () => {
       expect(two).toMatch(/facts_one_basis/);
 
       await expect(insertFact(tx, factValues(geoObjectId, { reviewDecisionId }))).resolves.toBeTruthy();
-    });
-  });
-
-  it("a fact from a mention needs a quote", async () => {
-    await withRollback(async (tx) => {
-      const { mentionId, geoObjectId, chunkId } = await insertTestMention(tx);
-      const extractionRunId = await insertTestExtractionRun(tx);
-
-      const message = await rejectionMessage(tx, (sp) => insertFact(sp, factValues(geoObjectId, { mentionId })));
-      expect(message).toMatch(/facts_quote_for_mention/);
-
-      await expect(
-        insertFact(
-          tx,
-          factValues(geoObjectId, {
-            mentionId,
-            extractionRunId,
-            quote: "Good holding in sand",
-            quoteVerified: true,
-            quoteChunkId: chunkId,
-            quoteStart: 0,
-            quoteEnd: 20,
-          }),
-        ),
-      ).resolves.toBeTruthy();
     });
   });
 
@@ -168,6 +139,4 @@ describe("computations and facts", () => {
       expect(message).toMatch(/facts_review_decision_attribute_unique/);
     });
   });
-
-  // (mention_id, attribute, extraction_run_id) uniqueness: lib/db/__tests__/text-schema.test.ts
 });

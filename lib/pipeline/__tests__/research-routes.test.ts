@@ -104,7 +104,7 @@ describe("research.routes", () => {
 
       // routed: not planned again
       expect(await planResearchRoutes(tx, { id: runId, params: { placeIds: [poros] } }, config)).toEqual([]);
-      expect(BATCH_HANDLERS["extract-route"]).toBe(extractRouteBatchEntry);
+      expect(BATCH_HANDLERS["extract-route"]!.task).toBe(extractRouteBatchEntry.task);
 
       // discovery: one job for the page, Poros found by name, the other stops stay open
       const discover = await planResearchDiscover(tx, { id: runId, params: { placeIds: [poros] } }, config);

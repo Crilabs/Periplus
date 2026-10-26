@@ -13,7 +13,7 @@ import { ensureResearchSource } from "@/lib/domain/research/sources";
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { fetchResearchPage, planResearchFetch } from "@/lib/pipeline/research/fetch";
 import { searchCandidate } from "@/lib/pipeline/research/search";
-import type { FetchUrlDeps } from "@/lib/pipeline/fetch/url";
+import type { FetchUrlDeps } from "@/lib/pipeline/fetch/page";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 import { startSiteServer, type SiteServer } from "@/test/site-server";

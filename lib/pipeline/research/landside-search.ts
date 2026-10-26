@@ -8,7 +8,7 @@ import { researchCandidates } from "@/lib/domain/research/candidates";
 import { recordLandsideHits } from "@/lib/domain/research/hits";
 import { buildLandsideQueries, landsideSubjects } from "@/lib/domain/research/landside-queries";
 import type { JobData } from "@/lib/jobs/worker";
-import { runQueries } from "@/lib/pipeline/discovery";
+import { runQueries } from "@/lib/domain/search/run-queries";
 import { researchScope } from "@/lib/pipeline/research/search";
 
 // No import of ../runs here: the job handlers import this module (import cycle through the stage registry).

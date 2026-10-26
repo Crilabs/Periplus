@@ -1,14 +1,13 @@
 import { eq } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { comparisonSet, qualitySnapshots, type ComparisonMethod } from "@/lib/db/schema";
+import { comparisonSet, type ComparisonMethod } from "@/lib/db/schema";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { latestComparisonResults, lockComparisonPlace, recordComparisonResults } from "./comparison-results";
 import { COMPARISON_ATTRIBUTES, loadComparisonSubjects } from "./comparison-values";
 import { coverageOfMatches } from "./navily-assistant";
 import { confirmedSubdivisionPlaces, proposalsFor, subdivisionTilePredicate } from "./navily-compare";
 import type { NavilySpot } from "./navily-sample";
-import { latestMeasurement } from "./snapshot";
 
 /*
  * The CLI pass of the Navily comparison (`npm run compare:navily`, spec 10): matches the comparison set as the page
@@ -33,10 +32,6 @@ export type NavilyRunResult = {
   skippedManual: number;
   /** Spots inside the subdivision matched to a confirmed place of the subdivision. */
   coverage: { spots: number; matched: number; ratio: number | null };
-  /** With `writeCoverage`: the measurement run the `coverage_navily` row belongs to; else null. */
-  snapshotRunId: string | null;
-  /** With `writeCoverage`: whether the row was written now (false: the measurement had one already). */
-  coverageWritten: boolean;
 };
 
 /** Outcomes a person gave: a machine proposal never supersedes them (bundle C review: `proposal_confirmed` like `manual`). */
@@ -57,21 +52,13 @@ async function comparisonSetPlaceIds(db: Db, subdivisionKey: string): Promise<st
  * (by hand or by confirming a proposal) that differs from the proposal is kept (`skippedManual`), and review outcomes
  * are kept by `recordComparisonResults` (ruling M7-P16), so a rerun writes nothing new. The coverage is always computed
  * and counts only matches to the subdivision's confirmed, valid places.
- *
- * With `writeCoverage` the coverage is stored as the row `coverage_navily` (value = ratio, details `{ spots, matched }`,
- * counts only: Grundprinzip 9, ruling M7-P23) of the subdivision's newest measurement (`latestMeasurement`); without one it
- * fails before writing anything („Erst messen (/quality)“); a measurement that has the row already keeps it. The row
- * is written in the same transaction as the proposals, so either both are stored or neither (ruling M7-D-R2).
  */
 export async function runNavilyComparison(
   db: Db,
-  input: { subdivisionKey: string; spots: NavilySpot[]; acceptProposals: boolean; writeCoverage?: boolean; now?: Date },
+  input: { subdivisionKey: string; spots: NavilySpot[]; acceptProposals: boolean; now?: Date },
 ): Promise<NavilyRunResult> {
   const cfg = getConfig().quality.navily;
   const settings = { cfg, affixes: getConfig().nameAffixes };
-
-  const measurement = input.writeCoverage ? await latestMeasurement(db, input.subdivisionKey) : null;
-  if (input.writeCoverage && !measurement) throw new Error(`Erst messen (/quality): Landesteil ${input.subdivisionKey} hat noch keine Messung`);
 
   const pass = async (tx: Db, write: boolean): Promise<NavilyRunResult> => {
     // the set's places are locked before their subjects are loaded, so no profile changes in between (bundle C review)
@@ -88,8 +75,6 @@ export async function runNavilyComparison(
       tasks: 0,
       skippedManual: 0,
       coverage: { spots: c.spots, matched: c.matched, ratio: c.ratio },
-      snapshotRunId: null,
-      coverageWritten: false,
     };
     if (!write) return result;
 
@@ -120,33 +105,12 @@ export async function runNavilyComparison(
     return result;
   };
 
-  if (!input.acceptProposals && !measurement) return pass(db, false);
-  return db.transaction(async (tx) => {
-    const result = await pass(tx, input.acceptProposals);
-    if (!measurement) return result;
-    const written = await tx
-      .insert(qualitySnapshots)
-      .values({
-        runId: measurement.runId,
-        scopeType: "subdivision",
-        scopeId: input.subdivisionKey,
-        metric: "coverage_navily",
-        value: result.coverage.ratio,
-        details: { spots: result.coverage.spots, matched: result.coverage.matched },
-      })
-      .onConflictDoNothing()
-      .returning({ id: qualitySnapshots.id });
-    return { ...result, snapshotRunId: measurement.runId, coverageWritten: written.length > 0 };
-  });
+  if (!input.acceptProposals) return pass(db, false);
+  return db.transaction((tx) => pass(tx, true));
 }
 
-/**
- * The line saying that no comparison results were written (no `--accept-proposals`), for the report and the CLI: a
- * report only when nothing was stored, else only the results were not written (a `coverage_navily` row was).
- */
-export function notWrittenNote(r: NavilyRunResult): string {
-  return r.snapshotRunId ? "Vergleichsergebnisse nicht geschrieben – dafür --accept-proposals" : "Nur Bericht – Ergebnisse mit --accept-proposals schreiben";
-}
+/** The line saying that no comparison results were written (no `--accept-proposals`), for the report and the CLI. */
+export const notWrittenNote = (): string => "Nur Bericht – Ergebnisse mit --accept-proposals schreiben";
 
 const percent = (ratio: number | null) =>
   ratio === null ? "–" : `${(ratio * 100).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
@@ -161,20 +125,12 @@ export function renderNavilyRunSection(r: NavilyRunResult, acceptProposals: bool
     `Navily-Abdeckung: ${r.coverage.matched} von ${r.coverage.spots} Navily-Orten im Revier (${percent(r.coverage.ratio)})`,
     "",
   ];
-  if (r.snapshotRunId) {
-    lines.push(
-      r.coverageWritten
-        ? "Navily-Abdeckung zur jüngsten Messung gespeichert (coverage_navily)."
-        : "Die jüngste Messung hat die Navily-Abdeckung schon, nichts geändert.",
-      "",
-    );
-  }
   if (acceptProposals) {
     lines.push(`Ergebnisse geschrieben: ${r.written}, Review-Aufgaben: ${r.tasks}`, "");
     if (r.skippedManual > 0) lines.push(`Von Hand gesetzte Ergebnisse behalten: ${r.skippedManual}`, "");
     lines.push("Maschinell übernommene Ergebnisse tragen die Methode „proposal_auto“; jede Abweichung geht ins Review.", "");
   } else {
-    lines.push(notWrittenNote(r), "");
+    lines.push(notWrittenNote(), "");
   }
   return lines.join("\n");
 }

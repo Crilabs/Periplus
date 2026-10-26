@@ -27,16 +27,11 @@ test("admin starts a ping run and sees it listed; all admin pages render", async
   await expect(page.getByRole("heading", { name: "Übersicht" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Offene Prüfungen", exact: true })).toBeVisible();
   await page.goto("/runs");
-  // every subdivision run, the revisit too, starts only from the "Lauf starten" dialog (ruling M7-G-R4)
-  const revisit = page.getByRole("button", { name: "Revisit für Landesteil" });
-  await expect(revisit).toBeHidden();
+  // every subdivision run starts only from the "Lauf starten" dialog (ruling M7-G-R4)
   await page.getByRole("button", { name: "Lauf starten …" }).click();
   const dialog = page.locator("dialog[open]");
   await expect(dialog.getByRole("heading", { name: "Lauf starten" })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Revisit für Landesteil" })).toBeVisible();
-  await expect(dialog.getByText("Solange er läuft, startet kein Crawl dieser Quellen.", { exact: false })).toBeVisible();
   await dialog.getByRole("button", { name: "Schließen" }).click();
-  await expect(revisit).toBeHidden();
   const before = await page.locator("tbody tr").count();
   await page.getByRole("button", { name: "Ping-Lauf starten" }).click();
   await expect(page).toHaveURL(/\/runs$/);
@@ -50,8 +45,6 @@ test("admin starts a ping run and sees it listed; all admin pages render", async
     ["/deliveries", "Lieferungen"],
     ["/subdivisions", "Länder und Landesteile"],
     ["/map", "Karte"],
-    ["/sources", "Quellen"],
-    ["/compare/converters", "Konverter-Vergleich"],
   ] as const) {
     await page.goto(path);
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
@@ -62,14 +55,10 @@ test("quality page renders for the first subdivision with tiles", async ({ page 
   await page.goto("/login?next=/quality");
   await signIn(page);
   await expect(page.getByRole("heading", { name: "Qualität", exact: true })).toBeVisible();
-  for (const section of ["Kennzahlen", "Messen", "Review-Aufwand", "Verlauf", "Kacheln", "Regression", "Vergleichssatz"]) {
+  for (const section of ["Vergleichssatz"]) {
     await expect(page.getByRole("heading", { name: section, exact: true })).toBeVisible();
   }
   await expect(page.getByRole("link", { name: "Navily-Abgleich" })).toHaveAttribute("href", /\/quality\/compare\?subdivision=/);
-  // an evaluation leaves the rules unchanged unless a version is chosen (ruling M7-E-R2)
-  const rules = page.locator('select[name="rulesVersion"]');
-  await expect(rules).toHaveValue("");
-  await expect(rules.locator("option:checked")).toHaveText("unverändert");
   // the e2e delivery subdivision has tiles: the page shows it, without the "not found" hint
   await expect(page.getByTestId("subdivision-missing")).toHaveCount(0);
   await expect(page.getByTestId("comparison-count")).toBeVisible();

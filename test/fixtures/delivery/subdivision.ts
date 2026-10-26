@@ -1,14 +1,13 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { berthStates, documents, geoNames, geoObjects, landPolygons, places, profileSummaries, restrictedAreas, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
+import { berthStates, documents, geoNames, geoObjects, landPolygons, places, restrictedAreas, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
 import type { BerthStateFact, BerthStateLanding, BerthStateNearby, BerthStateValue } from "@/lib/db/schema/research-state";
 import { factSchemaV4 } from "@/config/fact-schema/v4";
 import type { PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
-import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
 import { newId, newPublicId, type PublicIdPrefix } from "@/lib/domain/ids";
-import { insertProfile, insertSource, insertTextFact, provenanceEntry } from "@/test/consolidation";
-import { insertNamedObject, insertTestTile } from "@/test/text";
+import { provenanceEntry, type AttributeProvenance } from "@/test/consolidation";
+import { insertNamedObject, insertTestTile, insertTestVersion } from "@/test/text";
 
 /*
  * A synthetic delivery subdivision around 21.0° E / 35.2° N (outside the pilot box), for `withRollback` only — never
@@ -335,17 +334,6 @@ async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixtu
   const islandId = islandRow!.id;
   await tx.insert(geoNames).values({ geoObjectId: islandId, name: "Nisida", nameNormalized: "nisida", language: "en", script: "latin", origin: "osm" });
   await tx.insert(tileGeoObjects).values({ tileId: west, geoObjectId: islandId });
-  await insertProfile(
-    tx,
-    islandId,
-    { meltemi_exposure: 0.7, ferry_traffic: "high", charter_bases: ["X"] },
-    {
-      meltemi_exposure: provenanceEntry("text", { confidence: 0.6 }),
-      ferry_traffic: provenanceEntry("text", { confidence: 0.6 }),
-      charter_bases: provenanceEntry("text", { confidence: 0.6 }),
-    },
-    { confidence: null },
-  );
 
   const capeId = await insertNamedObject(tx, {
     ...(stable ? { id: STABLE.capeId } : {}),
@@ -416,52 +404,28 @@ async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixtu
   const osmId = opts.committed ? `way/${Number.parseInt(newId().replace(/-/g, "").slice(-12), 16)}` : `way/${123456789 + (shift.lon + shift.lat * 7) * 1000}`;
   await tx.update(geoObjects).set({ osmId }).where(sql`${geoObjects.id} = ${A.geoObjectId}`);
 
-  const sourceId = await insertSource(tx, "trip_report", 0.6);
-  const factId = await insertTextFact(tx, A.geoObjectId, sourceId, { attribute: "shelter.N", value: 0.9, observedAt: "2025-06-10" });
-  const [doc] = (
-    await tx.execute<{ document_id: string; url: string }>(sql`
-      select d.id as document_id, d.url from facts f
-      join mentions m on m.id = f.mention_id join document_versions v on v.id = m.document_version_id
-      join documents d on d.id = v.document_id where f.id = ${factId}`)
-  ).rows;
+  // The archived page a text-origin core value cites: a source, a document and one version; `factId` is the id of the
+  // cited fact (a fixed one when stable), the berth state carries it as a plain reference.
+  const archived = await insertTestVersion(tx, ["Vathi Bay is well sheltered from the north."], { observedAt: "2025-06-10" });
+  const sourceId = archived.sourceId;
+  const factId = stable ? "0199f0a0-0000-7000-8000-00000000f900" : newId();
+  const [doc] = (await tx.select({ document_id: documents.id, url: documents.url }).from(documents).where(eq(documents.id, archived.documentId)));
   if (stable) {
     await tx.update(documents).set({ url: STABLE.documentUrl, urlNormalized: STABLE.documentUrl }).where(eq(documents.id, doc!.document_id));
     doc!.url = STABLE.documentUrl;
   }
   const posAnchor = { lon: x(21.1301), lat: y(35.1445) };
-  await insertProfile(
-    tx,
-    A.geoObjectId,
-    { ...SPOT_A_ATTRIBUTES, anchor_position: posAnchor, "place.position": { lon: posA[0], lat: posA[1] } },
-    { ...spotAProvenance(factId), "place.position": provenanceEntry("gazetteer", { confidence: 1 }) },
-    { sourcesCount: 3, documentsCount: 1, confidence: 0.72 },
-  );
-  await tx.insert(profileSummaries).values({ geoObjectId: A.geoObjectId, profileVersion: 1, text: SPOT_A_SUMMARY, status: "ok", attempts: 1, model: "test", promptVersion: 1 });
-
   const posT: [number, number] = [posA[0], Number((posA[1] - LAT_PER_NM).toFixed(6))];
   const poiPublicId = id("hl", 1);
   const poiId = await insertNamedObject(tx, { type: "poi", names: [{ name: "Taverna Vathi" }], lon: posT[0], lat: posT[1], category: "food", tiles: [west], subdivisionId });
   await tx.update(geoObjects).set({ publicId: poiPublicId }).where(sql`${geoObjects.id} = ${poiId}`);
-  await insertProfile(tx, poiId, { "derived.importance": 2 }, { "derived.importance": provenanceEntry("derived", { confidence: 1 }) }, { confidence: null });
 
   const posM: [number, number] = [x(21.3), y(35.1)];
   const M = await place({ lon: posM[0], lat: posM[1], name: "Marina Test", type: "harbour", kind: "marina", publicId: id("sp", 2), tile: east });
   const sectors = (value: number, omit: string[] = []) =>
     Object.fromEntries(Object.keys(SPOT_A_SHELTER).filter((s) => !omit.includes(s)).map((s) => [`shelter.${s}`, value]));
-  const computedProvenance = (keys: string[]) => Object.fromEntries(keys.map((k) => [k, provenanceEntry("computed")]));
-  const marina = {
-    "place.kind": "marina",
-    "place.status": "confirmed",
-    exclude: { excluded: false, reason: null, detail: null },
-    ...sectors(0.9),
-    occupancy: { "7": "full", "8": "full" },
-    "derived.highlights": { food: { ids: [poiId], level: "some" } },
-  };
-  await insertProfile(tx, M.geoObjectId, marina, computedProvenance(Object.keys(marina)), { sourcesCount: 1, confidence: 0.6 });
 
   const B = await place({ lon: x(21.08), lat: y(35.16), name: "Ormos B", publicId: id("sp", 3), tile: west });
-  const anchorageB = { "place.kind": "anchorage", "place.status": "confirmed", exclude: { excluded: false, reason: null, detail: null }, ...sectors(0.6, ["W"]) };
-  await insertProfile(tx, B.geoObjectId, anchorageB, computedProvenance(Object.keys(anchorageB)), { confidence: 0.5 });
 
   const C = await place({
     lon: x(21.4),
@@ -472,8 +436,6 @@ async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixtu
     publicId: id("sp", 4),
     tile: east,
   });
-  const excludedC = { "place.kind": "anchorage", "place.status": "no_anchoring", exclude: { excluded: true, reason: "military", detail: null }, ...sectors(0.5) };
-  await insertProfile(tx, C.geoObjectId, excludedC, computedProvenance(Object.keys(excludedC)), { confidence: 0.4 });
 
   // Berth states (contract 4.0): A complete with facts, a landing point and the taverna nearby; M with shelter only;
   // B without `shelter.W`; C (no_anchoring) and K have none.
@@ -498,13 +460,6 @@ async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixtu
     Object.fromEntries(Object.entries(values).map(([k, value]) => [k, { value, confidence: 0.8, origin: "computed" as const, observedAt: null, factIds: [] }]));
   await seedBerthState(tx, M.placeId, { core: coreOf({ ...sectors(0.9), occupancy: { "7": "full", "8": "full" } }), updatedAt: new Date("2026-10-19T08:00:00Z") });
   await seedBerthState(tx, B.placeId, { core: coreOf(sectors(0.6, ["W"])), gaps: ["shelter.W"], updatedAt: new Date("2026-10-18T08:00:00Z") });
-
-  // A and M select the taverna (spec 16; M's profile carries the selection, A's fixed attributes do not)
-  await tx.execute(sql`
-    insert into highlight_selections (place_geo_object_id, poi_geo_object_id, category, rank, distance_km, profile_version)
-    select p.id, t.id, 'food', 1, ST_Distance(p.centroid::geography, t.centroid::geography) / 1000, 1
-    from geo_objects p, geo_objects t
-    where p.id in (${A.geoObjectId}, ${M.geoObjectId}) and t.id = ${poiId}`);
 
   const K = await place({ lon: x(21.22), lat: y(35.2), name: "Kandidat", status: "candidate", publicId: null, tile: west });
   const O = await place({ lon: x(21.6), lat: y(35.1), name: "Elsewhere", publicId: id("sp", 5), tile: outsideTileId, subdivisionId: null });
@@ -540,7 +495,7 @@ async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixtu
 /**
  * Ends what a committed fixture wrote that subdivision, tile, place and review queries could meet: the subdivision,
  * geo objects and places end today (never deleted), its tiles belong to no subdivision again, its restricted area
- * ends and the land polygons in its box are deleted. Append-only rows (profiles, deliveries) stay, attached to ended
+ * ends and the land polygons in its box are deleted. Deliveries stay, attached to ended
  * objects.
  */
 export async function endCommittedDeliverySubdivision(db: Db, f: DeliveryFixture): Promise<void> {

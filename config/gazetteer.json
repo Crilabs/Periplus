@@ -70,7 +70,6 @@
     "uncertainDistanceFactor": 2,
     "wikidataLinkDistanceM": 1000,
     "geonamesNewObjectRadiusM": 500,
-    "highlightPairM": 2000,
     "autoDecidePairs": true
   },
   "noAnchoringKinds": ["military", "cable", "firing_area", "aquaculture"],

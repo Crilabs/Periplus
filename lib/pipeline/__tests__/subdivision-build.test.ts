@@ -38,12 +38,11 @@ describe("SUBDIVISION_BUILD_STAGES", () => {
     expect(SUBDIVISION_BUILD_STAGES.slice(0, GAZETTEER_STAGES.length)).toEqual([...GAZETTEER_STAGES]);
   });
 
-  it("has areas.import after geometry, then mentions.reread (Reviere of this build count in its prepass), then discovery.area", () => {
+  it("ends with areas.import after geometry: no re-read, no discovery, no research run (N6)", () => {
     const stages: readonly string[] = SUBDIVISION_BUILD_STAGES;
-    const i = stages.indexOf("areas.import");
-    expect(i).toBeGreaterThan(stages.indexOf("geometry.compute"));
-    expect(stages.indexOf("mentions.reread")).toBe(i + 1);
-    expect(stages.indexOf("discovery.area")).toBe(i + 2);
+    expect(stages.at(-1)).toBe("areas.import");
+    expect(stages.indexOf("areas.import")).toBeGreaterThan(stages.indexOf("geometry.compute"));
+    expect(stages.some((s) => s.startsWith("discovery.") || s.startsWith("research.") || s === "mentions.reread")).toBe(false);
   });
 });
 

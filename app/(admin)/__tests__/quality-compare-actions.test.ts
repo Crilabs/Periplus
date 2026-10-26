@@ -5,14 +5,12 @@ import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { comparisonResults, comparisonSet, evaluationProfiles, places, reviewTasks, runs } from "@/lib/db/schema";
-import { createRun } from "@/lib/domain/runs";
-import { CONSOLIDATION_GEO_STAGE } from "@/lib/pipeline/consolidation/stages";
+import { comparisonResults, comparisonSet, places, reviewTasks } from "@/lib/db/schema";
 import { comparisonValues, loadComparisonSubjects } from "@/lib/domain/quality/comparison-values";
 import { subdivisionComparisonView } from "@/lib/domain/quality/navily-compare";
 import { loadNavilySpots } from "@/lib/domain/quality/navily-sample";
 import { getConfig } from "@/lib/config";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
+import { insertBerthState } from "@/test/berth-state";
 import { testDb, withRollback } from "@/test/db";
 import { NAVILY_MARKERS, rowsWrittenInTransaction } from "@/test/quality";
 import { insertNamedObject, insertTestSubdivision } from "@/test/text";
@@ -110,7 +108,9 @@ async function setUp(tx: Db) {
     "services.water": false,
     "highlight.supply": { present: false },
   };
-  await insertProfile(tx, objectId, attributes, { "shelter.N": provenanceEntry("computed") }, { version: 2 });
+  // the berth state carries the core values only; position and supply come from the place and its surroundings
+  const { "place.position": _position, "highlight.supply": _supply, ...core } = attributes; // eslint-disable-line @typescript-eslint/no-unused-vars
+  await insertBerthState(tx, place!.id, core);
   return { placeId: place!.id };
 }
 
@@ -152,7 +152,7 @@ describe("/quality/compare actions", () => {
       const rows = await resultsOf(tx, placeId);
       expect(rows).toHaveLength(16);
       expect(rows.every((x) => x.method === "proposal_confirmed" && x.checkedBy === ADMIN)).toBe(true);
-      expect(rows.every((x) => x.profileVersion === 2 && x.evaluationRunId === null)).toBe(true);
+      expect(rows.every((x) => x.profileVersion === null && x.evaluationRunId === null)).toBe(true);
       const byAttribute = Object.fromEntries(rows.map((x) => [x.attribute, x.result]));
       expect(byAttribute).toMatchObject({
         existence: "match",
@@ -183,7 +183,7 @@ describe("/quality/compare actions", () => {
       expect(r).toMatchObject({ ok: true, tasks: 1 });
       const tasks = await tasksOf(tx, placeId);
       expect(tasks).toHaveLength(1);
-      expect(tasks[0]!.context).toMatchObject({ attribute: "services.water", ownDisplay: "nein", profileVersion: 2 });
+      expect(tasks[0]!.context).toMatchObject({ attribute: "services.water", ownDisplay: "nein", profileVersion: null });
       // Grundprinzip 9: every row this transaction wrote, of any place or subject
       const written = await rowsWrittenInTransaction(tx);
       expect(written.length).toBeGreaterThanOrEqual(17);
@@ -200,9 +200,8 @@ describe("/quality/compare actions", () => {
       expect(r).toEqual({ ok: false, code: "stale" });
       expectCodesAndCounts(r);
       expect(await resultsOf(tx, placeId)).toEqual([]);
-      // the profile changes after the page was rendered: the shown digest is stale too
-      const [place] = await tx.select({ objectId: places.geoObjectId }).from(places).where(eq(places.id, placeId));
-      await insertProfile(tx, place!.objectId, { "services.water": true }, {}, { version: 3, validFrom: "2026-10-20" });
+      // the berth state changes after the page was rendered: the shown digest is stale too
+      await insertBerthState(tx, placeId, { "services.water": true });
       expect(await acceptProposalsAction({ placeId, subdivisionKey: SUBDIVISION, digest: shown })).toEqual({ ok: false, code: "stale" });
       expect(await resultsOf(tx, placeId)).toEqual([]);
       // a missing digest is invalid input
@@ -251,47 +250,8 @@ describe("/quality/compare actions", () => {
       expect(r).toEqual({ ok: true, written: 1, tasks: 1 });
       expectCodesAndCounts(r);
       const rows = await resultsOf(tx, placeId);
-      expect(rows).toMatchObject([{ attribute: "depth", result: "deviation", method: "manual", checkedBy: ADMIN, valueHash, profileVersion: 2 }]);
+      expect(rows).toMatchObject([{ attribute: "depth", result: "deviation", method: "manual", checkedBy: ADMIN, valueHash, profileVersion: null }]);
       expect(await tasksOf(tx, placeId)).toHaveLength(1);
-    }));
-
-  it("an outcome for an evaluation value never opens or closes a deviation task of the regular place (ruling M7-E-R2)", () =>
-    withRollback(async (tx) => {
-      const { placeId } = await setUp(tx);
-      const regularHash = await currentHash(tx, placeId, "services.water");
-      await recordComparisonAction({ placeId, subdivisionKey: SUBDIVISION, attribute: "services.water", result: "deviation", valueHash: regularHash });
-      const [regular] = await tasksOf(tx, placeId);
-      expect(regular).toMatchObject({ status: "open", subjectId: `${placeId}:services.water:${regularHash}`, context: { evaluationRunId: null } });
-
-      // an evaluation whose profile holds another water value
-      const { id: evaluationRunId } = await createRun(tx, {
-        kind: "reprocess",
-        scope: { type: "system", id: "consolidation" },
-        stages: [CONSOLIDATION_GEO_STAGE],
-        params: { comparisonSetSubdivision: SUBDIVISION, evaluation: true, rulesVersion: "v1", candidate: { rulesVersion: "v1" } },
-        triggeredBy: "test",
-      });
-      await tx.update(runs).set({ status: "finished" }).where(eq(runs.id, evaluationRunId));
-      const [place] = await tx.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, placeId));
-      await tx.insert(evaluationProfiles).values({ runId: evaluationRunId, geoObjectId: place!.geoObjectId, rulesVersion: "v1", factSchemaVersion: "v2", attributes: { "services.water": true }, provenance: {}, contentHash: "e" });
-      const subject = (await loadComparisonSubjects(tx, SUBDIVISION, { evaluationRunId })).find((s) => s.placeId === placeId)!;
-      const evaluationHash = comparisonValues(subject, getConfig().quality.navily)["services.water"].hash;
-      expect(evaluationHash).not.toBe(regularHash);
-
-      const deviation = { placeId, subdivisionKey: SUBDIVISION, attribute: "services.water" as const, valueHash: evaluationHash, evaluationRunId };
-      await recordComparisonAction({ ...deviation, result: "deviation" });
-      const regularTasks = (await tasksOf(tx, placeId)).filter((t) => (t.context as { evaluationRunId: string | null }).evaluationRunId === null);
-      // the regular place keeps exactly its own task, unchanged
-      expect(regularTasks).toEqual([regular]);
-      for (const t of await tasksOf(tx, placeId)) {
-        if (t.id !== regular!.id) expect(t).toMatchObject({ subjectId: `${placeId}:services.water:${evaluationHash}`, context: { evaluationRunId } });
-      }
-
-      // a match for the evaluation value settles that value only: the regular deviation stays open
-      await recordComparisonAction({ ...deviation, result: "match" });
-      const after = await tasksOf(tx, placeId);
-      expect(after.find((t) => t.id === regular!.id)).toMatchObject({ status: "open" });
-      expect(after.filter((t) => t.id !== regular!.id).every((t) => t.status === "dismissed")).toBe(true);
     }));
 
   it("a stale value hash gives the code stale and writes nothing", () =>

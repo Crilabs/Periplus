@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import { withRollback } from "@/test/db";
 
 /*
- * Append-only and stable tables refuse TRUNCATE as they refuse UPDATE/DELETE (gesamt-review DAT-6). The check reads
+ * The append-only archive table refuses TRUNCATE as it refuses UPDATE/DELETE (gesamt-review DAT-6). The check reads
  * the catalog and truncates a temporary table only: a TRUNCATE of a shared table would take an exclusive lock that
  * blocks every parallel test file.
  */
 
-/** Tables guarded per row by forbid_mutation/forbid_delete, and the subset also guarded against TRUNCATE. */
+/** Tables guarded per row by forbid_mutation, and the subset also guarded against TRUNCATE. */
 async function guardedTables(db: Parameters<Parameters<typeof withRollback>[0]>[0]) {
   const { rows } = await db.execute<{ table: string; truncate: boolean }>(sql`
     select c.relname as table,
@@ -25,20 +25,16 @@ async function guardedTables(db: Parameters<Parameters<typeof withRollback>[0]>[
 }
 
 describe("TRUNCATE guard", () => {
-  it("every append-only or stable table has a BEFORE TRUNCATE trigger", () =>
+  it("document_versions, the archive, is the only guarded table and has a BEFORE TRUNCATE trigger (design 7.2)", () =>
     withRollback(async (tx) => {
       const tables = await guardedTables(tx);
-      expect(tables.length).toBeGreaterThanOrEqual(30);
-      expect(tables.filter((t) => !t.truncate).map((t) => t.table)).toEqual([]);
+      expect(tables).toEqual([{ table: "document_versions", truncate: true }]);
     }));
 
-  it("the guard functions raise on TRUNCATE", () =>
+  it("the guard function raises on TRUNCATE", () =>
     withRollback(async (tx) => {
-      for (const fn of ["forbid_mutation('')", "forbid_delete()"]) {
-        await tx.execute(sql`create temporary table truncate_guard_probe (id int) on commit drop`);
-        await tx.execute(sql.raw(`create trigger probe_truncate before truncate on truncate_guard_probe for each statement execute function ${fn}`));
-        await expect(tx.transaction((sp) => sp.execute(sql`truncate truncate_guard_probe`))).rejects.toThrow();
-        await tx.execute(sql`drop table truncate_guard_probe`);
-      }
+      await tx.execute(sql`create temporary table truncate_guard_probe (id int) on commit drop`);
+      await tx.execute(sql.raw(`create trigger probe_truncate before truncate on truncate_guard_probe for each statement execute function forbid_mutation('')`));
+      await expect(tx.transaction((sp) => sp.execute(sql`truncate truncate_guard_probe`))).rejects.toThrow();
     }));
 });

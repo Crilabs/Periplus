@@ -2,28 +2,23 @@ import { inArray, sql, type SQL } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { DeliveryConfig, ImagesConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
-import type { GeoObjectType, HighlightCategory, PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
+import type { GeoObjectType, PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
 import { berthStates } from "@/lib/db/schema/research-state";
-import type { DocType } from "@/lib/db/schema/sources";
 import { decideBerth, loadEvidence } from "@/lib/domain/research/confirmation";
-import { popularityForPlaces } from "@/lib/domain/consolidation/derived/popularity";
-import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";
-import { countingSelectionsAt } from "@/lib/domain/highlights/selections";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { imageBlockedBy, imageSources } from "@/lib/domain/images/delivery-gate";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
+import { popularityForPlaces } from "./popularity";
 import { registrableDomain } from "@/lib/domain/sources/urls";
-import { latestProfiles, validAtAlias } from "@/lib/domain/timeline";
+import { validAtAlias } from "@/lib/db/valid-at";
 import type {
   BerthStateRow,
   DeliverableImage,
   LonLat,
   NearbyObject,
   PassageSource,
-  PoiSource,
   RegionSource,
-  SourceRefRow,
   SpotName,
   SpotSource,
   SubdivisionScope,
@@ -31,10 +26,10 @@ import type {
 
 /*
  * Loads what a delivery of one subdivision consists of (spec 08, spec 14), on the build date `today`: the places
- * delivered as spots, merged places, POIs, regions and passages whose geo object belongs to the subdivision
+ * delivered as spots, merged places, regions and passages whose geo object belongs to the subdivision
  * (`geo_objects.subdivision_id`, the nearest land; never the tile label, so a harbour in a tile labelled with the
  * neighbour is still delivered here). A spot comes with its berth state (contract 4.0) and the things on land its
- * state names; POIs, regions and passages with their latest profile, names and documents; the scope tiles with their
+ * state names; regions and passages with their names; the scope tiles with their
  * state and the sailing areas (Reviere) that touch them. One query per kind of object; lists sorted by public id
  * (passages by geo object id).
  */
@@ -77,7 +72,6 @@ export async function loadSubdivisionScope(
   // Sequential: the build runs in one transaction, whose connection takes one query at a time.
   const spotRows = await loadSpotRows(db, subdivisionId, cfg, today);
   const merged = await loadMerged(db, subdivisionId);
-  const poiRows = await loadPoiRows(db, subdivisionId, today);
   const regionRows = await loadRegionRows(db, subdivisionId, cfg, today);
   const passages = await loadPassages(db, subdivisionId, today);
   const areaRows = await loadAreas(db, tileArray, today);
@@ -86,15 +80,14 @@ export async function loadSubdivisionScope(
   const ownDomains = await loadOwnWebsiteDomains(db, spotRows.map((r) => r.placeId));
   const evidence = await loadEvidence(db, spotRows.map((r) => r.placeId));
   const confirmationCfg = getConfig().research.confirmation;
+  const independent = new Map(
+    spotRows.map((r): [string, number] => [r.placeId, decideBerth(r.kind, evidence.get(r.placeId) ?? [], confirmationCfg).independentSources.length]),
+  );
+  const popularity = await popularityForPlaces(db, spotRows.map((r) => r.geoObjectId), today, cfg.popularity.neighbourhoodNm, independent);
   const nearbyObjectRows = await loadNearbyObjects(db, [...states.values()].flatMap((st) => st.nearby.map((n) => n.geoObjectId)), today);
-  const objectIds = [...spotRows, ...poiRows, ...regionRows].map((r) => r.geoObjectId);
-  const profiles = await latestProfiles(db, [...objectIds, ...passages.map((p) => p.geoObjectId)]);
+  const objectIds = [...spotRows, ...regionRows].map((r) => r.geoObjectId);
   const names = await loadNames(db, [loaded.geoObjectId, ...areaRows.map((a) => a.geoObjectId), ...objectIds, ...nearbyObjectRows.map((o) => o.geoObjectId)], today);
-  const popularity = await popularityForPlaces(db, spotRows.map((r) => r.geoObjectId), today, cfg.popularity.neighbourhoodNm);
-  const withProfile = poiRows.map((r) => r.geoObjectId).filter((id) => profiles.has(id));
-  const summaries = await loadSummaries(db, withProfile, profiles);
-  const sources = await loadSources(db, withProfile, profiles);
-  const images = await loadPlaceImages(db, [...spotRows, ...poiRows].map((r) => r.geoObjectId), today, imagesCfg);
+  const images = await loadPlaceImages(db, spotRows.map((r) => r.geoObjectId), today, imagesCfg);
 
   const nearbyObjects = new Map(nearbyObjectRows.map((o): [string, NearbyObject] => [o.geoObjectId, { ...o, names: names.get(o.geoObjectId) ?? [] }]));
   const spots: SpotSource[] = spotRows.map((r) => {
@@ -104,23 +97,15 @@ export async function loadSubdivisionScope(
       names: names.get(r.geoObjectId) ?? [],
       state,
       ownWebsiteDomain: ownDomains.get(r.placeId) ?? null,
-      independentSources: decideBerth(r.kind, evidence.get(r.placeId) ?? [], confirmationCfg).independentSources.length,
+      independentSources: independent.get(r.placeId) ?? 0,
+      popularity: popularity.get(r.geoObjectId) ?? 0,
       nearbyObjects: (state?.nearby ?? []).flatMap((n) => nearbyObjects.get(n.geoObjectId) ?? []),
-      popularity: popularity.get(r.geoObjectId) ?? null,
       images: images.get(r.geoObjectId) ?? [],
     };
   });
-  const pois: PoiSource[] = poiRows.map((r) => ({
-    ...r,
-    profile: profiles.get(r.geoObjectId) ?? null,
-    summary: summaries.get(r.geoObjectId) ?? null,
-    sources: sources.get(r.geoObjectId) ?? [],
-    images: images.get(r.geoObjectId) ?? [],
-  }));
   const regions: RegionSource[] = regionRows.map((r) => ({
     ...r,
     names: (names.get(r.geoObjectId) ?? []).map(({ lang, name }) => ({ lang, name })),
-    profile: profiles.get(r.geoObjectId) ?? null,
   }));
   const { geoObjectId, ...subdivision } = loaded;
   return {
@@ -133,9 +118,8 @@ export async function loadSubdivisionScope(
     tiles,
     spots: spots.sort(byPublicId),
     merged,
-    pois: pois.sort(byPublicId),
     regions: regions.sort(byPublicId),
-    passages: passages.map((p) => ({ ...p, profile: profiles.get(p.geoObjectId) ?? null })),
+    passages,
   };
 }
 
@@ -215,7 +199,7 @@ async function loadTiles(db: Db, subdivisionId: string, tileArray: SQL, cfg: Del
   }));
 }
 
-type SpotRow = Omit<SpotSource, "names" | "state" | "ownWebsiteDomain" | "independentSources" | "nearbyObjects" | "popularity" | "images">;
+type SpotRow = Omit<SpotSource, "names" | "state" | "ownWebsiteDomain" | "independentSources" | "popularity" | "nearbyObjects" | "images">;
 
 async function loadSpotRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, today: string): Promise<SpotRow[]> {
   const anchorConfidence = getConfig().geometry.anchorArea.positionConfidence;
@@ -332,48 +316,7 @@ async function loadMerged(db: Db, subdivisionId: string): Promise<SubdivisionSco
   return rows.map((r) => ({ publicId: r.public_id, mergedIntoPublicId: r.target_public_id }));
 }
 
-type PoiRow = Omit<PoiSource, "profile" | "summary" | "sources" | "images">;
-
-/**
- * The highlights of the subdivision (spec 16): POIs of the subdivision that a place of the subdivision selected
- * (`highlight_selections`, only rows that count on `today`), each with every such selecting place and its distance.
- * Unselected POI candidates are never loaded.
- */
-async function loadPoiRows(db: Db, subdivisionId: string, today: string): Promise<PoiRow[]> {
-  const { rows } = await db.execute<{
-    geo_object_id: string;
-    public_id: string;
-    category: HighlightCategory;
-    lon: number;
-    lat: number;
-    osm_id: string | null;
-    wikidata_id: string | null;
-    selected_by: Array<{ placeGeoObjectId: string; distanceKm: number }>;
-  }>(sql`
-    select o.id as geo_object_id, o.public_id, o.category,
-           ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat, o.osm_id, o.wikidata_id,
-           json_agg(json_build_object('placeGeoObjectId', hs.place_geo_object_id, 'distanceKm', hs.distance_km)
-                    order by hs.place_geo_object_id) as selected_by
-    from ${countingSelectionsAt(today)}
-    where o.type = 'poi' and o.public_id is not null and o.category is not null
-      and o.subdivision_id = ${subdivisionId} and po.subdivision_id = ${subdivisionId}
-    group by o.id
-    order by o.public_id
-  `);
-  const names = await deliveryNames(db, rows.map((r) => r.geo_object_id), today);
-  return rows.map((r) => ({
-    geoObjectId: r.geo_object_id,
-    publicId: r.public_id,
-    category: r.category,
-    name: names.get(r.geo_object_id) ?? "",
-    position: point(r.lon, r.lat),
-    osmId: r.osm_id,
-    wikidataId: r.wikidata_id,
-    selectedBy: r.selected_by.map((x) => ({ placeGeoObjectId: x.placeGeoObjectId, distanceKm: Number(x.distanceKm) })),
-  }));
-}
-
-type RegionRow = Omit<RegionSource, "names" | "profile" | "sources">;
+type RegionRow = Omit<RegionSource, "names">;
 
 async function loadRegionRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, today: string): Promise<RegionRow[]> {
   const { rows } = await db.execute<{
@@ -449,7 +392,7 @@ async function simplifiedPolygons(
   return new Map(rows.map((r) => [r.id, { polygon: r.polygon, maxDistanceM: Number(r.max_distance_m) }]));
 }
 
-async function loadPassages(db: Db, subdivisionId: string, today: string): Promise<Array<Omit<PassageSource, "profile">>> {
+async function loadPassages(db: Db, subdivisionId: string, today: string): Promise<PassageSource[]> {
   const { rows } = await db.execute<{ geo_object_id: string; type: PassageSource["type"]; lon: number; lat: number }>(sql`
     select o.id as geo_object_id, o.type, ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat
     from geo_objects o
@@ -502,30 +445,6 @@ async function loadNames(db: Db, geoObjectIds: string[], today: string): Promise
   }
   return names;
 }
-
-/**
- * The `ok` summary of each object's latest profile version, highest prompt version first (ruling M6-P9), then the newest
- * (a „Summary neu erzeugen“ adds one beside the old, ruling M6-H-R1).
- */
-async function loadSummaries(
-  db: Db,
-  geoObjectIds: string[],
-  profiles: Map<string, ProfileSnapshot>,
-): Promise<Map<string, string>> {
-  if (geoObjectIds.length === 0) return new Map();
-  const versions = geoObjectIds.map((id) => profiles.get(id)!.version);
-  const { rows } = await db.execute<{ geo_object_id: string; text: string }>(sql`
-    select distinct on (s.geo_object_id) s.geo_object_id, s.text
-    from unnest(${arrayParam(geoObjectIds, "uuid")}, ${arrayParam(versions, "int")}) as x(geo_object_id, version)
-    join profile_summaries s on s.geo_object_id = x.geo_object_id and s.profile_version = x.version
-    where s.status = 'ok'
-    order by s.geo_object_id, s.prompt_version desc, s.created_at desc, s.id desc
-  `);
-  return new Map(rows.map((r) => [r.geo_object_id, r.text]));
-}
-
-/** A fact id (uuid); input ids of computations and POIs (`computation:…`, `poi:…`) name no document. */
-const FACT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const IMAGE_SLOT = /^(?:title|view-[1-9]\d*)$/;
 const round2 = (n: number) => Number(n.toFixed(2));
@@ -609,51 +528,4 @@ export async function loadPlaceImages(
     else out.set(r.geo_object_id, [image]);
   }
   return out;
-}
-
-/**
- * The facts a profile value rests on: for a list attribute the ids of its delivered entries (`entryFactIds`, the flat
- * `factIds` also hold facts of entries a review removed), else `factIds`.
- */
-function valueFactIds(p: ProfileSnapshot["provenance"][string]): string[] {
-  const ids = p.entryFactIds ? Object.values(p.entryFactIds).flat() : (p.factIds ?? []);
-  return ids.filter((id) => FACT_ID.test(id));
-}
-
-/**
- * The documents behind each object's profile: the facts the values rest on (`valueFactIds`) that rest on a mention,
- * via the mention's version to its document; a gone document is marked `gone` (left out of `sources`, still checked
- * against the forbidden domains, final review M-1). Per URL the newest effective observation date and that version's
- * effective document type (classification first, ruling M6-P10); never a quote.
- */
-async function loadSources(
-  db: Db,
-  geoObjectIds: string[],
-  profiles: Map<string, ProfileSnapshot>,
-): Promise<Map<string, SourceRefRow[]>> {
-  const pairs: Array<[string, string]> = [];
-  for (const id of geoObjectIds) {
-    const factIds = new Set(Object.values(profiles.get(id)!.provenance).flatMap(valueFactIds));
-    for (const factId of factIds) pairs.push([id, factId]);
-  }
-  if (pairs.length === 0) return new Map();
-  const { rows } = await db.execute<{ geo_object_id: string; url: string; doc_type: DocType; observed_at: string; gone: boolean }>(sql`
-    select distinct on (x.geo_object_id, d.url) x.geo_object_id, d.url, d.status = 'gone' as gone,
-           coalesce(v.classified_doc_type, v.doc_type) as doc_type,
-           coalesce(v.classified_observed_at, v.observed_at)::text as observed_at
-    from unnest(${arrayParam(pairs.map((p) => p[0]), "uuid")}, ${arrayParam(pairs.map((p) => p[1]), "uuid")})
-      as x(geo_object_id, fact_id)
-    join facts f on f.id = x.fact_id
-    join mentions m on m.id = f.mention_id
-    join document_versions v on v.id = m.document_version_id
-    join documents d on d.id = v.document_id
-    order by x.geo_object_id, d.url, coalesce(v.classified_observed_at, v.observed_at) desc, v.fetched_at desc
-  `);
-  const sources = new Map<string, SourceRefRow[]>();
-  for (const r of rows) {
-    const list = sources.get(r.geo_object_id) ?? [];
-    list.push({ url: r.url, docType: r.doc_type, observedAt: r.observed_at, ...(r.gone ? { gone: true } : {}) });
-    sources.set(r.geo_object_id, list);
-  }
-  return sources;
 }

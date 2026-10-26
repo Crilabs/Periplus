@@ -1,7 +1,5 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { reviewDecisions, reviewTasks } from "@/lib/db/schema";
-import { newId } from "@/lib/domain/ids";
 import { testDb } from "@/test/db";
 
 /** drizzle wraps driver errors ("Failed query"); the Postgres message lives on `cause`. */
@@ -15,46 +13,7 @@ async function rejectionMessage(promise: Promise<unknown>): Promise<string> {
   throw new Error("expected promise to reject");
 }
 
-async function insertDecision(): Promise<string> {
-  const db = testDb();
-  const [task] = await db
-    .insert(reviewTasks)
-    .values({
-      kind: "conflict",
-      subjectType: "place",
-      subjectId: newId(),
-      context: {},
-    })
-    .returning({ id: reviewTasks.id });
-  const [decision] = await db
-    .insert(reviewDecisions)
-    .values({
-      taskId: task!.id,
-      decision: { ok: true },
-      decidedBy: "t",
-      durationMs: 1,
-    })
-    .returning({ id: reviewDecisions.id });
-  return decision!.id;
-}
-
 describe("forbid_mutation", () => {
-  it("rejects UPDATE on review_decisions", async () => {
-    const id = await insertDecision();
-    const message = await rejectionMessage(
-      testDb().execute(
-        sql`update review_decisions set decided_by='x' where id=${id}`,
-      ),
-    );
-    expect(message).toMatch(/review_decisions is append-only/);
-  });
-  it("rejects DELETE on review_decisions", async () => {
-    const id = await insertDecision();
-    const message = await rejectionMessage(
-      testDb().execute(sql`delete from review_decisions where id=${id}`),
-    );
-    expect(message).toMatch(/review_decisions is append-only/);
-  });
   it("allows whitelisted columns only", async () => {
     // temp table is per connection, so run everything in one transaction (rolled back by the final failure)
     let noteAfterAllowedUpdate: unknown;

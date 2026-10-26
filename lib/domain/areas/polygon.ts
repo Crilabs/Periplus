@@ -2,7 +2,8 @@ import { sql } from "drizzle-orm";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { GeoObjectType } from "@/lib/db/schema";
-import { jsonTexts, jsonUuids } from "@/lib/domain/mentions/scope";
+import { jsonTexts } from "@/lib/db/json-texts";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 
 /*
  * Polygon of an area (spec 14, „Finden“ step 6): a member the bot typed `gulf` covering the other members is the polygon; otherwise

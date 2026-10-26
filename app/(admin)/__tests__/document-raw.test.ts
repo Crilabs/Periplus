@@ -26,7 +26,6 @@ vi.mock("@/lib/adapters/s3", async (importOriginal) => ({
 
 const { GET } = await import("../documents/[id]/raw/[versionId]/route");
 
-const cfg = { targetWords: 500, maxWords: 800, maxOverlapWords: 200 };
 const RAW = "<html><body><script>alert(document.cookie)</script><p>Anchor in sand.</p></body></html>";
 
 /** A document with one archived HTML version. */
@@ -56,7 +55,6 @@ async function archived(tx: Db): Promise<{ id: string; versionId: string }> {
       etag: null,
       lastModified: null,
     },
-    cfg,
   );
   return { id, versionId };
 }

@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { geoNames, geoObjects, highlightSelections, placeWebsites, places, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
+import { geoNames, geoObjects, placeWebsites, places, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
 import { addNames } from "@/lib/domain/gazetteer/names";
 import { osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { newPublicId } from "@/lib/domain/ids";
@@ -11,7 +11,7 @@ import { getConfig } from "@/lib/config";
 import { signalPage } from "@/test/research-signals";
 import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { spotSchema } from "@/contract/v2";
-import { insertNamedObject, insertTestSubdivision } from "@/test/text";
+import { insertTestSubdivision } from "@/test/text";
 import { SubdivisionNotFound, arrayParam, loadSubdivisionScope } from "../load";
 import { mapSpot } from "../map-spot";
 
@@ -62,10 +62,8 @@ describe("loadSubdivisionScope", () => {
       expect(a.state!.updatedAt.toISOString()).toBe("2026-10-20T08:00:00.000Z");
       // the places without a state: the excluded one
       expect(scope.spots.find((s) => s.publicId === C.publicId)!.state).toBeNull();
-      // popularity on the build date: A has the most sources of the confirmed places within the 50 nm neighbourhood
-      expect(a.popularity).toBe(1);
       const c = scope.spots.find((s) => s.publicId === C.publicId)!;
-      expect(c).toMatchObject({ status: "no_anchoring", statusReason: `restricted:military:${f.restrictedAreaId}`, popularity: null });
+      expect(c).toMatchObject({ status: "no_anchoring", statusReason: `restricted:military:${f.restrictedAreaId}` });
       expect(scope.subdivision).toMatchObject({ id: f.subdivisionId, publicId: f.subdivisionPublicId, key: "XT-DELIVERY", name: "Testlandesteil" });
       expect(scope.subdivision.names).toEqual([
         { lang: "de", name: "Testlandesteil" },
@@ -87,10 +85,6 @@ describe("loadSubdivisionScope", () => {
         { id: f.tileIds[0], lastRunAt: null, statesAsOf: "2026-10-20" },
         { id: f.tileIds[1], lastRunAt: null, statesAsOf: "2026-10-19" },
       ]);
-      expect(scope.pois).toEqual([
-        expect.objectContaining({ geoObjectId: f.poiId, publicId: f.poiPublicId, category: "food", name: "Taverna Vathi", sources: [] }),
-      ]);
-      expect(scope.pois[0]!.profile!.attributes["derived.importance"]).toBe(2);
       expect(scope.passages).toEqual([
         expect.objectContaining({ geoObjectId: f.capeId, type: "cape", name: "Akra Test", point: { lon: 21.2, lat: 35.15 } }),
       ]);
@@ -273,9 +267,8 @@ describe("loadSubdivisionScope", () => {
       expect(island.radiusNm).toBeLessThan(8);
       expect(Number(island.radiusNm.toFixed(1))).toBe(island.radiusNm);
       expect(island.areaKm2).toBeGreaterThan(100);
-      expect(island.profile!.attributes).toMatchObject({ meltemi_exposure: 0.7, ferry_traffic: "high", charter_bases: ["X"] });
       const archipelago = scope.regions.find((r) => r.publicId === f.archipelagoPublicId)!;
-      expect(archipelago).toMatchObject({ polygon: null, radiusNm: cfg.regions.pointRadiusNm, areaKm2: null, parentGeoObjectIds: [f.regionId], profile: null });
+      expect(archipelago).toMatchObject({ polygon: null, radiusNm: cfg.regions.pointRadiusNm, areaKm2: null, parentGeoObjectIds: [f.regionId] });
     });
   });
 
@@ -400,43 +393,6 @@ describe("loadSubdivisionScope", () => {
       await expect(loadSubdivisionScope(tx, f.regionId, cfg, today)).rejects.toBeInstanceOf(SubdivisionNotFound);
       await tx.update(subdivisions).set({ validTo: today }).where(eq(subdivisions.id, f.subdivisionId));
       await expect(loadSubdivisionScope(tx, f.subdivisionId, cfg, today)).rejects.toBeInstanceOf(SubdivisionNotFound);
-    });
-  });
-
-  it("leaves out a POI of no subdivision, even one linked to a scope tile", async () => {
-    await withRollback(async (tx) => {
-      const f = await seedDeliverySubdivision(tx);
-      const outside = await insertNamedObject(tx, { type: "poi", names: [{ name: "Taverna Fern" }], lon: 21.6, lat: 35.1, category: "food", tiles: [f.outsideTileId] });
-      await tx.update(geoObjects).set({ publicId: newPublicId("hl") }).where(eq(geoObjects.id, outside));
-      // linked to a scope tile, but it belongs to no subdivision (`subdivision_id` null); A even selects it
-      await tx.insert(tileGeoObjects).values({ tileId: f.tileIds[1], geoObjectId: outside });
-      await tx.insert(highlightSelections).values({ placeGeoObjectId: f.places.A.geoObjectId, poiGeoObjectId: outside, category: "food", rank: 2, distanceKm: 40, profileVersion: 1 });
-      const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
-      expect(scope.pois.map((p) => p.geoObjectId)).toEqual([f.poiId]);
-    });
-  });
-
-  it("loads only the POIs a counting place of the subdivision selected, with the selecting places (spec 16)", async () => {
-    await withRollback(async (tx) => {
-      const f = await seedDeliverySubdivision(tx);
-      const today = await dbToday(tx);
-      const [lon, lat] = f.positions.T;
-      const poi = async (name: string) => {
-        const id = await insertNamedObject(tx, { type: "poi", names: [{ name }], lon, lat: lat - 0.01, category: "culture", tiles: [f.tileIds[0]], subdivisionId: f.subdivisionId });
-        await tx.update(geoObjects).set({ publicId: newPublicId("hl") }).where(eq(geoObjects.id, id));
-        return id;
-      };
-      const unselected = await poi("Kastro");
-      const byRejected = await poi("Moni");
-      await tx.insert(highlightSelections).values({ placeGeoObjectId: f.places.B.geoObjectId, poiGeoObjectId: byRejected, category: "culture", rank: 1, distanceKm: 3, profileVersion: 1 });
-      await tx.update(places).set({ status: "rejected" }).where(eq(places.id, f.places.B.placeId));
-
-      const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, today);
-      expect(scope.pois.map((p) => p.geoObjectId)).toEqual([f.poiId]);
-      expect(scope.pois.map((p) => p.geoObjectId)).not.toContain(unselected);
-      const selectedBy = [...scope.pois[0]!.selectedBy].sort((a, b) => a.distanceKm - b.distanceKm);
-      expect(selectedBy.map((s) => s.placeGeoObjectId)).toEqual([f.places.A.geoObjectId, f.places.M.geoObjectId]);
-      expect(selectedBy[0]!.distanceKm).toBeCloseTo(1.85, 1);
     });
   });
 

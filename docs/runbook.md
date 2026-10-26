@@ -1,5 +1,7 @@
 # Periplus Runbook
 
+> **Rückbau N6 (Oktober 2026):** Die alte quellengetriebene Pipeline ist entfernt (Erwähnungen, Texte-Auswertung, Konsolidierung zu Profilen, Zusammenfassungen, Quellenfindung und -freigabe, Crawl, Wikivoyage, Konverter- und Modellvergleich, Revisit-Simulation, Messläufe und Bewertung). Die Abschnitte dieses Runbooks zu Meilenstein 3 bis 7 (Quellen, Texte, Profile, Revisit, Messen) beschreiben diese Funktionen und die Befehle `check:texts`, `check:profiles`, `check:sources`, `consolidate`, `review:auto-pairs`, `compare:models`, `report:models`, `report:converters`, `pdf:compare`, `fixtures:record`, `sim:*`, `report:pilot` und `report:costs`; sie gibt es nicht mehr. Es gilt der Ablauf der Neuausrichtung (Recherche je Liegeplatz, Stand, Lieferung 4.0); ältere Verträge 1.0 bis 2.3 und `/api/v1` sind entfernt, 3.0 bleibt veröffentlicht.
+
 Betrieb des Produktivsystems unter `https://periplus.marvoy.app` (Hetzner-Server `app-server`, 188.245.181.182, Docker Compose). Der Server ist geteilt: Andere Apps laufen dort mit pm2, und TLS macht der Caddy des Servers (systemd), nicht ein Container. Alle Pfade von Periplus auf dem Server liegen unter `/opt/periplus`, Benutzer ist `periplus`.
 
 Auf dem Server vor manuellen Compose-Befehlen immer:
@@ -134,12 +136,20 @@ SQL
 ```
 Danach die Prüfung wiederholen. Betroffen sein können nur Geo-Objekte aus dem OSM-Import (ihr Typ kommt aus den Tags); die Reparatur nimmt ihnen die ID, der nächste OSM-Import des Landesteils vergibt eine der richtigen Familie, bis dahin fehlt das Objekt im Paket. Der alte Worker läuft zwischen Prüfung und Migration weiter: scheitert der Deploy trotzdem an 0048, Prüfung und Reparatur wiederholen und erneut ausrollen. Eine Zeile aus `places` kann kein Code schreiben (Orte bekommen nur `sp_`-IDs, die sich nie ändern): nicht reparieren, den Deploy zurückhalten und die Zeile untersuchen.
 
+## Umstellung auf die Neuausrichtung (N5, N6) in Produktion
+
+Einmalig, in dieser Reihenfolge (Stand 26.10.2026; Produktion war leer bis auf den Admin):
+1. PRs mergen: #31 (Navily-Tor mit Kernwerten), #32 (N5, Vertrag 4.0), dann N6 (Rückbau). Jeder Merge deployt; der Deploy von N6 wendet Migration `0080_drop_old_pipeline` an (alte Tabellen, Trigger, alte pg-boss-Queues weg).
+2. `https://<domain>/readyz` liefert `{"status":"ok"}`; im Worker-Log keine Startfehler (`dc logs --tail 100 worker`).
+3. Archiv übernehmen (Abschnitt „Archiv übernehmen“): Export lokal aus der Dev-Umgebung (während des Exports den Dev-Worker anhalten, damit der Stand in sich stimmt), Verzeichnis per `rsync` auf den Server, Import im Worker-Container; Zählung Dokumente und Versionen vorher = nachher (Prüfplan Attika 2, T0).
+4. API: `/api/v4`; `/api/v3` und `/api/v1` gibt es nicht mehr.
+
 ## Rollback
 Eine frühere Version erneut ausrollen:
 ```bash
 bash /opt/periplus/scripts/deploy/deploy.sh <previous sha>
 ```
-(oder aus Actions heraus per Re-Run). Das funktioniert jederzeit, auch lange nach dem Deploy-Job, weil der Server mit seinem eigenen Nur-Lese-Login (Abschnitt 5a) zieht; die Images müssen in ghcr.io noch vorhanden sein. Der aktuell ausgerollte Tag steht in `.deployed-tag`; ein fehlgeschlagener Deploy (pull, Migration, Start, `/readyz` oder Worker nicht bereit) überschreibt ihn nicht und rollt automatisch auf ihn zurück. Migrationen werden nicht zurückgedreht; sie müssen zur Vorversion abwärtskompatibel bleiben. Ausnahme 0048: eine Version vor f3bc00d vergibt bei einem Typwechsel über die ID-Familie hinweg (z. B. POI → Insel) keine neue ID; ihr OSM-Import des Landesteils scheitert dann am CHECK (Job schlägt fehl, nichts wird halb geschrieben). Auf einer solchen Version nur so kurz wie nötig bleiben. Falls `deploy.sh` nicht auf dem Server liegt: `ssh periplus@<host> bash -s <sha> < scripts/deploy/deploy.sh`.
+(oder aus Actions heraus per Re-Run). Das funktioniert jederzeit, auch lange nach dem Deploy-Job, weil der Server mit seinem eigenen Nur-Lese-Login (Abschnitt 5a) zieht; die Images müssen in ghcr.io noch vorhanden sein. Der aktuell ausgerollte Tag steht in `.deployed-tag`; ein fehlgeschlagener Deploy (pull, Migration, Start, `/readyz` oder Worker nicht bereit) überschreibt ihn nicht und rollt automatisch auf ihn zurück. Migrationen werden nicht zurückgedreht; sie müssen zur Vorversion abwärtskompatibel bleiben. **Ausnahme 0080 (N6):** sie entfernt die Tabellen der alten Pipeline; eine Version vor N6 startet danach nicht mehr sauber. Nach dem N6-Deploy nur auf Versionen ab N6 zurückrollen. Ausnahme 0048: eine Version vor f3bc00d vergibt bei einem Typwechsel über die ID-Familie hinweg (z. B. POI → Insel) keine neue ID; ihr OSM-Import des Landesteils scheitert dann am CHECK (Job schlägt fehl, nichts wird halb geschrieben). Auf einer solchen Version nur so kurz wie nötig bleiben. Falls `deploy.sh` nicht auf dem Server liegt: `ssh periplus@<host> bash -s <sha> < scripts/deploy/deploy.sh`.
 
 Rollback auf eine Version vor fb5278c (Worker ohne Bereitschaftsmarker): `deploy.sh` wartet auf den Marker `/tmp/periplus-worker-ready`, den ein älterer Worker nie schreibt, und meldet ihn als „nicht bereit“ (und `up --wait` wartet vergeblich auf die Healthcheck des neuen `compose.prod.yml`). Eine solche Version nicht mit `deploy.sh` ausrollen, sondern von Hand (Vorspann oben, `dc`-Alias): `export IMAGE_TAG=<sha>`, `dc pull`, `dc up -d web worker caddy` (ohne `--wait`; die Healthcheck des Workers bleibt „unhealthy“, das stoppt ihn nicht), dann `dc logs -f worker` und `/readyz` prüfen und `<sha>` in `.deployed-tag` schreiben. Solange der Server nicht live ist, betrifft das nur das Übergangsfenster (Wave-2-Review M-3, geparkt).
 
@@ -192,7 +202,7 @@ Der Pilot lief über die konfigurierten Reviere `saronic` und `argolic` (`config
 2. **Landpolygone für das Mittelmeer** importieren (Abschnitt „Landpolygone“, `--mediterranean`). Die Box hängt an den Meeren: ist `gazetteer.coarse` noch nie gelaufen, zuerst Schritt 3 starten und den Import danach wiederholen.
 3. **„Länder und Landesteile“ → „Landesteile neu bilden“**: Stufen `gazetteer.coarse` (Meere, Länder, Verwaltungseinheiten) und `subdivisions.build`. Lauf abwarten.
 4. **Liste prüfen** auf `/subdivisions`: je Land die erwarteten Landesteile, ausgeschlossene mit Grund, Griechenland mit Kykladen und Dodekanes. Abweichungen in `config/subdivisions.json` nachziehen, deployen, Schritt 3 wiederholen.
-5. **Stand vorher festhalten**: `dc run --rm worker node --import tsx scripts/migrate-subdivisions.ts snapshot --out /tmp/pilot-before.json` (Orte, Facts und Profilversionen je Pilotkachel; Datei mit `docker cp` sichern oder ein Verzeichnis mounten).
+5. **Stand vorher festhalten**: `dc run --rm worker node --import tsx scripts/migrate-subdivisions.ts snapshot --out /tmp/pilot-before.json` (Orte und Facts je Pilotkachel; Datei mit `docker cp` sichern oder ein Verzeichnis mounten).
 6. **Migrieren**: `dc run --rm worker node --import tsx scripts/migrate-subdivisions.ts migrate`. Legt die Kacheln der Landesteile mit Pilotkacheln an, ordnet jedes Objekt der Pilotbox seinem Landesteil (nächstes Land) und Meer zu, rechnet die Elternkette neu, schlüsselt den Vergleichssatz und die Meeresboden-Polygone um. Ein zweiter Lauf ändert nichts.
 7. **Stand nachher festhalten**: wie Schritt 5 mit `--out /tmp/pilot-after.json`.
 8. **Abgleich**: `dc run --rm worker node --import tsx scripts/check-subdivision-migration.ts --before /tmp/pilot-before.json --after /tmp/pilot-after.json` endet mit `OK` (Exit 0). Bei `FAIL` nicht weiterarbeiten, Ausgabe an Christian.
@@ -289,6 +299,23 @@ Wird `playwright` in `package.json` angehoben, muss das Basis-Image dieselbe Ver
 8. **Voller Crawl**: Quellen → „Alle freigegebenen crawlen“. Quellen, die gerade ein anderer Lauf abruft, werden übersprungen und genannt.
 9. **Linkgraph-Vorschläge** (Quellen → „Linkgraph-Vorschläge“): neue Domains, auf die mindestens zwei freigegebene Quellen verlinken; wie Schritt 2 prüfen.
 10. **Abnahme-Prüfung**: `npm run check:sources` (auf dem Server: `dc run --rm worker node --import tsx scripts/check-sources.ts`). Ausgabe: freigegebene Quellen (Soll 20–40), je Quelle Dokumente, Versionen, offene und fehlgeschlagene Frontier-URLs und Kosten, offene fehlgeschlagene Jobs der Queues `fetch.*` und `embed.chunks`, Konverter-Entscheidung, PDF-Extraktor. Exit 1, solange die Zahl außerhalb 20–40 liegt, eine freigegebene Quelle kein Dokument hat (noch nicht gecrawlt), ein solcher Job offen ist oder die Konverter-Entscheidung vorläufig ist. Die Kosten je Quelle sind hier die Summe seit Beginn (mit Konverter-Vergleich), in `/sources` die der letzten 30 Tage.
+
+### Archiv übernehmen
+Kopiert das Archiv (Quellen, Dokumente, Versionen samt S3-Objekten, Suchzwischenspeicher `serp_queries`/`serp_results`) von einer Umgebung in eine andere, z. B. Entwicklung nach Produktion. Die Produktions-Datenbank ist nur im Docker-Netz des Servers erreichbar, deshalb in zwei Schritten über ein Verzeichnis. Forschungstabellen (Läufe, Orte, Geo-Objekte) werden nicht kopiert; Verweise auf Läufe werden auf `NULL` gesetzt. Das Skript löscht nichts und fügt nur ein.
+0. **Vorbereitung**: den Branch mergen und deployen, damit das Worker-Image `scripts/migrate-archive.ts` enthält. Den Worker während des Imports stoppen (`dc stop worker`), damit er keine Quellen oder Dokumente mit gleicher Domain/URL einfügt, und danach wieder starten. `S3_WRITE_PREFIX` darf in `.env` nicht gesetzt sein; der Bucket muss existieren (das Skript legt keinen an).
+1. **Export** auf dem Entwicklungsrechner (liest dessen Datenbank und S3 laut `.env.local`; der Platz reicht für alle Objekte, etwa 2 GB bei 7 500 Dokumenten):
+   ```bash
+   npm run archive:migrate -- export --out /tmp/archive-export
+   ```
+   Ergebnis: je Tabelle `<tabelle>.jsonl`, `objects/<Schlüssel>` und `manifest.json` (Zahlen, SHA-256 je Objekt). Fehlt ein Objekt in S3, bleibt die Version bzw. Suche aus dem Export und wird im Manifest unter `skipped` gezählt.
+2. **Übertragen**: `rsync -a --partial /tmp/archive-export/ <server>:/opt/periplus/archive-import/` (ein unterbrochenes `rsync` einfach wiederholen; danach `rsync -anc` als Prüfung ohne Änderungen; Verzeichnis für den Container lesbar machen, z. B. `chmod -R a+rX`). Der Import bricht ab, wenn eine `.jsonl` weniger Zeilen hat als `manifest.json`.
+3. **Trockenlauf** auf dem Server, im Worker-Container mit Bind-Mount (Pfad im Container `/import`):
+   ```bash
+   dc run --rm -v /opt/periplus/archive-import:/import:ro worker node --import tsx scripts/migrate-archive.ts import --in /import --dry-run
+   ```
+   Gibt je Tabelle `before`, `after`, `read`, `inserted` (Trockenlauf: würde eingefügt), `existing`, übersprungene Zeilen (NOT-NULL-Verweis ins Leere, Objektfehler) und die Zahl der Objekte aus. Nichts wird geschrieben.
+4. **Import**: derselbe Befehl ohne `--dry-run` (der Bind-Mount darf `:ro` bleiben). Jedes Objekt wird vor dem Hochladen gegen sein SHA-256 geprüft; eine Version mit fehlerhaftem Objekt wird nicht eingefügt, der Fehler steht in der Ausgabe (`ERROR object …`, Exit 1). Bestehende Ids bleiben unverändert (`ON CONFLICT DO NOTHING`): ein zweiter Lauf fügt nichts ein und lässt sich nach einem Abbruch beliebig wiederholen. `current_version_id` eines Dokuments setzt der Import nach den Versionen, nur wo es noch leer ist (auch bei einem Wiederholungslauf). Ein vorhandenes Objekt mit anderem Inhalt ist ein Objektfehler; eine Zeile, die an einem anderen eindeutigen Schlüssel (Domain, URL, Inhalts-Hash) scheitert, wird als „conflict“ gezählt, ihre Kinder als „no parent“. Exit 1 bei Objektfehlern oder übersprungenen Zeilen.
+5. **Zahlen vergleichen**: `inserted` (bzw. `after` minus `before`) je Tabelle gegen `counts` in `manifest.json` (bei leerer Produktion gleich, abzüglich der gemeldeten übersprungenen Zeilen); einen zweiten Lauf ausführen, der überall `inserted 0` meldet. Danach das Verzeichnis auf dem Server und lokal löschen.
 
 ### Budget-Stopp
 Erreicht ein Dienst sein Tagesbudget (`config/budgets.json`), pausiert der Worker die betroffene Queue bis zum nächsten Tag (UTC) und stellt den Job zurück, ohne ihn als Fehlversuch zu zählen. Unter „Jobs“ steht die Queue auf „Pausiert“ mit dem Grund („Budget Anthropic erreicht, bis … 00:00 UTC“; eine Pause von Hand steht als „von Hand (<wer>)“). Nach einer Budget-Erhöhung (Deploy) oder am Folgetag dort „Fortsetzen“ (bei einem Budget-Stopp mit Rückfrage); der Lauf macht dort weiter, wo er stand.
@@ -451,7 +478,7 @@ dc run --rm worker node --import tsx scripts/apikey.ts create <abnehmer> --scope
 Der Schlüssel (`pk_…`) wird nur einmal ausgegeben. Sperren: „Einstellungen“ → „API-Clients“ → „Sperren“ (wirkt sofort, nicht umkehrbar) oder `npm run apikey:revoke -- <abnehmer>`. Rate-Limit je Schlüssel: `api_clients.rate_limit_per_min` (Standard 60 je Minute, darüber 429).
 
 ### Liefer-API
-Alle Endpunkte unter `/api/v4` (und `/api/v1/schema/…`; `/api/v3` gibt es nicht mehr, Abruf ergibt 404) brauchen `Authorization: Bearer pk_…` mit Scope `delivery:read`. Antworten tragen `ETag` (mit `If-None-Match` → 304), `Cache-Control: private, max-age=60`, `Periplus-Schema-Version` und, wo es eine gibt, `Periplus-Data-Version`. Fehler kommen als `{ "error": { "code", "message" } }` mit 400/401/403/404/429/500. `<subdivision>` ist der Landesteil-Schlüssel (`GR-I`) oder die öffentliche ID (`sd_…`); ein Revier-Schlüssel (`saronic`) ergibt 404. Nur gültige Pakete werden ausgeliefert. Die Endpunkte von Vertrag 1.0 (`/api/v1/areas/…`, `/api/v1/spots/…`) gibt es nicht mehr.
+Alle Endpunkte unter `/api/v4` (`/api/v1` und `/api/v3` gibt es nicht mehr, Abruf ergibt 404) brauchen `Authorization: Bearer pk_…` mit Scope `delivery:read`. Antworten tragen `ETag` (mit `If-None-Match` → 304), `Cache-Control: private, max-age=60`, `Periplus-Schema-Version` und, wo es eine gibt, `Periplus-Data-Version`. Fehler kommen als `{ "error": { "code", "message" } }` mit 400/401/403/404/429/500. `<subdivision>` ist der Landesteil-Schlüssel (`GR-I`) oder die öffentliche ID (`sd_…`); ein Revier-Schlüssel (`saronic`) ergibt 404. Nur gültige Pakete werden ausgeliefert. Die Endpunkte von Vertrag 1.0 (`/api/v1/areas/…`, `/api/v1/spots/…`) gibt es nicht mehr.
 
 ```bash
 read -rs PERIPLUS_API_KEY && export PERIPLUS_API_KEY   # pk_… einfügen, Enter: nicht in der Shell-History; nie in Dateien oder Tickets schreiben

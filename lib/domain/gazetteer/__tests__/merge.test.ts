@@ -419,8 +419,7 @@ describe("autoDecideOpenPairTasks", () => {
       await open(osmA, osmB, 0.7);
 
       const result = await autoDecideOpenPairTasks(tx, rules);
-      // a bay takes facts: the survivor is consolidated
-      expect(result).toEqual({ same: 1, distinct: 0, dismissed: 1, open: 1, kept: [osm] });
+      expect(result).toEqual({ same: 1, distinct: 0, dismissed: 1, open: 1 });
       expect(await pairTaskOf(tx, osm, wd)).toEqual({ status: "decided", action: "same", decidedBy: AUTO_DECIDER });
       expect(await pairTaskOf(tx, wd, wd2)).toEqual({ status: "dismissed", action: null, decidedBy: null });
       expect(await pairTaskOf(tx, osmA, osmB)).toEqual({ status: "open", action: null, decidedBy: null });

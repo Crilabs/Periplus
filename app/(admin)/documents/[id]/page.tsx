@@ -3,21 +3,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getArchive } from "@/lib/adapters/s3";
 import { getDb } from "@/lib/db/client";
-import { documentDetail, versionContent, versionDiff, type VersionChunk } from "@/lib/domain/document-view";
-import { versionAnnotations, type ChunkAnnotations } from "@/lib/domain/text-annotations";
+import { documentDetail, versionContent, versionDiff } from "@/lib/domain/document-view";
 import { requireAdmin } from "@/lib/security/require-admin";
-import { AnnotatedText, AnnotationLegend } from "../../_components/annotated-text";
 import { ArchiveMarkdown } from "../../_components/archive-markdown";
-import { Dialog } from "../../_components/dialog";
 import { DiffView } from "../../_components/diff-view";
-import {
-  DOC_TYPE_LABELS,
-  DOCUMENT_STATUS_LABELS,
-  factAttributeLabel,
-  formatFactValue,
-  MATCH_KIND_LABELS,
-  OBSERVED_AT_BASIS_LABELS,
-} from "../../_components/labels";
+import { DOC_TYPE_LABELS, DOCUMENT_STATUS_LABELS, OBSERVED_AT_BASIS_LABELS } from "../../_components/labels";
 import {
   Badge,
   buttonClass,
@@ -27,15 +17,9 @@ import {
   fmt,
   Mono,
   Notice,
-  numClass,
   PageHeader,
   Panel,
-  TabNav,
-  Table,
-  tdClass,
   TextLink,
-  thClass,
-  trClass,
 } from "../../_components/ui";
 
 export const metadata: Metadata = { title: "Dokument" };
@@ -45,10 +29,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const param = (v: string | string[] | undefined): string | undefined => (typeof v === "string" ? v : undefined);
 const isWebUrl = (url: string) => /^https?:\/\//i.test(url);
 const share = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
-
-/** Tabs of the document page (`?tab=`). */
-const TABS = { content: "Inhalt", annotations: "Erwähnungen und Zitate" } as const;
-type Tab = keyof typeof TABS;
 
 export default async function Page({ params, searchParams }: PageProps<"/documents/[id]">) {
   await requireAdmin();
@@ -62,17 +42,13 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
   const known = (v: string | undefined) => (v && versions.some((x) => x.id === v) ? v : undefined);
   const selectedId = known(param(sp.v)) ?? document.currentVersionId ?? versions[0]?.id;
   const compareId = known(param(sp.diff));
-  const tab: Tab = param(sp.tab) === "annotations" ? "annotations" : "content";
   const archive = getArchive();
-  const [content, diff, annotations] = await Promise.all([
-    selectedId && tab === "content" ? versionContent(db, archive, id, selectedId) : null,
-    selectedId && tab === "content" && compareId && compareId !== selectedId ? versionDiff(db, archive, id, compareId, selectedId) : null,
-    selectedId && tab === "annotations" ? versionAnnotations(db, selectedId) : null,
+  const [content, diff] = await Promise.all([
+    selectedId ? versionContent(db, archive, id, selectedId) : null,
+    selectedId && compareId && compareId !== selectedId ? versionDiff(db, archive, id, compareId, selectedId) : null,
   ]);
   const selected = versions.find((v) => v.id === selectedId);
-  const versionHref = (v: string, compare?: string) =>
-    `/documents/${id}?v=${v}${compare ? `&diff=${compare}` : ""}${tab === "annotations" ? "&tab=annotations" : ""}`;
-  const tabHref = (t: Tab) => `/documents/${id}${selectedId ? `?v=${selectedId}` : ""}${t === "annotations" ? `${selectedId ? "&" : "?"}tab=annotations` : ""}`;
+  const versionHref = (v: string, compare?: string) => `/documents/${id}?v=${v}${compare ? `&diff=${compare}` : ""}`;
   const compared = compareId ? versions.find((v) => v.id === compareId) : undefined;
   const now = new Date();
 
@@ -80,7 +56,7 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
     <>
       <PageHeader
         title={<span className="break-all">{document.url}</span>}
-        back={{ href: `/sources/${source.id}`, label: source.domain }}
+        back={{ href: "/", label: "Übersicht" }}
         meta={
           <>
             <Badge tone={document.status === "gone" ? "warn" : "neutral"}>{DOCUMENT_STATUS_LABELS[document.status]}</Badge>
@@ -118,57 +94,36 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
           )}
 
           {selected && (
-            <div>
-              <TabNav
-                items={(Object.keys(TABS) as Tab[]).map((t) => ({ href: tabHref(t), label: TABS[t], current: t === tab }))}
-              />
-
-              {tab === "content" && (
-                <div className="space-y-6">
-                  {diff && compared && (
-                    <Panel
-                      title={`Änderungen seit ${fmt.dateTime(compared.fetchedAt)}`}
-                      description="Zeilenvergleich mit der gewählten Version; lange unveränderte Abschnitte sind gekürzt."
-                      actions={
-                        <TextLink href={versionHref(selected.id)} className="text-sm">
-                          Vergleich schließen
-                        </TextLink>
-                      }
-                    >
-                      <DiffView lines={diff} />
-                    </Panel>
-                  )}
-
-                  {!content && (
-                    <Notice tone="danger" title="Inhalt fehlt">
-                      Das Markdown dieser Version fehlt im Archiv.
-                    </Notice>
-                  )}
-                  {content && (
-                    <Panel
-                      title="Inhalt"
-                      description={`Text der Version vom ${fmt.dateTime(selected.fetchedAt)}, wie er archiviert und in Abschnitte zerlegt wurde.`}
-                      actions={
-                        <Dialog
-                          trigger={`Abschnitte (${content.chunks.length})`}
-                          triggerSize="sm"
-                          title={`Abschnitte (${content.chunks.length})`}
-                          description="Abschnitte, in die der Text für Abgleich und Extraktion zerlegt ist. Übernommene Abschnitte sind gegenüber der vorigen Version unverändert."
-                          wide
-                        >
-                          <ChunkTable chunks={content.chunks} />
-                        </Dialog>
-                      }
-                    >
-                      <div className="px-1 py-2 sm:px-4">
-                        <ArchiveMarkdown markdown={content.markdown} />
-                      </div>
-                    </Panel>
-                  )}
-                </div>
+            <div className="space-y-6">
+              {diff && compared && (
+                <Panel
+                  title={`Änderungen seit ${fmt.dateTime(compared.fetchedAt)}`}
+                  description="Zeilenvergleich mit der gewählten Version; lange unveränderte Abschnitte sind gekürzt."
+                  actions={
+                    <TextLink href={versionHref(selected.id)} className="text-sm">
+                      Vergleich schließen
+                    </TextLink>
+                  }
+                >
+                  <DiffView lines={diff} />
+                </Panel>
               )}
 
-              {annotations && <Annotations chunks={annotations} />}
+              {!content && (
+                <Notice tone="danger" title="Inhalt fehlt">
+                  Das Markdown dieser Version fehlt im Archiv.
+                </Notice>
+              )}
+              {content && (
+                <Panel
+                  title="Inhalt"
+                  description={`Text der Version vom ${fmt.dateTime(selected.fetchedAt)}, wie er archiviert wurde.`}
+                >
+                  <div className="px-1 py-2 sm:px-4">
+                    <ArchiveMarkdown markdown={content.markdown} />
+                  </div>
+                </Panel>
+              )}
             </div>
           )}
         </div>
@@ -182,7 +137,7 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
                   label: "Quelle",
                   value: (
                     <>
-                      <TextLink href={`/sources/${source.id}`}>{source.name}</TextLink>
+                      <span className="font-medium">{source.name}</span>
                       <div className="text-xs text-muted">
                         {source.domain} · Gewicht {share(source.weight)}
                       </div>
@@ -221,10 +176,6 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
                   {
                     label: "Konverter · Sprache",
                     value: `${selected.converter} · ${selected.language ?? "–"}`,
-                  },
-                  {
-                    label: "Abschnitte",
-                    value: `${fmt.int(selected.chunks)}, davon ${fmt.int(selected.carried)} übernommen`,
                   },
                   { label: "Hash", value: <Mono>{selected.hash8}</Mono> },
                   {
@@ -271,7 +222,7 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
                       </div>
                       <div className="mt-0.5 flex items-center justify-between gap-2 text-xs text-muted">
                         <span>
-                          {v.converter} · {v.language ?? "–"} · {v.chunks} Abschnitte
+                          {v.converter} · {v.language ?? "–"}
                         </span>
                         {selectedId && !isSelected && (
                           <Link href={versionHref(selectedId, v.id)} className="text-accent hover:underline">
@@ -288,133 +239,5 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
         </aside>
       </div>
     </>
-  );
-}
-
-function ChunkTable({ chunks }: { chunks: VersionChunk[] }) {
-  return (
-    <div className="-mx-5 -my-4">
-      <Table>
-        <thead>
-          <tr>
-            <th className={`${thClass} text-right`}>#</th>
-            <th className={thClass}>Überschrift</th>
-            <th className={`${thClass} text-right`}>Wörter</th>
-            <th className={thClass}>Übernommen</th>
-            <th className={thClass}>Einbettung</th>
-          </tr>
-        </thead>
-        <tbody>
-          {chunks.map((c) => (
-            <tr key={c.ordinal} className={trClass}>
-              <td className={`${tdClass} ${numClass}`}>{c.ordinal}</td>
-              <td className={tdClass}>{c.heading ?? <span className="text-muted">–</span>}</td>
-              <td className={`${tdClass} ${numClass}`}>{fmt.int(c.wordCount)}</td>
-              <td className={tdClass}>{c.carried ? "übernommen" : <span className="text-muted">–</span>}</td>
-              <td className={tdClass}>{c.embedded ? <Badge tone="ok">vorhanden</Badge> : <span className="text-muted">–</span>}</td>
-            </tr>
-          ))}
-        </tbody>
-      </Table>
-    </div>
-  );
-}
-
-/** Tab "Erwähnungen und Zitate": every chunk with its mentions and quotes highlighted, and its facts. */
-function Annotations({ chunks }: { chunks: ChunkAnnotations[] }) {
-  if (chunks.length === 0)
-    return (
-      <Panel>
-        <EmptyState title="Keine Abschnitte">Diese Version hat keine Abschnitte.</EmptyState>
-      </Panel>
-    );
-  const annotated = chunks.filter((c) => c.spans.length > 0).length;
-  return (
-    <section className="space-y-4">
-      <div className="space-y-1.5">
-        <AnnotationLegend />
-        <p className="text-xs text-muted">
-          {annotated} von {chunks.length} Abschnitten mit Erwähnungen oder Zitaten. Facts nicht aktiver Extraktionsläufe sind grau.
-        </p>
-      </div>
-      {chunks.map((c) => (
-        <article key={c.chunkId} className="rounded-lg border border-line bg-surface">
-          <h3 className="border-b border-line px-4 py-2 text-xs font-medium text-muted">
-            Chunk {c.ordinal}
-            {c.carriedFrom ? " · übernommen (Erwähnungen und Zitate des Ursprungs)" : ""}
-          </h3>
-          {c.bound.length > 0 && (
-            <p className="border-b border-line px-4 py-2 text-xs text-muted">
-              {c.bound.map((b, i) => (
-                <span key={b.id}>
-                  {i > 0 && ", "}
-                  An Ort gebunden:{" "}
-                  <Link href={`/geo/${b.geoObjectId}`} className="font-medium text-accent hover:underline">
-                    {b.name ?? b.geoObjectId}
-                  </Link>{" "}
-                  ({MATCH_KIND_LABELS.bound})
-                </span>
-              ))}
-            </p>
-          )}
-          <p className="max-w-[72ch] px-4 py-3 text-[0.9375rem] leading-7">
-            <AnnotatedText text={c.text} spans={c.spans} />
-          </p>
-          {c.mentions.length > 0 && (
-            <ul className="flex flex-wrap gap-2 px-4 pb-3 text-xs">
-              {c.mentions.map((m) => (
-                <li key={m.id} className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-0.5">
-                  <Link href={`/geo/${m.geoObjectId}`} className="font-medium text-accent hover:underline">
-                    {m.name ?? m.geoObjectId}
-                  </Link>
-                  <span className="text-muted">
-                    {MATCH_KIND_LABELS[m.matchKind]}, {share(m.confidence)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {c.facts.length > 0 && (
-            <div className="border-t border-line">
-              <Table className="text-xs">
-                <thead>
-                  <tr>
-                    <th className={thClass}>Attribut</th>
-                    <th className={thClass}>Wert</th>
-                    <th className={`${thClass} text-right`}>Konfidenz</th>
-                    <th className={thClass}>Modell</th>
-                    <th className={thClass}>Lauf</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {c.facts.map((f) => (
-                    <tr key={f.id} className={cx(trClass, !f.active && "text-muted opacity-70")}>
-                      <td className={tdClass}>
-                        <Link href={`/geo/${f.geoObjectId}`} className="text-accent hover:underline">
-                          {factAttributeLabel(f.attribute)}
-                        </Link>
-                      </td>
-                      <td className={tdClass}>{formatFactValue(f.attribute, f.value)}</td>
-                      <td className={`${tdClass} ${numClass}`}>{share(f.confidence)}</td>
-                      <td className={tdClass}>{f.model ?? "–"}</td>
-                      <td className={`${tdClass} whitespace-nowrap`}>
-                        {f.runId ? (
-                          <Link href={`/runs/${f.runId}`} className="font-mono text-accent hover:underline" title={f.runId}>
-                            {f.runId.slice(0, 8)}
-                          </Link>
-                        ) : (
-                          "–"
-                        )}
-                        {f.active ? "" : " (nicht aktiv)"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-            </div>
-          )}
-        </article>
-      ))}
-    </section>
   );
 }

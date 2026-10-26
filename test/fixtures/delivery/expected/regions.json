@@ -64,16 +64,7 @@
       "parentId": "rg_01J9ZD00000000000000000002",
       "spotIds": [
         "sp_01J9ZD00000000000000000001"
-      ],
-      "character": {
-        "de": "Meltemi-exponiert, starker Fährverkehr, Charterbasis."
-      },
-      "facts": {
-        "meltemiExposure": 0.7,
-        "ferryTraffic": "heavy",
-        "charterBase": true,
-        "supplyPort": null
-      }
+      ]
     },
     {
       "id": "rg_01J9ZD00000000000000000002",
