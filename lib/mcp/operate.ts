@@ -14,6 +14,7 @@ import { getBoss } from "@/lib/jobs/boss";
 import { pauseQueue, resumeQueue } from "@/lib/jobs/controls";
 import { QUEUES } from "@/lib/jobs/queues";
 import { createLogger } from "@/lib/logger";
+import { DATASET_KINDS } from "@/lib/pipeline/datasets";
 import { startDatasetImportRun } from "@/lib/pipeline/datasets-run";
 import { startDeliveryRun } from "@/lib/pipeline/delivery-run";
 import { startGazetteerRun } from "@/lib/pipeline/gazetteer/stages";
@@ -153,12 +154,22 @@ export function registerOperateTools(server: McpServer, caller: McpCaller): void
     "gazetteer",
     async (key) => startGazetteerRun(getDb(), await boss(), key, by),
   );
-  subdivisionTool(
+  server.registerTool(
     "datasets_start",
-    "Datensätze laden",
-    "Startet „Datensätze laden“ (Bathymetrie, Meeresboden, Sperrgebiete …) für einen Landesteil. Ohne `confirm` nur Umfang (Kacheln), Schätzung und Budgetstand.",
-    "datasets",
-    async (key) => startDatasetImportRun(getDb(), await boss(), key, by),
+    {
+      title: "Datensätze laden",
+      description:
+        "Startet „Datensätze laden“ (Bathymetrie, Meeresboden, Sperrgebiete …) für einen Landesteil; mit `datasets` nur diese Arten (z. B. `[\"harbour_structures\"]`). Ohne `confirm` nur Umfang (Kacheln), Schätzung und Budgetstand.",
+      inputSchema: { subdivision: subdivisionArg, datasets: z.array(z.enum(DATASET_KINDS)).min(1).optional(), confirm: confirmArg },
+      annotations: WRITE,
+    },
+    (args) =>
+      write("datasets_start", async () => {
+        await toolSubdivision(getDb(), args.subdivision);
+        return startTool("datasets", { subdivisionKey: args.subdivision }, args.confirm, async () =>
+          startDatasetImportRun(getDb(), await boss(), args.subdivision, by, args.datasets),
+        );
+      }),
   );
   subdivisionTool(
     "images_start",

@@ -582,6 +582,13 @@
       "when": 1792996005804,
       "tag": "0082_mcp_reader_login",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1793054316814,
+      "tag": "0083_harbour_structures",
+      "breakpoints": true
     }
   ]
 }

@@ -630,6 +630,16 @@ export const roadsDatasetSchema = z.strictObject({
   bufferKm: z.number().nonnegative(),
 });
 
+/**
+ * Piers, breakwaters and groynes from OSM (Overpass) per subdivision (spec 19): the harbour outline of a marina or port
+ * without a basin polygon. `manMade` are the `man_made` values kept.
+ */
+export const harbourStructuresDatasetSchema = z.strictObject({
+  manMade: z.array(z.string().regex(/^[a-z_]+$/)).min(1),
+  /** Margin around the area's box for the query, in km. */
+  bufferKm: z.number().nonnegative(),
+});
+
 /** Wikidata sitelink counts (importance signal, ruling M5-P1). */
 export const sitelinksDatasetSchema = z.strictObject({
   /** A count fetched within this many days is reused without a call. */
@@ -644,6 +654,7 @@ export const datasetsSchema = z.strictObject({
   vesselDensity: vesselDensityDatasetSchema,
   cables: cablesDatasetSchema,
   roads: roadsDatasetSchema,
+  harbourStructures: harbourStructuresDatasetSchema,
   sitelinks: sitelinksDatasetSchema,
   /** Margin around an area's box for every dataset request, in km. */
   bufferKm: z.number().nonnegative(),

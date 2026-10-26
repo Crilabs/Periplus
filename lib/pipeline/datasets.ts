@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import type { Feature, Geometry, LineString, MultiPolygon, Polygon } from "geojson";
 import { fetchCoverage, fetchWfsFeatures } from "@/lib/adapters/emodnet";
 import type { CallContext, Transport } from "@/lib/adapters/http";
-import { buildCablesQuery, buildRoadsQuery, overpassQuery, type OverpassElement } from "@/lib/adapters/overpass";
+import { buildCablesQuery, buildHarbourStructuresQuery, buildRoadsQuery, overpassQuery, type OverpassElement } from "@/lib/adapters/overpass";
 import type { Archive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -17,6 +17,7 @@ import {
   type RestrictedKind,
   type UpsertResult,
 } from "@/lib/domain/geometry/restrictions";
+import { replaceHarbourStructures, type HarbourStructure } from "@/lib/domain/geometry/harbour-structures";
 import { replaceRoads, type RoadFeature } from "@/lib/domain/geometry/roads";
 import { classifySeabed, replaceSeabed, type SeabedFeature } from "@/lib/domain/geometry/seabed";
 import { tileBbox, tileNeighbours, type Bbox } from "@/lib/domain/tiles";
@@ -27,7 +28,7 @@ import { seedTileIds } from "@/lib/pipeline/tile-scope";
 export const DATASETS_STAGE = "datasets.import";
 
 /** The datasets of the run "Datensätze laden", one job each per subdivision. */
-export const DATASET_KINDS = ["bathymetry", "seabed", "restrictions", "vessel_density", "roads", "sitelinks"] as const;
+export const DATASET_KINDS = ["bathymetry", "seabed", "restrictions", "vessel_density", "roads", "harbour_structures", "sitelinks"] as const;
 export type DatasetKind = (typeof DATASET_KINDS)[number];
 
 export type DatasetImportInput = { scope: GazetteerScope; runId?: string; now?: Date };
@@ -347,6 +348,42 @@ export async function importRoads(
 }
 
 /**
+ * OSM piers, breakwaters and groynes (`datasets.harbourStructures.manMade`) in the subdivision's box plus `bufferKm`
+ * (spec 19): an open way is stored as a line, a closed one as a polygon. Version = first 12 hex digits of the sha256
+ * over the sorted structures; the raw answer is archived as `datasets/osm-harbour-structures/<version>/<key>.json`.
+ * Then the structures of the box are replaced.
+ */
+export async function importHarbourStructures(
+  db: Db,
+  input: DatasetImportInput,
+  deps: DatasetImportDeps,
+): Promise<{ structures: number; removed: number; version: string }> {
+  const { datasets, gazetteer } = getConfig();
+  const cfg = datasets.harbourStructures;
+  const box = bufferBbox(input.scope.bbox, cfg.bufferKm);
+  const { raw, elements } = await overpassQuery(
+    deps.transport,
+    buildHarbourStructuresQuery(box, cfg.manMade, gazetteer.overpass.timeoutSeconds),
+    callContext(db, input),
+    gazetteer.overpass,
+  );
+  const structures: HarbourStructure[] = [];
+  for (const el of elements) {
+    const line = wayLine(el);
+    const manMade = el.tags?.man_made;
+    if (!line || !manMade || !cfg.manMade.includes(manMade)) continue;
+    const c = line.coordinates;
+    const closed = c.length >= 4 && c[0]![0] === c.at(-1)![0] && c[0]![1] === c.at(-1)![1];
+    structures.push({ osmId: `way/${el.id}`, manMade, geometry: closed ? { type: "Polygon", coordinates: [c] } : line });
+  }
+  structures.sort((a, b) => a.osmId.localeCompare(b.osmId));
+  const version = contentVersion([JSON.stringify(structures)]);
+  await deps.archive.put(`datasets/osm-harbour-structures/${version}/${input.scope.key}.json`, raw, "application/json");
+  const { stored, removed } = await replaceHarbourStructures(db, { box, datasetVersion: version, structures });
+  return { structures: stored, removed, version };
+}
+
+/**
  * Wikidata sitelink counts (importance signal, ruling M5-P1) of the valid, unmerged objects with a `wikidata_id` in
  * the subdivision's tiles, through `ensureSitelinkCounts`: a count fetched within `datasets.sitelinks.reuseDays` is
  * reused without a call, the others are fetched and upserted; an item Wikidata no longer knows counts 0.
@@ -389,6 +426,8 @@ export async function importDataset(
       return importVesselDensity(db, input, deps);
     case "roads":
       return importRoads(db, input, deps);
+    case "harbour_structures":
+      return importHarbourStructures(db, input, deps);
     case "sitelinks":
       return importSitelinks(db, input, deps);
   }

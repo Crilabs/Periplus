@@ -83,6 +83,12 @@ export function buildRoadsQuery(bbox: Bbox, highways: string[], timeoutSeconds: 
   return boxQuery([`way["highway"~"^(${values})$"]`], bbox, timeoutSeconds);
 }
 
+/** Overpass QL for ways with a `man_made` value of `values` (piers, breakwaters, groynes) in a box. */
+export function buildHarbourStructuresQuery(bbox: Bbox, values: string[], timeoutSeconds: number): string {
+  const v = values.map((h) => qlString(regexLiteral(h))).join("|");
+  return boxQuery([`way["man_made"~"^(${v})$"]`], bbox, timeoutSeconds);
+}
+
 /**
  * Overpass QL for submarine cables in a box: seamark cables, power cables under water or under ground
  * (the caller drops those on land) and telecom lines under water.

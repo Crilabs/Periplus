@@ -161,6 +161,18 @@ describe("/api/mcp start tools", () => {
     }),
   );
 
+  it("datasets_start with datasets loads only those kinds", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      inserted.length = 0;
+      const { token } = await tokenFor(tx);
+      await seedCandidates(tx, GATE_KEY);
+      const started = await callTool(token, "datasets_start", { subdivision: GATE_KEY, datasets: ["harbour_structures"], confirm: true });
+      expect(started.isError ? started.text : "").toBe("");
+      const [run] = await tx.select().from(runs).where(eq(runs.id, JSON.parse(started.text).runId));
+      expect((run!.params as { datasets?: unknown }).datasets).toEqual(["harbour_structures"]);
+    }));
+
   it("research_start without confirm writes nothing and answers scope, estimate and budgets", () =>
     withRollback(async (tx) => {
       db = tx;
