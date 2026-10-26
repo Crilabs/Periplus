@@ -352,6 +352,14 @@ describe("/api/mcp start tools", () => {
       expect(JSON.parse((await callTool(token, "run_end", { runId: id })).text)).toEqual({ beendet: false, aufgeraeumt: false });
     }));
 
+  it("run_end with an unknown run id is a tool error", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token } = await tokenFor(tx);
+      const id = newId();
+      expect(await callTool(token, "run_end", { runId: id })).toEqual({ isError: true, text: `Lauf ${id} unbekannt` });
+    }));
+
   it("queue_pause writes the pause as mcp:<email>, queue_resume removes it; an unknown queue is refused", () =>
     withRollback(async (tx) => {
       db = tx;

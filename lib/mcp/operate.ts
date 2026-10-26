@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db/client";
 import { budgetStatus, type BudgetStatus } from "@/lib/domain/costs";
 import { retryJobWithTask } from "@/lib/domain/job-retry";
 import { tileExists } from "@/lib/domain/geo-view";
+import { getRun } from "@/lib/domain/runs";
 import type { McpCaller } from "@/lib/domain/mcp-tokens";
 import { estimateCost, measureScope, placeIdsOnTile, recordScopeSize, type ScopeSize, type StartKind, type StartScope } from "@/lib/domain/mcp/estimate";
 import { syncConflictTasks } from "@/lib/domain/research/gate-conflicts";
@@ -253,6 +254,7 @@ export function registerOperateTools(server: McpServer, caller: McpCaller): void
         caller,
         async () => {
           const db = getDb();
+          if (!(await getRun(db, args.runId))) throw new ToolError(`Lauf ${args.runId} unbekannt`);
           const b = await boss();
           const { ended, cleanedUp } = await endRunByAdmin(db, b, args.runId, by);
           if (ended) await afterBuildRunEnded(db, b, args.runId);
