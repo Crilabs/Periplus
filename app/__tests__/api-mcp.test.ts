@@ -4,6 +4,10 @@ import { users } from "@/lib/db/schema";
 import { createApiClient } from "@/lib/domain/api-clients";
 import { createMcpToken, revokeMcpToken } from "@/lib/domain/mcp-tokens";
 import { newId } from "@/lib/domain/ids";
+import { syncConflictTasks } from "@/lib/domain/research/gate-conflicts";
+import { insertPlace } from "@/test/consolidation";
+import { insertTestSubdivision, insertTestTile } from "@/test/text";
+import { tileIdFor } from "@/lib/domain/tiles";
 import { decideAccess } from "@/lib/security/access";
 import { testDb, withRollback } from "@/test/db";
 import { testReaderDb } from "@/test/reader";
@@ -78,7 +82,7 @@ describe("/api/mcp", () => {
       const { token } = await tokenFor(tx);
       const res = await rpc(token, "tools/list");
       const body = (await res.json()) as { result: { tools: Array<{ name: string; annotations?: { readOnlyHint?: boolean } }> } };
-      expect(body.result.tools.map((t) => t.name).sort()).toEqual(["costs", "deliveries", "overview", "place", "runs", "sql", "version"]);
+      expect(body.result.tools.map((t) => t.name).sort()).toEqual(["checks", "costs", "deliveries", "gate_input", "overview", "place", "review_tasks", "runs", "sql", "version", "worker"]);
       expect(body.result.tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
     }));
 
@@ -101,6 +105,43 @@ describe("/api/mcp", () => {
       const denied = await callTool(token, "sql", { query: "select * from users" });
       expect(denied.isError).toBe(true);
       expect(denied.text).toMatch(/permission denied/);
+    }));
+
+  it("the test run tools: gate_input, checks, review_tasks, worker", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token } = await tokenFor(tx);
+      const key = `XT-${newId().slice(0, 8)}`;
+      const sub = await insertTestSubdivision(tx, key, [20.9, 35.0, 21.5, 35.5]);
+      await insertTestTile(tx, tileIdFor(21.0, 35.2), null, sub.id);
+
+      const gate = await callTool(token, "gate_input", { subdivision: key });
+      expect(gate.isError).toBe(false);
+      const gateBody = JSON.parse(gate.text);
+      expect(gateBody.version).toMatchObject({ gitSha: null, gateConfigHash: expect.stringMatching(/^[0-9a-f]{16}$/) });
+      expect(gateBody.input.nicht_vertrauenswuerdig.tiles.all).toEqual(expect.any(Array));
+      expect(gate.text).not.toContain('"spots"');
+      expect(await callTool(token, "gate_input", { subdivision: "XT-none" })).toEqual({ isError: true, text: "Landesteil XT-none unbekannt" });
+      expect(await callTool(token, "checks", { subdivision: "XT-none" })).toEqual({ isError: true, text: "Landesteil XT-none unbekannt" });
+
+      const checks = JSON.parse((await callTool(token, "checks", { subdivision: key })).text);
+      expect(checks).toHaveProperty("gazetteer");
+      expect(checks).toHaveProperty("geometry");
+
+      const place = await insertPlace(tx, { name: "Zzyzx Cove", lon: 21.0, lat: 35.2, status: "candidate" });
+      await syncConflictTasks(tx, [place.placeId], 2, [place.placeId]);
+      const listed = JSON.parse((await callTool(token, "review_tasks", { kind: "research_conflict" })).text);
+      expect(listed.counts.research_conflict).toBeGreaterThanOrEqual(1);
+      const task = listed.tasks.nicht_vertrauenswuerdig.find((t: { subjectId: string }) => t.subjectId === place.placeId);
+      expect(task).toBeTruthy();
+      const detail = JSON.parse((await callTool(token, "review_tasks", { id: task.id })).text);
+      expect(detail.adminPath).toBe(`/review/${task.id}`);
+      expect(detail.detail.nicht_vertrauenswuerdig).toBeTruthy();
+      expect((await callTool(token, "review_tasks", { id: newId() })).isError).toBe(true);
+
+      const worker = JSON.parse((await callTool(token, "worker")).text);
+      expect(worker.heartbeats).toEqual(expect.any(Array));
+      expect(worker.queues).toBeTypeOf("object");
     }));
 
   it("no, a malformed, an unknown or a revoked token: one 401 with WWW-Authenticate; an API key is no MCP token", () =>
