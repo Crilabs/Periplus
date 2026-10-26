@@ -3,15 +3,17 @@ import type { PgBoss } from "pg-boss";
 import { describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { places, queueControls, reviewDecisions, reviewTasks, runs, users } from "@/lib/db/schema";
+import { landPolygons, places, queueControls, reviewDecisions, reviewTasks, runs, users } from "@/lib/db/schema";
 import { createReviewTask } from "@/lib/domain/review";
 import { createRun } from "@/lib/domain/runs";
 import { insertPlace } from "@/test/consolidation";
 import { createMcpToken } from "@/lib/domain/mcp-tokens";
+import { STAGES_OF, type StartKind } from "@/lib/domain/mcp/estimate";
 import { newId } from "@/lib/domain/ids";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { RUN_SCOPE_LABELS } from "@/lib/pipeline/run-scope-labels";
 import { testDb, withRollback } from "@/test/db";
+import { insertTestRaster } from "@/test/geometry/raster";
 import { IMAGE_LAT, IMAGE_LON, insertSpot } from "@/test/images";
 import { insertNamedObject, insertTestSubdivision, insertTestTile } from "@/test/text";
 
@@ -109,6 +111,52 @@ async function seedCandidates(tx: Db, key: string, names: string[] = ["Vathi", "
 }
 
 describe("/api/mcp start tools", () => {
+  /**
+   * Every start tool with the kind of run it starts; each is given a fresh `GATE_KEY` subdivision with one tile and two
+   * candidates (geometry also bathymetry on that tile and land beside it, its starter refuses a tile without).
+   */
+  const START_TOOLS: Array<[string, StartKind, (key: string) => object, ((tx: Db, tileId: string) => Promise<unknown>)?]> = [
+    ["subdivisions_rebuild", "subdivisions", () => ({})],
+    ["subdivision_build", "build", (key) => ({ subdivision: key })],
+    ["gazetteer_start", "gazetteer", (key) => ({ subdivision: key })],
+    ["datasets_start", "datasets", (key) => ({ subdivision: key })],
+    ["seed_start", "seed", (key) => ({ subdivision: key })],
+    ["geometry_start", "geometry", (key) => ({ subdivision: key }), async (tx, tileId) => {
+      await insertTestRaster(tx, { tileId });
+      await tx.insert(landPolygons).values({ geom: sql`ST_MakeEnvelope(21.10, 35.20, 21.11, 35.21, 4326)`, datasetVersion: "test" });
+    }],
+    ["research_start", "research", (key) => ({ subdivision: key })],
+    ["images_start", "images", (key) => ({ subdivision: key })],
+    ["delivery_start", "delivery", (key) => ({ subdivision: key })],
+  ];
+
+  it.each(START_TOOLS)("%s: without confirm nothing is written; with confirm one run of its stages, by mcp:<email>, with its size", (tool, kind, args, prepare) =>
+    withRollback(async (tx) => {
+      db = tx;
+      inserted.length = 0;
+      const { email, token } = await tokenFor(tx);
+      const { tileId } = await seedCandidates(tx, GATE_KEY);
+      await prepare?.(tx, tileId);
+      const before = await runCount(tx);
+
+      const preview = await callTool(token, tool, args(GATE_KEY));
+      expect(preview.isError).toBe(false);
+      expect(JSON.parse(preview.text)).toMatchObject({ gestartet: false, umfang: expect.any(Object), schaetzung: { text: expect.any(String) }, budgets: expect.any(Array) });
+      expect(await runCount(tx)).toBe(before);
+      expect(inserted).toHaveLength(0);
+
+      const started = await callTool(token, tool, { ...args(GATE_KEY), confirm: true });
+      expect(started.isError ? started.text : "").toBe("");
+      const body = JSON.parse(started.text);
+      expect(body).toMatchObject({ gestartet: true, runId: expect.any(String) });
+      expect(await runCount(tx)).toBe(before + 1);
+      const [run] = await tx.select().from(runs).where(eq(runs.id, body.runId));
+      expect(run!.triggeredBy).toBe(`mcp:${email}`);
+      expect(run!.stages).toEqual([...STAGES_OF[kind]]);
+      expect((run!.params as { scopeSize?: unknown }).scopeSize).toEqual(body.umfang);
+    }),
+  );
+
   it("research_start without confirm writes nothing and answers scope, estimate and budgets", () =>
     withRollback(async (tx) => {
       db = tx;
