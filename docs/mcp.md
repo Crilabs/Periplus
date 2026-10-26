@@ -41,7 +41,8 @@ anlegen, alten Eintrag mit `claude mcp remove periplus --scope user` entfernen u
 Seit 26.10.2026 (Entscheidung): **jedes Admin-Token darf steuern**, es gibt keinen eigenen Scope. Läufe über MCP tragen
 `triggered_by = mcp:<E-Mail>` (in der Laufliste und im Runbook daran erkennbar). Steuern heißt Geld ausgeben, deshalb
 **zwei Schritte**: erst ohne `confirm` aufrufen (nichts startet; Antwort: `umfang`, `schaetzung` mit `eur`, `text`,
-`basisLauf`, `budgets`), dem Nutzer Umfang und Schätzung nennen, dann mit `confirm: true` starten (Antwort: `gestartet`,
+`basisLauf` und `dienste` (die bezahlten Dienste des Basislaufs mit ihren Kosten, `[{ dienst, eur }]`; ohne Basislauf
+oder ohne externe Kosten leer), `budgets`), dem Nutzer Umfang und Schätzung nennen, dann mit `confirm: true` starten (Antwort: `gestartet`,
 `runId`, `pfad`; läuft schon einer: `laeuftSchon`). Gate, Kandidaten und „läuft schon“ prüft der Starter erst beim
 bestätigten Aufruf. Den Umfang eines MCP-Laufs speichert der Server in `runs.params.scopeSize`; er speist spätere
 Schätzungen. Läufe aus der Oberfläche haben keinen → Schätzung „keine Grundlage“.

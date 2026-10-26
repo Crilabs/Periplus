@@ -87,6 +87,8 @@ async function sizeOf(db: Db, kind: Exclude<StartKind, "images">, scope: StartSc
 export type CostEstimate = {
   eur: number | null;
   basis: { runId: string; costEur: number; size: ScopeSize } | null;
+  /** The paid services of the basis run with what each cost in it, the dearest first; empty without a basis. */
+  services: Array<{ service: string; eur: number }>;
   text: string;
 };
 
@@ -97,7 +99,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  * `recordScopeSize`): its summed `external_calls` per unit times `size.count`. Without such a run no number.
  */
 export async function estimateCost(db: Db, kind: StartKind, size: ScopeSize): Promise<CostEstimate> {
-  if (COSTLESS.has(kind)) return { eur: 0, basis: null, text: "ohne externe Kosten" };
+  if (COSTLESS.has(kind)) return { eur: 0, basis: null, services: [], text: "ohne externe Kosten" };
   const stages = `{${STAGES_OF[kind].join(",")}}`;
   const { rows } = await db.execute<{ id: string; count: string; cost: string }>(sql`
     select r.id, r.params -> 'scopeSize' ->> 'count' as count,
@@ -109,13 +111,18 @@ export async function estimateCost(db: Db, kind: StartKind, size: ScopeSize): Pr
     order by coalesce(r.finished_at, r.created_at) desc, r.id desc
     limit 1`);
   const row = rows[0];
-  if (!row) return { eur: null, basis: null, text: "keine Grundlage (noch kein vergleichbarer Lauf)" };
+  if (!row) return { eur: null, basis: null, services: [], text: "keine Grundlage (noch kein vergleichbarer Lauf)" };
   const basisCount = Number(row.count);
   const costEur = Number(row.cost);
   const eur = round2((costEur / basisCount) * size.count);
+  const { rows: services } = await db.execute<{ service: string; cost: string }>(sql`
+    select service, sum(cost_eur)::text as cost from external_calls
+    where run_id = ${row.id} group by service having sum(cost_eur) > 0
+    order by sum(cost_eur) desc, service`);
   return {
     eur,
     basis: { runId: row.id, costEur, size: { unit: size.unit, count: basisCount } },
+    services: services.map((r) => ({ service: r.service, eur: round2(Number(r.cost)) })),
     text: `ca. ${eur.toFixed(2)} EUR (nach dem letzten vergleichbaren Lauf: ${costEur.toFixed(2)} EUR für ${basisCount})`,
   };
 }

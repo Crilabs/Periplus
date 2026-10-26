@@ -44,7 +44,7 @@ const tileIdArg = z.string().regex(/^q025:\d+:\d+$/).describe("Kachel-ID, z. B. 
 const confirmArg = z.boolean().optional().describe("Ohne: nur Umfang, Schätzung und Budgetstand, nichts wird gestartet. true: starten.");
 
 type Started = { id: string } | { alreadyRunning: string };
-type Estimate = { eur: number | null; text: string; basisLauf: string | null };
+type Estimate = { eur: number | null; text: string; basisLauf: string | null; dienste: Array<{ dienst: string; eur: number }> };
 /** `rueckstand` only for images: all spots without a current title image, of which one run makes `umfang.count`. */
 type Preview = { gestartet: false; umfang: ScopeSize; rueckstand?: number; schaetzung: Estimate; budgets: BudgetStatus[]; hinweis: string };
 type StartAnswer =
@@ -67,7 +67,12 @@ async function startTool(kind: StartKind, scope: StartScope, confirm: boolean | 
   const db = getDb();
   const { size: umfang, backlog } = await measureScope(db, kind, scope);
   const estimate = await estimateCost(db, kind, umfang);
-  const schaetzung: Estimate = { eur: estimate.eur, text: estimate.text, basisLauf: estimate.basis?.runId ?? null };
+  const schaetzung: Estimate = {
+    eur: estimate.eur,
+    text: estimate.text,
+    basisLauf: estimate.basis?.runId ?? null,
+    dienste: estimate.services.map((s) => ({ dienst: s.service, eur: s.eur })),
+  };
   if (confirm !== true) {
     return { gestartet: false, umfang, ...(backlog === null ? {} : { rueckstand: backlog }), schaetzung, budgets: await budgetStatus(db), hinweis: CONFIRM_NOTE };
   }

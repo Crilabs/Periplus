@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { landPolygons, places, queueControls, reviewDecisions, reviewTasks, runs, users } from "@/lib/db/schema";
+import { recordExternalCall } from "@/lib/domain/costs";
 import { createReviewTask } from "@/lib/domain/review";
 import { createRun } from "@/lib/domain/runs";
 import { insertPlace } from "@/test/consolidation";
@@ -175,7 +176,8 @@ describe("/api/mcp start tools", () => {
         budgets: expect.any(Array),
         hinweis: "Mit confirm: true starten.",
       });
-      expect(Object.keys(body.schaetzung).sort()).toEqual(["basisLauf", "eur", "text"]);
+      expect(Object.keys(body.schaetzung).sort()).toEqual(["basisLauf", "dienste", "eur", "text"]);
+      expect(body.schaetzung.dienste).toEqual([]);
       expect(await runCount(tx)).toBe(before);
       expect(inserted).toHaveLength(0);
     }));
@@ -197,6 +199,28 @@ describe("/api/mcp start tools", () => {
       expect(run).toMatchObject({ triggeredBy: `mcp:${email}`, scopeType: "subdivision", scopeId: GATE_KEY });
       expect(run!.params).toMatchObject({ subdivisionKey: GATE_KEY, scopeSize: { unit: "places", count: 2 } });
       expect(inserted.map((j) => j.queue)).toEqual(["research.search", "research.search"]);
+    }));
+
+  it("the preview names the paid services of the basis run with their cost", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token } = await tokenFor(tx);
+      await seedCandidates(tx, GATE_KEY);
+      const [basis] = await tx
+        .insert(runs)
+        .values({ kind: "stage", scopeType: "system", scopeId: "places", stages: [...STAGES_OF.research], params: { scopeSize: { unit: "places", count: 4 } }, triggeredBy: "t", status: "finished", finishedAt: new Date("2099-01-01T00:00:00Z") })
+        .returning({ id: runs.id });
+      await recordExternalCall(tx, { service: "serper", operation: "search", units: 1, unit: "call", costEur: 0.4, runId: basis!.id });
+      await recordExternalCall(tx, { service: "anthropic", operation: "m", units: 1, unit: "call", costEur: 1.6, runId: basis!.id });
+      const body = JSON.parse((await callTool(token, "research_start", { subdivision: GATE_KEY })).text);
+      expect(body.schaetzung).toMatchObject({
+        basisLauf: basis!.id,
+        eur: 1,
+        dienste: [
+          { dienst: "anthropic", eur: 1.6 },
+          { dienst: "serper", eur: 0.4 },
+        ],
+      });
     }));
 
   it("research_start outside the gate subdivision is refused with the admin page's German text", () =>
@@ -238,7 +262,7 @@ describe("/api/mcp start tools", () => {
       await seedCandidates(tx, GATE_KEY);
       const before = await runCount(tx);
       const body = JSON.parse((await callTool(token, "geometry_start", { subdivision: GATE_KEY })).text);
-      expect(body).toMatchObject({ gestartet: false, umfang: { unit: "tiles", count: 1 }, schaetzung: { eur: 0, text: "ohne externe Kosten", basisLauf: null } });
+      expect(body).toMatchObject({ gestartet: false, umfang: { unit: "tiles", count: 1 }, schaetzung: { eur: 0, text: "ohne externe Kosten", basisLauf: null, dienste: [] } });
       expect(await runCount(tx)).toBe(before);
     }));
 

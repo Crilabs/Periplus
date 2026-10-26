@@ -36,13 +36,29 @@ describe("estimateCost", () => {
       const est = await estimateCost(tx, "research", { unit: "places", count: 50 });
       expect(est.eur).toBe(30);
       expect(est.basis).toEqual({ runId: newer, costEur: 12, size: { unit: "places", count: 20 } });
+      expect(est.services).toEqual([{ service: "x", eur: 12 }]);
+    }));
+
+  it("lists the paid services of the basis run with their cost, the dearest first", () =>
+    withRollback(async (tx) => {
+      const id = await finishedRun(tx, STAGES_OF.research, { unit: "places", count: 10 }, 1.5, "2026-10-01T00:00:00Z");
+      await recordExternalCall(tx, { service: "serper", operation: "search", units: 1, unit: "call", costEur: 0.25, runId: id });
+      await recordExternalCall(tx, { service: "anthropic", operation: "m", units: 1, unit: "call", costEur: 2, runId: id });
+      await recordExternalCall(tx, { service: "serper", operation: "search", units: 1, unit: "call", costEur: 0.25, runId: id });
+      await recordExternalCall(tx, { service: "free", operation: "f", units: 1, unit: "call", costEur: 0, runId: id });
+      const est = await estimateCost(tx, "research", { unit: "places", count: 10 });
+      expect(est.services).toEqual([
+        { service: "anthropic", eur: 2 },
+        { service: "x", eur: 1.5 },
+        { service: "serper", eur: 0.5 },
+      ]);
     }));
 
   it("has no basis for a run without scopeSize", () =>
     withRollback(async (tx) => {
       await finishedRun(tx, STAGES_OF.research, null, 5, "2026-10-01T00:00:00Z");
       const est = await estimateCost(tx, "research", { unit: "places", count: 5 });
-      expect(est).toEqual({ eur: null, basis: null, text: "keine Grundlage (noch kein vergleichbarer Lauf)" });
+      expect(est).toEqual({ eur: null, basis: null, services: [], text: "keine Grundlage (noch kein vergleichbarer Lauf)" });
     }));
 
   it("ignores a run with other stages, another unit or a count of zero", () =>
@@ -63,7 +79,7 @@ describe("estimateCost", () => {
   it("is 0 EUR for a costless kind, without looking at runs", async () => {
     const failing = new Proxy({}, { get: () => { throw new Error("db touched"); } }) as unknown as Db;
     expect(COSTLESS.has("geometry")).toBe(true);
-    expect(await estimateCost(failing, "geometry", { unit: "tiles", count: 9 })).toEqual({ eur: 0, basis: null, text: "ohne externe Kosten" });
+    expect(await estimateCost(failing, "geometry", { unit: "tiles", count: 9 })).toEqual({ eur: 0, basis: null, services: [], text: "ohne externe Kosten" });
   });
 });
 
