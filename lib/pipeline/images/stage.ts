@@ -65,14 +65,14 @@ async function plannedKey(db: Db, geoObjectId: string, view: ImageView, cfg: Ima
   const place = await loadPlaceImageInput(db, geoObjectId, cfg.images);
   if (!place || !place.country) return null;
   const country = place.country;
-  const zoom = initialZoom(place, view, cfg.images);
+  const zoom = initialZoom(view, cfg.images);
   const plan = await planView(db, place, view, zoom, cfg.images);
-  if (!plan.ok) return keyFor(place, { ...view, zoom }, [], cfg);
+  if (!plan.ok) return keyFor(place, { ...view, zoom }, [], null, cfg);
   const resolved = await resolveView(db, place, view, { zoom, camera: plan.camera }, cfg.images, (target) =>
     currentAerialTiles(db, { lon: target.lon, lat: target.lat, country }, cfg.images),
   );
   if (resolved === null) return null;
-  return keyFor(place, { ...view, zoom: resolved.zoom }, resolved.ok ? aerialIds(resolved.imagery) : [], cfg);
+  return keyFor(place, { ...view, zoom: resolved.zoom }, resolved.ok ? aerialIds(resolved.imagery) : [], resolved.ok ? resolved.camera : null, cfg);
 }
 
 /**

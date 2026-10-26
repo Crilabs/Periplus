@@ -1,5 +1,4 @@
 import type { PlaceKind } from "@/lib/db/schema";
-import { compositionFor, type CompositionInput } from "./light";
 import type { CameraDetails } from "./render-plan";
 
 /*
@@ -9,13 +8,8 @@ import type { CameraDetails } from "./render-plan";
 
 const KIND_LABELS: Record<PlaceKind, string> = { anchorage: "Ankerplatz", mooring_field: "Bojenfeld", marina: "Marina", port: "Hafen" };
 
-/**
- * What an image of the place shows, from the composition the generator uses (`compositionFor`) and the place kind:
- * „Ankerplatz“, „Bojenfeld“, „Marina“, „Hafen“, or „Ankerplatz bei einem Ort – <Ortsname>“ for the near-town
- * composition (`townName` null: „ohne Namen“).
- */
-export function imageTypeLabel(place: CompositionInput, townName: string | null): string {
-  if (compositionFor(place) === "near_town") return `Ankerplatz bei einem Ort – ${townName ?? "ohne Namen"}`;
+/** What an image of the place shows, by its kind: „Ankerplatz“, „Bojenfeld“, „Marina“, „Hafen“. */
+export function imageTypeLabel(place: { kind: PlaceKind }): string {
   return KIND_LABELS[place.kind];
 }
 

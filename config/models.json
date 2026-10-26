@@ -11,7 +11,7 @@
     "check-place-website": { "model": "claude-haiku-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 512 }
   },
   "imageTasks": {
-    "generate-place-image": { "model": "gpt-image-2.5-sunburst", "promptVersion": 1, "size": "1536x1024", "quality": "high", "timeoutSeconds": 300 }
+    "generate-place-image": { "model": "gpt-image-2.5-sunburst", "promptVersion": 2, "size": "1536x1024", "quality": "high", "timeoutSeconds": 300 }
   },
   "pricesEurPerImage": {
     "gpt-image-2.5-sunburst": { "low": 0.02, "medium": 0.07, "high": 0.25 }

@@ -1147,14 +1147,15 @@ export const imagesSchema = z.strictObject({
   light: z.strictObject({
     townRadiusM: z.number().positive(),
     townPlaces: z.array(z.string().min(1)),
-    /** Light of an anchorage or mooring field within `townRadiusM` of a place in `townPlaces`. */
+    /**
+     * Light of an anchorage or mooring field whose town (the nearest place of `townPlaces` within `townRadiusM`) lies
+     * in the image, at least `townInFrameMargin` (NDC) inside the edges (spec 19).
+     */
     nearTown: imageryLightSchema,
+    townInFrameMargin: z.number().min(0).max(1),
     byKind: perKind(imageryLightSchema),
   }),
-  scene: z.strictObject({
-    ...perKind(sceneTextSchema).shape,
-    near_town: sceneTextSchema,
-  }),
+  scene: perKind(sceneTextSchema),
   check: z.strictObject({
     minWaterIoU: z.strictObject({ midday: z.number().min(0).max(1), evening: z.number().min(0).max(1) }),
     maxAttempts: z.number().int().min(1),
@@ -1222,11 +1223,6 @@ export const imagesSchema = z.strictObject({
     }),
     /** Water share before the render (spec 19, part B): a `gridX` × `gridY` grid of view rays cut at sea level; a ray above the horizon or beyond `maxRayM` is sky. */
     prediction: z.strictObject({ gridX: z.number().int().positive(), gridY: z.number().int().positive(), maxRayM: z.number().positive() }),
-    /**
-     * Anchorage or mooring field near a town: the camera ground point lies `foregroundM` from the centre of the
-     * place, away from the town, so the anchorage is in front and the town behind.
-     */
-    nearTown: z.strictObject({ foregroundM: z.number().positive() }),
     /**
      * Every other place: the camera looks at the shore ahead (the named cove, else the fetch ray along the view
      * direction) when it is within `maxShoreM`, else at the centre of the place; the target lies far enough inland for

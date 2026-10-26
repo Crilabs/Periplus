@@ -24,14 +24,12 @@ describe("images config", () => {
     expect(c.images.delivery.ktimatologio).toBe(false);
     expect(c.images.sources.ktimatologio.countries).toEqual(["GR"]);
     expect(c.images.light.townRadiusM).toBe(1500);
-    expect(c.images.composition.nearTown.foregroundM).toBe(450);
     expect(c.images.composition.openWater).toEqual({ maxShoreM: 2000, shoreBelowCentreDeg: 8.3, zoom: "z2", coveMinDistanceM: 50 });
-    expect(c.images.light.nearTown).toBe("midday");
-    expect(c.images.scene.near_town.en).toContain("in front of a town");
+    expect(c.images.light).toMatchObject({ townPlaces: ["town", "city"], nearTown: "evening", townInFrameMargin: 0.05 });
     expect(c.budgets.openai.dailyEur).toBe(10);
     expect(c.models.imageTasks["generate-place-image"]).toEqual({
       model: "gpt-image-2.5-sunburst",
-      promptVersion: 1,
+      promptVersion: 2,
       size: "1536x1024",
       quality: "high",
       timeoutSeconds: 300,
@@ -90,13 +88,13 @@ describe("images config", () => {
     expect(prompt.user.length).toBeGreaterThan(0);
   });
 
-  it("generate-place-image prompt has every block", () => {
-    const raw = readFileSync("config/prompts/generate-place-image/v1.md", "utf8");
+  it("generate-place-image prompt v2 has every block, v1 stays for older tasks", () => {
+    const raw = readFileSync("config/prompts/generate-place-image/v2.md", "utf8");
     const blocks = [...raw.matchAll(/^## (\w+)$/gm)].map((m) => m[1]);
     expect(blocks).toEqual([
-      "scene", "preserve", "boats_remove", "boats_keep", "boats_near_town", "composition_near_town", "do_not_add", "artefacts", "artefacts_watermark",
+      "scene", "preserve", "boats_remove", "boats_keep", "hazards", "do_not_add", "artefacts", "artefacts_watermark",
       "regenerate", "light_midday", "light_evening",
     ]);
-    expect(readdirSync("config/prompts/generate-place-image")).toEqual(["v1.md"]);
+    expect(readdirSync("config/prompts/generate-place-image")).toEqual(["v1.md", "v2.md"]);
   });
 });

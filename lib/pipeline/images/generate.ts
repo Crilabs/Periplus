@@ -109,15 +109,18 @@ export function imageTaskOf(cfg: Pick<AppConfig, "models">): { model: string; pr
   return { model: task.model, promptVersion: task.promptVersion };
 }
 
-/** The generation key of `view` of a planned place for the aerial tiles `imageryTileIds` (none for `no_water_view`). */
-export function keyFor(input: PlaceImageInput, view: ResolvedImageView, imageryTileIds: string[], cfg: ImageStageConfig): string {
+/**
+ * The generation key of `view` of a planned place for the aerial tiles `imageryTileIds` and `camera` (none and null
+ * for `no_water_view`); the camera decides the light (`lightFor`: a town in the image).
+ */
+export function keyFor(input: PlaceImageInput, view: ResolvedImageView, imageryTileIds: string[], camera: RenderCamera | null, cfg: ImageStageConfig): string {
   const { model, promptVersion } = imageTaskOf(cfg);
   return generationKey({
     imageryTileIds,
     promptVersion,
     model,
     kind: input.kind,
-    light: lightFor(input, cfg.images),
+    light: lightFor(input, camera, cfg.images),
     slot: view.slot,
     zoom: view.zoom,
     azimuthDeg: view.azimuthDeg ?? null,
@@ -129,7 +132,7 @@ export function keyFor(input: PlaceImageInput, view: ResolvedImageView, imageryT
 export const atTarget = (place: PlaceImageInput, camera: RenderCamera): PlaceImageInput => ({ ...place, lon: camera.target[0], lat: camera.target[1] });
 
 /** The zoom the plan of `view` starts at: the view's own, else the wanted title zoom of the composition (`titleZoomFor`). */
-export const initialZoom = (place: PlaceImageInput, view: ImageView, cfg: ImagesConfig): ZoomLevel => view.zoom ?? titleZoomFor(place, null, cfg);
+export const initialZoom = (view: ImageView, cfg: ImagesConfig): ZoomLevel => view.zoom ?? titleZoomFor(null, cfg);
 
 export type ResolvedView<T extends AerialTiles> =
   | { ok: true; zoom: ZoomLevel; camera: RenderCamera; imagery: T }
@@ -154,7 +157,7 @@ export async function resolveView<T extends AerialTiles>(
   const imagery = await imageryAt(atTarget(place, first.camera));
   if (imagery === null) return null;
   if (view.zoom !== undefined) return { ok: true, ...first, imagery };
-  const zoom = titleZoomFor(place, finestResolution(imagery), cfg);
+  const zoom = titleZoomFor(finestResolution(imagery), cfg);
   if (zoom === first.zoom) return { ok: true, ...first, imagery };
   const plan = await planView(db, place, view, zoom, cfg);
   if (!plan.ok) return { ok: false, zoom, reason: "no_water_view" };
@@ -355,16 +358,16 @@ export async function generatePlaceImage(
   const place = await loadPlaceImageInput(db, input.geoObjectId, icfg);
   if (!place || !place.country) return { status: "skipped", attempts: 0, waterIoU: null };
   const country = place.country;
-  const light = lightFor(place, icfg);
   const { model, promptVersion } = imageTaskOf(cfg);
   const azimuthOverride = view.azimuthDeg ?? null;
-  const base = { slot: view.slot, azimuthOverride, light, model, promptVersion, alt: altText(place, light, cfg) };
+  /** The task fields of an image with `light` (it follows from the camera, `lightFor`). */
+  const baseFor = (light: ImageryLight) => ({ slot: view.slot, azimuthOverride, light, model, promptVersion, alt: altText(place, light, cfg) });
   /** The task of a place without a camera over water at `zoom`; `skipped` when its key is done already. */
   const noWaterView = async (zoom: ZoomLevel): Promise<GenerateResult> => {
-    const key = keyFor(place, { ...view, zoom }, [], cfg);
+    const key = keyFor(place, { ...view, zoom }, [], null, cfg);
     if (await keyDone(db, input.geoObjectId, view.slot, key, input.force)) return { status: "skipped", attempts: 0, waterIoU: null };
     await putUpForReview(db, input.geoObjectId, {
-      ...base,
+      ...baseFor(lightFor(place, null, icfg)),
       key,
       zoom,
       camera: null,
@@ -380,7 +383,7 @@ export async function generatePlaceImage(
     return { status: "no_water_view", attempts: 0, waterIoU: null };
   };
 
-  const firstZoom = initialZoom(place, view, icfg);
+  const firstZoom = initialZoom(view, icfg);
   const plan = await planView(db, place, view, firstZoom, icfg);
   if (!plan.ok) return noWaterView(firstZoom);
 
@@ -400,7 +403,9 @@ export async function generatePlaceImage(
     if (!resolved.ok) return noWaterView(resolved.zoom);
     const { zoom, camera, imagery } = resolved;
     const target = atTarget(place, camera);
-    const key = keyFor(place, { ...view, zoom }, aerialIds(imagery), cfg);
+    const light = lightFor(place, camera, icfg);
+    const base = baseFor(light);
+    const key = keyFor(place, { ...view, zoom }, aerialIds(imagery), camera, cfg);
     if (await keyDone(db, input.geoObjectId, view.slot, key, input.force)) return { status: "skipped", attempts: 0, waterIoU: null };
 
     // a retried job (the edit failed, pg-boss expired the job) takes the render it already made for the key

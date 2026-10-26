@@ -315,7 +315,7 @@ describe("imageTargets", () => {
       const run = await subdivisionRun(tx, sd.key);
       await generateTitle(tx, spot.objectId, run.id);
       expect(await imageTargets(tx, run)).toEqual([]);
-      expect(await imageTargets(tx, run, withPromptVersion(2))).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
+      expect(await imageTargets(tx, run, withPromptVersion(3))).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
     });
   });
 

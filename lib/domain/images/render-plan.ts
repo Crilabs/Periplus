@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { ImagesConfig, ZoomLevel } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { compositionFor } from "./light";
 import type { PlaceImageInput } from "./place-input";
 
 export type LonLat = [lon: number, lat: number];
@@ -24,14 +23,6 @@ export type RenderCamera = {
 };
 
 export type RenderPlan = { ok: true; camera: RenderCamera } | { ok: false; reason: "no_water_view" };
-
-/**
- * Near-town composition: the segment from the place towards the camera ground point that must be over water starts
- * here (closer to the place the shore of the anchorage itself may lie in the way) and is sampled at this step.
- * Fixed by the image rule (Christian, 20.10.2026), not tuned.
- */
-const NEAR_TOWN_CLEAR_FROM_M = 200;
-const NEAR_TOWN_CLEAR_STEP_M = 10;
 
 const RAD = Math.PI / 180;
 const WGS84_A = 6_378_137;
@@ -173,36 +164,6 @@ export function cameraFor(target: LonLat, azimuthDeg: number, zoom: ZoomLevel, c
 }
 
 /**
- * Near-town camera: its ground point is `centre` moved `composition.nearTown.foregroundM` along `azimuthDeg` (away
- * from the town), the target is the midpoint of centre and town, and the tilt follows from the geometry:
- * `atan(heightM / ground distance camera → target)`. `azimuthDeg` of the result is the bearing target → camera.
- */
-export function nearTownCamera(
-  centre: LonLat,
-  town: LonLat,
-  azimuthDeg: number,
-  zoom: ZoomLevel,
-  cfg: Pick<ImagesConfig, "camera" | "composition">,
-): RenderCamera {
-  const c = cfg.camera;
-  const heightM = c.zooms[zoom].heightM;
-  const ground = destination(centre, cfg.composition.nearTown.foregroundM, azimuthDeg);
-  const target: LonLat = [(centre[0] + town[0]) / 2, (centre[1] + town[1]) / 2];
-  const view = offset(target, ground);
-  return {
-    target,
-    azimuthDeg: view.azimuthDeg,
-    heightM,
-    distanceM: view.distanceM,
-    tiltDeg: Math.atan(heightM / view.distanceM) / RAD,
-    fovDeg: c.fovDeg,
-    width: c.width,
-    height: c.height,
-    zoom,
-  };
-}
-
-/**
  * Size on screen (pixels) of one source pixel of `resolutionM` at the bottom edge of the image, the nearest ground:
  * `resolutionM · f / d` with focal length `f = (height/2) / tan(fov/2)` and slant distance
  * `d = heightM / sin(tilt + fov/2)`.
@@ -230,18 +191,16 @@ export function allowedZooms(resolutionM: number, cfg: Pick<ImagesConfig, "camer
 }
 
 /**
- * Zoom of the automatic title image: `camera.defaultZoom` for the near-town composition; for open water
- * `composition.openWater.zoom` when core imagery of `coreResolutionM` allows it (`allowedZooms`), else the closest
+ * Zoom of the automatic title image: `composition.openWater.zoom` when core imagery of `coreResolutionM` allows it (`allowedZooms`), else the closest
  * allowed level below it (`z1` is always allowed). `coreResolutionM` null (the imagery is not known yet) gives the
  * wanted level. An explicit zoom of a view (an admin's choice) is not subject to this. Decision Christian,
- * 21.10.2026: the title image shows the anchorage at z2.
+ * 21.10.2026: the title image shows the anchorage at z2. Since spec 19 its height is the floor of the fitted title
+ * camera (`planView`).
  */
 export function titleZoomFor(
-  input: Pick<PlaceImageInput, "kind" | "town">,
   coreResolutionM: number | null,
   cfg: Pick<ImagesConfig, "camera" | "composition" | "render">,
 ): ZoomLevel {
-  if (compositionFor(input) === "near_town") return cfg.camera.defaultZoom;
   const wanted = cfg.composition.openWater.zoom;
   if (coreResolutionM === null) return wanted;
   const levels = Object.keys(cfg.camera.zooms) as ZoomLevel[];
@@ -250,23 +209,11 @@ export function titleZoomFor(
 }
 
 /**
- * Where the rotation starts: for `near_town` the bearing from the town to the centre (the camera stands on the far
- * side of the anchorage), otherwise the opening bearing or the longest fetch ray (`baseAzimuth`; the rays cover the
+ * Where the rotation starts: the opening bearing or the longest fetch ray (`baseAzimuth`; the rays cover the
  * full circle, so their step is `360 / rays.length`).
  */
 export function baseAzimuthFor(input: PlaceImageInput): number | null {
-  if (compositionFor(input) === "near_town") {
-    return offset([input.town!.lon, input.town!.lat], [input.lon, input.lat]).azimuthDeg;
-  }
   return baseAzimuth(input.openingBearing, input.rays, input.rays && input.rays.length > 0 ? 360 / input.rays.length : 0);
-}
-
-/** Distances from the centre that must be over water for the near-town camera: 200 m to `foregroundM` every 10 m. */
-function nearTownSamples(foregroundM: number): number[] {
-  const out: number[] = [];
-  for (let d = NEAR_TOWN_CLEAR_FROM_M; d < foregroundM; d += NEAR_TOWN_CLEAR_STEP_M) out.push(d);
-  out.push(foregroundM);
-  return out;
 }
 
 /**
@@ -341,9 +288,8 @@ export async function landDistances(db: Db, origin: LonLat, bearings: number[], 
 
 /**
  * Camera for an image of a place at `zoom`. The azimuth starts at `azimuthOverride` (an additional view an admin
- * asked for), else at the rule's base, and turns in `camera.rotateStepDeg` steps until the camera is over water.
- * `near_town`: every point from 200 m to `foregroundM` from the centre must be over water. `open_water`: the camera
- * ground point must be, with the target `openWaterTarget` of the shore ahead; the rules in turn until one yields a
+ * asked for), else at the rule's base, and turns in `camera.rotateStepDeg` steps until the camera is over water:
+ * its ground point must be, with the target `openWaterTarget` of the shore ahead; the rules in turn until one yields a
  * camera:
  * 1. the named cove (`input.cove`): the camera stands over the anchorage and looks at the cove point (base: the
  *    bearing cove → anchor point); each candidate's shore is the first land along its view direction from the
@@ -351,7 +297,7 @@ export async function landDistances(db: Db, origin: LonLat, bearings: number[], 
  *    is no candidate);
  * 2. the fetch rays (base: `baseAzimuthFor`): each candidate's shore is the fetch along its view direction;
  * 3. the same candidates with the centre as target (the rule before camera-3).
- * Composition and light rules stay the same with an override. `no_water_view` when no azimuth qualifies (an
+ * The light rule stays the same with an override. `no_water_view` when no azimuth qualifies (an
  * enclosed place). Decision Christian, 21.10.2026: the title image shows the named cove, the camera over the
  * anchorage, the shoreline in the lower third.
  */
@@ -366,13 +312,6 @@ export async function planRender(
   const step = cfg.camera.rotateStepDeg;
   // the ground point lies `distanceM` from each candidate's own target
   const overWater = (cameras: RenderCamera[]) => firstOverWater(db, cameras.map((c) => c.target), cameras.map((c) => c.azimuthDeg), [cameras[0]!.distanceM]);
-
-  if (compositionFor(input) === "near_town") {
-    const town: LonLat = [input.town!.lon, input.town!.lat];
-    const candidates = candidateAzimuths(azimuthOverride ?? baseAzimuthFor(input)!, step);
-    const index = await firstOverWater(db, candidates.map(() => centre), candidates, nearTownSamples(cfg.composition.nearTown.foregroundM));
-    return index === null ? { ok: false, reason: "no_water_view" } : { ok: true, camera: nearTownCamera(centre, town, candidates[index]!, zoom, cfg) };
-  }
 
   if (input.cove) {
     const cove = offset(centre, input.cove);

@@ -6,7 +6,7 @@ import { Mono, TextLink } from "./ui";
 /**
  * Which place an image shows, for a `DescriptionList` of the review panel „Bild prüfen“ and the place's image tab:
  * the name linked to the place, its kind, public id and Landesteil, the anchor point (or the position without one),
- * the cove point when it lies apart, and for the near-town composition the town with its distance.
+ * the cove point when it lies apart, and the nearest town (town or city) with its distance.
  */
 export function imagePlaceItems(place: ImagePlaceInfo) {
   return [
@@ -21,9 +21,9 @@ export function imagePlaceItems(place: ImagePlaceInfo) {
     },
     !!place.cove && { label: "Buchtpunkt", value: <Mono>{pointLabel(place.cove)}</Mono>, hint: "Der benannte Punkt der Bucht (OSM); die Kamera blickt vom Ankerpunkt auf ihn" },
     !!place.town && {
-      label: "Ort in der Nähe",
+      label: "Stadt in der Nähe",
       value: `${place.town.name ?? "ohne Namen"} (${Math.round(place.town.distanceM).toLocaleString("de-DE")} m)`,
-      hint: "Komposition „Ankerplatz bei einem Ort“: der Ort liegt hinter dem Ankerplatz im Bild",
+      hint: "Nächste Stadt im Umkreis; liegt sie im Bild, wird das Bild eines Ankerplatzes am Abend erzeugt",
     },
   ];
 }

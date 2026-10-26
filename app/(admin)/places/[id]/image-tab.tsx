@@ -100,7 +100,7 @@ export function ImageTab({
   zoomRefused?: boolean;
 }) {
   const { images, candidates, place } = view;
-  const type = place ? imageTypeLabel(place, place.town?.name ?? null) : null;
+  const type = place ? imageTypeLabel(place) : null;
   const note = notice ? NOTICES[notice] : null;
   return (
     <div className="space-y-6">

@@ -67,7 +67,7 @@ export function PlaceImageDecision({
   const iouPassed = c.waterIoU !== null && c.waterIoU >= subject.threshold;
   const slot = slotLabel(subject.slot);
   const { place } = subject;
-  const type = imageTypeLabel(place, place.town?.name ?? null);
+  const type = imageTypeLabel(place);
 
   return (
     <>

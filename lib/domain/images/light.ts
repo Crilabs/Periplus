@@ -1,24 +1,22 @@
 import type { ImageryLight, ImagesConfig } from "@/lib/config";
 import type { PlaceImageInput } from "./place-input";
+import { projectGround } from "./projection";
+import type { RenderCamera } from "./render-plan";
 
 /**
- * How the image is composed (spec 13, image rules): `open_water` looks from the water at the centre of the place;
- * `near_town` puts an anchorage or mooring field in front and the nearby town behind.
+ * Light of the image (spec 19): a marina or port by its kind (evening); an anchorage or mooring field `light.nearTown`
+ * (evening) when its town (`town`: the nearest place of `light.townPlaces`, town or city, within `townRadiusM`) lies
+ * in the image of `camera`, at least `townInFrameMargin` inside the edges, else by its kind (midday). Without a camera
+ * (no view over water) the light of the kind.
  */
-export type Composition = "open_water" | "near_town";
-
-/** What the composition and the light are decided from: the place kind and whether a town is nearby (`PlaceImageInput`, or the place info of the UI). */
-export type CompositionInput = { kind: PlaceImageInput["kind"]; town: object | null };
-
-/** `near_town` for an anchorage or mooring field with a town nearby, else `open_water`. */
-export function compositionFor(input: CompositionInput): Composition {
-  return input.town !== null && (input.kind === "anchorage" || input.kind === "mooring_field") ? "near_town" : "open_water";
-}
-
-/**
- * Light of the image: `light.nearTown` for the near-town composition, else the light of the place kind (anchorage and
- * mooring field midday, marina and port evening). A marina or port keeps its own light even with a town nearby.
- */
-export function lightFor(input: CompositionInput, cfg: Pick<ImagesConfig, "light">): ImageryLight {
-  return compositionFor(input) === "near_town" ? cfg.light.nearTown : cfg.light.byKind[input.kind];
+export function lightFor(
+  input: Pick<PlaceImageInput, "kind" | "town">,
+  camera: RenderCamera | null,
+  cfg: Pick<ImagesConfig, "light">,
+): ImageryLight {
+  const byKind = cfg.light.byKind[input.kind];
+  if (input.kind === "marina" || input.kind === "port" || !input.town || !camera) return byKind;
+  const [p] = projectGround(camera, [[input.town.lon, input.town.lat]]);
+  const limit = 1 - cfg.light.townInFrameMargin;
+  return p && Math.abs(p[0]) <= limit && Math.abs(p[1]) <= limit ? cfg.light.nearTown : byKind;
 }

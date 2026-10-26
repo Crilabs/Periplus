@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AppConfig, ImageryLight, ImagesConfig } from "@/lib/config";
-import { compositionFor } from "./light";
 import type { PlaceImageInput } from "./place-input";
 
 /** The `## <name>` sections of `config/prompts/<task>/v<version>.md`, trimmed, by name. */
@@ -31,14 +30,13 @@ export type PromptConfig = { models: Pick<AppConfig["models"], "imageTasks">; im
 
 const TASK = "generate-place-image";
 
-function sceneOf(input: PlaceImageInput, cfg: Pick<PromptConfig, "images">) {
-  return compositionFor(input) === "near_town" ? cfg.images.scene.near_town : cfg.images.scene[input.kind];
-}
+const sceneOf = (input: PlaceImageInput, cfg: Pick<PromptConfig, "images">) => cfg.images.scene[input.kind];
 
 /**
- * The edit prompt of a place: the blocks `scene, preserve, <boats>, [composition_near_town], do_not_add, artefacts,
- * [artefacts_watermark], regenerate, light_<light>` joined by a blank line. Boats are removed for an anchorage or
- * mooring field, kept for a marina or port, and `boats_near_town` for the near-town composition.
+ * The edit prompt of a place (spec 19, prompt v2): the blocks `scene, preserve, <boats>, hazards, do_not_add,
+ * artefacts, [artefacts_watermark], regenerate, light_<light>` joined by a blank line. Boats are kept as the render
+ * shows them for a marina or port and for every evening image (an anchorage at a town), removed otherwise; none are
+ * ever added.
  */
 export function buildPlacePrompt(
   input: PlaceImageInput,
@@ -54,13 +52,12 @@ export function buildPlacePrompt(
     if (!text) throw new Error(`prompt ${TASK} v${promptVersion} has no block "${name}"`);
     return text;
   };
-  const nearTown = compositionFor(input) === "near_town";
-  const boats = nearTown ? "boats_near_town" : input.kind === "anchorage" || input.kind === "mooring_field" ? "boats_remove" : "boats_keep";
+  const keep = input.kind === "marina" || input.kind === "port" || light === "evening";
   const parts = [
     block("scene").replace("{{scene}}", sceneOf(input, cfg).en),
     block("preserve"),
-    block(boats),
-    ...(nearTown ? [block("composition_near_town")] : []),
+    block(keep ? "boats_keep" : "boats_remove"),
+    block("hazards"),
     block("do_not_add"),
     block("artefacts"),
     ...(watermarked ? [block("artefacts_watermark")] : []),
