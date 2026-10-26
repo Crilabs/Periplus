@@ -21,6 +21,7 @@
   "check": { "minWaterIoU": { "midday": 0.8, "evening": 0.6 }, "maxAttempts": 2, "waterColour": { "blueOverRedMin": 25, "greenTolerance": 10 } },
   "pipeline": { "maxGenerationsPerRun": 50 },
   "composition": { "fit": { "margin": 0.1, "minHeightM": 100, "maxHeightM": 900, "heightStep": 1.04, "centreTolerance": 0.02, "maxIterations": 15, "floorZoom": "z3" },
+                   "prediction": { "gridX": 32, "gridY": 21, "maxRayM": 20000 },
                    "nearTown": { "foregroundM": 450 }, "openWater": { "maxShoreM": 2000, "shoreBelowCentreDeg": 8.3, "zoom": "z2", "coveMinDistanceM": 50 } },
   "output": { "jpegQuality": 85, "license": "periplus", "credit": "Illustration: Periplus", "altPrefix": "KI-Illustration:" }
 }

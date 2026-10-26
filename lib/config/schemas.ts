@@ -1166,6 +1166,8 @@ export const imagesSchema = z.strictObject({
       maxIterations: z.number().int().positive(),
       floorZoom: z.enum(["z1", "z2", "z3"]),
     }),
+    /** Water share before the render (spec 19, part B): a `gridX` × `gridY` grid of view rays cut at sea level; a ray above the horizon or beyond `maxRayM` is sky. */
+    prediction: z.strictObject({ gridX: z.number().int().positive(), gridY: z.number().int().positive(), maxRayM: z.number().positive() }),
     /**
      * Anchorage or mooring field near a town: the camera ground point lies `foregroundM` from the centre of the
      * place, away from the town, so the anchorage is in front and the town behind.
