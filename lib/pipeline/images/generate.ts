@@ -14,6 +14,7 @@ import { newId } from "@/lib/domain/ids";
 import { passesGeometry, toJpeg, waterIoU } from "@/lib/domain/images/checks";
 import { lightFor } from "@/lib/domain/images/light";
 import { loadPlaceImageInput, type PlaceImageInput } from "@/lib/domain/images/place-input";
+import { coreSizeFor } from "@/lib/domain/images/window";
 import { altText, buildPlacePrompt } from "@/lib/domain/images/prompt";
 import { planView } from "@/lib/domain/images/plan-view";
 import { allowedZooms, cameraDetails, titleZoomFor, type CameraDetails, type RenderCamera } from "@/lib/domain/images/render-plan";
@@ -128,8 +129,16 @@ export function keyFor(input: PlaceImageInput, view: ResolvedImageView, imageryT
   });
 }
 
-/** The image of `place` with its imagery windows centred on the camera target (the render and its imagery agree). */
-export const atTarget = (place: PlaceImageInput, camera: RenderCamera): PlaceImageInput => ({ ...place, lon: camera.target[0], lat: camera.target[1] });
+/**
+ * The image of `place` with its imagery windows centred on the camera target and the core window as large as the
+ * camera needs (`coreSizeFor`), so the render and its imagery agree.
+ */
+export const atTarget = (place: PlaceImageInput, camera: RenderCamera, cfg: Pick<ImagesConfig, "window">): PlaceImageInput => ({
+  ...place,
+  lon: camera.target[0],
+  lat: camera.target[1],
+  coreSizeM: coreSizeFor(camera, cfg),
+});
 
 /** The zoom the plan of `view` starts at: the view's own, else the wanted title zoom of the composition (`titleZoomFor`). */
 export const initialZoom = (view: ImageView, cfg: ImagesConfig): ZoomLevel => view.zoom ?? titleZoomFor(null, cfg);
@@ -154,14 +163,14 @@ export async function resolveView<T extends AerialTiles>(
   cfg: ImagesConfig,
   imageryAt: (target: PlaceImageInput) => Promise<T | null>,
 ): Promise<ResolvedView<T> | null> {
-  const imagery = await imageryAt(atTarget(place, first.camera));
+  const imagery = await imageryAt(atTarget(place, first.camera, cfg));
   if (imagery === null) return null;
   if (view.zoom !== undefined) return { ok: true, ...first, imagery };
   const zoom = titleZoomFor(finestResolution(imagery), cfg);
   if (zoom === first.zoom) return { ok: true, ...first, imagery };
   const plan = await planView(db, place, view, zoom, cfg);
   if (!plan.ok) return { ok: false, zoom, reason: "no_water_view" };
-  const again = await imageryAt(atTarget(place, plan.camera));
+  const again = await imageryAt(atTarget(place, plan.camera, cfg));
   return again === null ? null : { ok: true, zoom, camera: plan.camera, imagery: again };
 }
 
@@ -397,12 +406,12 @@ export async function generatePlaceImage(
   // steps 2 to 5 under the slot lock: a second job of the same slot (another run, a retry of an expired job) skips
   const generated = await withSlotLock(deps.lockDb ?? db, input.geoObjectId, view.slot, async (): Promise<GenerateResult> => {
     const resolved = await resolveView(db, place, view, { zoom: firstZoom, camera: plan.camera }, icfg, (target) =>
-      ensureImagery(db, deps.archive, deps.transport, { geoObjectId: place.geoObjectId, lon: target.lon, lat: target.lat, country }, { db, runId, stage: IMAGES_STAGE }, icfg),
+      ensureImagery(db, deps.archive, deps.transport, { geoObjectId: place.geoObjectId, lon: target.lon, lat: target.lat, country, coreSizeM: target.coreSizeM }, { db, runId, stage: IMAGES_STAGE }, icfg),
     );
     if (resolved === null) throw new Error("ensureImagery returned no imagery");
     if (!resolved.ok) return noWaterView(resolved.zoom);
     const { zoom, camera, imagery } = resolved;
-    const target = atTarget(place, camera);
+    const target = atTarget(place, camera, icfg);
     const light = lightFor(place, camera, icfg);
     const base = baseFor(light);
     const key = keyFor(place, { ...view, zoom }, aerialIds(imagery), camera, cfg);

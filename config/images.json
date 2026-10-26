@@ -5,7 +5,7 @@
     "copernicus_dem": { "kind": "cog", "countries": "*", "urlTemplate": "https://copernicus-dem-30m.s3.amazonaws.com/{name}/{name}.tif", "resolutionM": 30, "license": "Copernicus-DEM", "attribution": "Gelände © DLR/Airbus, Copernicus", "acquiredAt": null, "timeoutSeconds": 300, "ratePerMinute": 10, "maxBytes": 120000000 }
   },
   "delivery": { "ktimatologio": false, "sentinel2": true, "copernicus_dem": true },
-  "window": { "coreSizeM": 1500, "wideMarginDeg": 0.06, "coreGridM": 4, "wideGridM": 15, "wideSinkM": 3, "whiteThreshold": 245 },
+  "window": { "coreSizeM": 1500, "coreMarginM": 200, "coreMaxSizeM": 3000, "wideMarginDeg": 0.06, "coreGridM": 4, "wideGridM": 15, "wideSinkM": 3, "whiteThreshold": 245 },
   "camera": { "tiltDeg": 30, "fovDeg": 50, "width": 1536, "height": 1024, "rotateStepDeg": 10, "defaultZoom": "z1", "rulesVersion": "camera-4",
               "zooms": { "z1": { "heightM": 260 }, "z2": { "heightM": 160 }, "z3": { "heightM": 100 } } },
   "render": { "maxSourcePixelOnScreen": 5, "rendererVersion": "render-1", "timeoutSeconds": 120 },

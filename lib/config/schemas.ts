@@ -1119,6 +1119,12 @@ export const imagesSchema = z.strictObject({
   delivery: z.strictObject({ ktimatologio: z.boolean(), sentinel2: z.boolean(), copernicus_dem: z.boolean() }),
   window: z.strictObject({
     coreSizeM: z.number().positive(),
+    /**
+     * The core window grows with the camera (spec 19): it covers the ground of the lower two thirds of the image plus
+     * `coreMarginM`, at least `coreSizeM`, at most `coreMaxSizeM`.
+     */
+    coreMarginM: z.number().nonnegative(),
+    coreMaxSizeM: z.number().positive(),
     wideMarginDeg: z.number().positive(),
     coreGridM: z.number().positive(),
     wideGridM: z.number().positive(),

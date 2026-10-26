@@ -8,6 +8,7 @@ import { getConfig } from "@/lib/config";
 import { externalCalls, imageryTiles } from "@/lib/db/schema";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { newId } from "@/lib/domain/ids";
+import { METRES_PER_DEGREE } from "@/lib/domain/images/window";
 import { currentAerialTiles, ensureImagery } from "@/lib/pipeline/images/imagery";
 
 /** Just west of 23° E (outside the pilot box): the wide window crosses into the next DEM tile. */
@@ -76,6 +77,16 @@ describe("ensureImagery", () => {
       expect(row!.bytes).toBeGreaterThan(0);
       const calls = await tx.select().from(externalCalls).where(eq(externalCalls.service, "ktimatologio"));
       expect(calls.length).toBeGreaterThanOrEqual(4);
+    });
+  });
+
+  it("a larger core window (coreSizeM) requests more cadastre tiles around the same place", async () => {
+    await withRollback(async (tx) => {
+      const small = await ensureImagery(tx, memoryArchive(), await syntheticTransport({ blankCadastre: false }), PLACE, { db: tx });
+      const large = await ensureImagery(tx, memoryArchive(), await syntheticTransport({ blankCadastre: false }), { ...PLACE, coreSizeM: 3_000 }, { db: tx });
+      expect(large.core.length).toBeGreaterThan(small.core.length);
+      const span = (set: typeof large) => Math.max(...set.core.map((t) => t.bbox[3])) - Math.min(...set.core.map((t) => t.bbox[1]));
+      expect(span(large)).toBeGreaterThanOrEqual(3_000 / METRES_PER_DEGREE - 1e-9);
     });
   });
 

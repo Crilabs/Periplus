@@ -182,7 +182,7 @@ export async function renderAndStore(
     return { bbox: tile.bbox, bytes };
   };
 
-  const coreBox = coreWindow(place.lon, place.lat, cfg.window);
+  const coreBox = coreWindow(place.lon, place.lat, cfg.window, place.coreSizeM);
   const wideBox = wideWindow(place.lon, place.lat, cfg.window);
   const dem = (await Promise.all(imagery.dem.map(read))).map((t) => t.bytes);
   const [wide, core] = await Promise.all([sampleDem(dem, wideBox, cfg.window.wideGridM), sampleDem(dem, coreBox, cfg.window.coreGridM)]);
