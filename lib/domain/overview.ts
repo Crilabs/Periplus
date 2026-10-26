@@ -1,9 +1,9 @@
-import { desc, eq, gt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { deliveries, reviewTasks, subdivisions, workerHeartbeats, type DeliveryStatus, type ReviewKind } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { budgetStatus, type BudgetStatus } from "@/lib/domain/costs";
-import { OFFERED_REVIEW_KINDS } from "@/lib/domain/review";
+import { OFFERED_REVIEW_KINDS, offeredKindSql } from "@/lib/domain/review";
 import { jobsFromDb, type JobsView } from "@/lib/domain/queues-view";
 import { listRuns, type RunView } from "@/lib/domain/runs";
 
@@ -45,7 +45,7 @@ export async function overview(db: Db, now: Date = new Date()): Promise<Overview
   const reviewRows = await db
     .select({ kind: reviewTasks.kind, n: sql<number>`count(*)::int` })
     .from(reviewTasks)
-    .where(eq(reviewTasks.status, "open"))
+    .where(and(eq(reviewTasks.status, "open"), offeredKindSql))
     .groupBy(reviewTasks.kind);
   const jobs = await jobsFromDb(db, now);
   const budgets = await budgetStatus(db, undefined, now);

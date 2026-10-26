@@ -15,7 +15,6 @@ import {
 } from "@/lib/db/schema";
 import { tileBbox, tileIdFor, type Bbox } from "@/lib/domain/tiles";
 import { mapDataRequest, mapLayer } from "@/lib/domain/map-data";
-import { replaceHighlightSelections } from "@/lib/domain/highlights/selections";
 import { insertTestSubdivision } from "@/test/text";
 import { withRollback } from "@/test/db";
 
@@ -183,10 +182,6 @@ describe("mapLayer", () => {
           status: "candidate",
           name: "Candidate Cove",
           publicId: null,
-          // without a profile (profile-view.test.ts covers places with one)
-          hasProfile: false,
-          profileConfidence: null,
-          profileClass: null,
         },
       });
       expect(fc.features.find((f) => f.properties!.id === rejected)!.properties!.status).toBe("rejected");
@@ -215,20 +210,17 @@ describe("mapLayer", () => {
       expect((await mapLayer(tx, "geo-objects", BOX, { types: [] })).features).toEqual([]);
     }));
 
-  it("the geo-object layer shows only POIs a place selected as highlights, all of them with allPois", () =>
+  it("the geo-object layer shows POIs only with allPois", () =>
     withRollback(async (tx) => {
-      const selected = await insertObject(tx, { type: "poi", geom: point(LON + 0.01, LAT + 0.03), names: [["Gewählt", "el", true]] });
-      const other = await insertObject(tx, { type: "poi", geom: point(LON + 0.02, LAT + 0.03), names: [["Kandidat", "el", true]] });
+      const first = await insertObject(tx, { type: "poi", geom: point(LON + 0.01, LAT + 0.03), names: [["Erster", "el", true]] });
+      const other = await insertObject(tx, { type: "poi", geom: point(LON + 0.02, LAT + 0.03), names: [["Zweiter", "el", true]] });
       const bay = await insertObject(tx, { type: "bay", geom: point(LON + 0.03, LAT + 0.03) });
       const placeObject = await insertObject(tx, { type: "bay", geom: point(LON, LAT + 0.03) });
       await tx.insert(places).values({ geoObjectId: placeObject, kind: "anchorage", status: "confirmed", position: sql`${geomFromGeoJson(point(LON, LAT + 0.03))}` });
-      await replaceHighlightSelections(tx, placeObject, 1, { beach: { ids: [selected], level: "none" } }, {
-        beach: { ids: [selected], level: "none", candidates: [{ geoObjectId: selected, importance: 3, score: 1, distanceKm: 1 }], textNames: [] },
-      });
       const featureIds = async (opts: Parameters<typeof mapLayer>[3]) => ids(await mapLayer(tx, "geo-objects", BOX, opts));
-      expect(await featureIds({ types: ["poi"] })).toEqual([selected]);
-      expect(await featureIds({ types: ["poi"], allPois: true })).toEqual([selected, other].sort());
-      expect(await featureIds({ types: ["poi", "bay"] })).toEqual([selected, bay, placeObject].sort());
+      expect(await featureIds({ types: ["poi"] })).toEqual([]);
+      expect(await featureIds({ types: ["poi"], allPois: true })).toEqual([first, other].sort());
+      expect(await featureIds({ types: ["poi", "bay"] })).toEqual([bay, placeObject].sort());
       // the limit counts only what is shown
       const limited = await mapLayer(tx, "geo-objects", BOX, { types: ["poi"], limit: 1 });
       expect(limited.truncated).toBe(false);

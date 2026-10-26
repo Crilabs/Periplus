@@ -4,9 +4,10 @@ import { reviewKindEnum, reviewTasks, type ReviewKind } from "@/lib/db/schema";
 
 /**
  * Kinds no longer created or decided: `coast_tile_without_area` (spec 14: every coast tile has a subdivision, a
- * sailing area is found, not assigned). The enum value stays for old tasks; migration 0057 dismissed the open ones.
+ * sailing area is found, not assigned) and, since the old text pipeline is gone (N6), `source_approval`, `conflict` and
+ * `uncertain_change`. The enum values stay until the schema migration; old tasks are neither listed nor counted.
  */
-export const RETIRED_REVIEW_KINDS: readonly ReviewKind[] = ["coast_tile_without_area"];
+export const RETIRED_REVIEW_KINDS: readonly ReviewKind[] = ["coast_tile_without_area", "source_approval", "conflict", "uncertain_change"];
 
 /** The kinds the review lists, filters, counts and queue offer. */
 export const OFFERED_REVIEW_KINDS: readonly ReviewKind[] = reviewKindEnum.enumValues.filter((k) => !RETIRED_REVIEW_KINDS.includes(k));

@@ -1,18 +1,16 @@
 import { sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import { z } from "zod";
-import { getConfig, getConsolidationConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
 import { geoObjects, geoObjectTypeEnum, places, restrictedAreas, subdivisions, tiles, type GeoObjectType, type RestrictedKind } from "@/lib/db/schema";
-import { confidenceClass } from "@/lib/domain/rules/weights";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { isAnchoringBan, type AnchoringBanConfig } from "@/lib/domain/geometry/restrictions";
 import type { Bbox } from "@/lib/domain/tiles";
 import { BBOX_TOLERANCE, MAP_FEATURE_LIMIT, MAX_BBOX_DEGREES, NOT_IN_GEO_OBJECT_LAYER } from "@/lib/domain/map-limits";
 import { areaSubdivisionsSql } from "@/lib/domain/areas/view";
 import { validAt } from "@/lib/db/valid-at";
-import { isSelectedSql } from "@/lib/domain/highlights/selections";
 
 export const MAP_LAYERS = ["subdivisions", "seas", "areas", "tiles", "geo-objects", "places", "restricted-areas"] as const;
 
@@ -136,7 +134,7 @@ function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjec
         from ${geoObjects}
         where ${geoObjects.type}::text <> all(${`{${NOT_IN_GEO_OBJECT_LAYER.join(",")}}`}::text[]) and ${validAt(geoObjects)} and ${intersects(geoObjects.geom, bbox)}
           ${types ? sql`and ${geoObjects.type}::text = any(${`{${types.join(",")}}`}::text[])` : sql``}
-          ${allPois ? sql`` : sql`and (${geoObjects.type} <> 'poi' or ${isSelectedSql(sql`${geoObjects.id}`)})`}
+          ${allPois ? sql`` : sql`and ${geoObjects.type} <> 'poi'`}
         order by ${geoObjects.id}
         limit ${limit}`;
     case "places":
@@ -147,12 +145,7 @@ function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjec
             'kind', ${places.kind},
             'status', ${places.status},
             'name', ${displayNameSql(places.geoObjectId)},
-            'publicId', ${places.publicId},
-            'profile', (
-              select json_build_object('confidence', pr.confidence, 'rulesVersion', pr.rules_version)
-              from profiles pr where pr.geo_object_id = ${places.geoObjectId}
-              order by pr.version desc limit 1
-            )
+            'publicId', ${places.publicId}
           ) as properties
         from ${places}
         where ${validAt(places)} and ${intersects(places.position, bbox)}
@@ -187,12 +180,9 @@ function configuredAnchoringBan(): AnchoringBanConfig {
  * `truncated` when more intersect it (UI-12: the map says so instead of silently dropping objects).
  * `geo-objects` leaves out areas and seas (own layers), countries and admin regions (shown as `subdivisions`) and, with
  * `types`, keeps only those types. `areas` carry `subdivisionKeys` (comma-joined keys of the subdivisions their scope tiles belong to) and
- * `polygonOrigin`; POIs only when a place selected them as highlights (`isSelectedSql`) unless `allPois`; with `subdivision` (a key) only the areas touching it. `subdivisions` and `seas` are simplified outlines; tiles carry their `subdivisionKey`. Tile counts: `placeCount` all valid places of the tile,
+ * `polygonOrigin`; POIs only with `allPois`; with `subdivision` (a key) only the areas touching it. `subdivisions` and `seas` are simplified outlines; tiles carry their `subdivisionKey`. Tile counts: `placeCount` all valid places of the tile,
  * `candidateCount` those still `candidate`. `restricted-areas` carry `anchoringBan` by `opts.anchoringBan`
- * (default: the configured rule). `places` carry `profileConfidence` and `profileClass` of the newest profile version
- * of their geo object (its class by that version's rules), both null without a profile (or without a profile
- * confidence); `hasProfile` tells those two apart.
- */
+ * (default: the configured rule). */
 export async function mapLayer(
   db: Db,
   layer: MapLayer,
@@ -208,16 +198,6 @@ export async function mapLayer(
     for (const r of rows) {
       const p = r.properties as { kind: RestrictedKind; sourceRef: string | null };
       r.properties.anchoringBan = isAnchoringBan(p.kind, p.sourceRef, ban);
-    }
-  }
-  if (layer === "places") {
-    for (const r of rows) {
-      const profile = r.properties.profile as { confidence: number | null; rulesVersion: string } | null;
-      delete r.properties.profile;
-      const confidence = profile?.confidence ?? null;
-      r.properties.hasProfile = profile !== null;
-      r.properties.profileConfidence = confidence;
-      r.properties.profileClass = confidence === null ? null : confidenceClass(confidence, getConsolidationConfig(profile!.rulesVersion));
     }
   }
   const features: Feature[] = rows.map((r) => ({ type: "Feature", geometry: r.geometry, properties: r.properties }));

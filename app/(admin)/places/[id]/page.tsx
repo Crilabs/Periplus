@@ -7,16 +7,12 @@ import type { PlaceStatus } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { deliveryArchive } from "@/lib/domain/delivery/archive";
 import { placeDelivery } from "@/lib/domain/delivery/view";
-import { geoFacts, geoMentions } from "@/lib/domain/geo-facts";
 import { mergeCandidates, type MergeCandidate } from "@/lib/domain/place-merge";
 import { ADMIN_PLACE_STATUSES } from "@/lib/domain/place-status";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
-import { placeHighlightsView } from "@/lib/domain/highlights/view";
 import { berthStateView, researchView } from "@/lib/domain/research/view";
 import { placeImageView } from "@/lib/domain/images/view";
-import { timelineView } from "@/lib/domain/profile-timeline";
-import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../../_components/dialog";
 import {
@@ -28,7 +24,6 @@ import {
   runScopeError,
   WEBSITE_ORIGIN_LABELS,
 } from "../../_components/labels";
-import { MentionsPanel } from "../../_components/mentions-panel";
 import { MiniMap } from "../../_components/mini-map";
 import {
   Badge,
@@ -45,17 +40,12 @@ import {
   type Tone,
 } from "../../_components/ui";
 import { mergePlaceAction } from "./actions";
-import { AutoDecisionLine } from "./auto-decision";
 import { DeliveryTab } from "./delivery-tab";
-import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
-import { HighlightsPanel } from "./highlights-panel";
 import { ImageTab } from "./image-tab";
-import { ProfileTab } from "./profile-tab";
 import { ResearchTab } from "./research-tab";
 import { StateTab } from "./state-tab";
 import { StatusActions } from "./status-actions";
-import { TimelineTab } from "./timeline-tab";
 
 /** The tab title: the place's name (UI-15). */
 export async function generateMetadata({ params }: PageProps<"/places/[id]">): Promise<Metadata> {
@@ -77,25 +67,17 @@ const PLACE_STATUS_TONES: Record<PlaceStatus, Tone> = {
 const TABS = {
   overview: "Übersicht",
   geometry: "Geometrie",
-  facts: "Facts",
   research: "Recherche",
   state: "Stand",
-  profile: "Profil",
   image: "Bilder",
-  timeline: "Zeitachse",
-  sources: "Quellen",
   delivery: "Lieferung",
 } as const;
 type Tab = keyof typeof TABS;
 const tabParam = z.enum(Object.keys(TABS) as [Tab, ...Tab[]]).catch("overview");
-const runsParam = z.enum(["active", "all"]).catch("active");
-const versionParam = z.coerce.number().int().min(1).optional().catch(undefined);
-const textParam = z.string().max(200).optional().catch(undefined);
 const uuidParam = z.uuid().optional().catch(undefined);
 const positionParam = z.enum(["moved", "moved_no_run", "too_far"]).optional().catch(undefined);
 const statusParam = z.enum(ADMIN_PLACE_STATUSES).optional().catch(undefined);
 const imageNoticeParam = z.enum(["removed", "changed"]).optional().catch(undefined);
-const mentionPageParam = z.coerce.number().int().min(1).catch(1);
 
 type Detail = NonNullable<Awaited<ReturnType<typeof placeDetail>>>;
 
@@ -105,16 +87,12 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
   if (!id.success) notFound();
   const sp = await searchParams;
   const tab = tabParam.parse(sp.tab);
-  const runs = runsParam.parse(sp.runs);
   const error = runScopeError(sp.error);
   const db = getDb();
   const detail = await placeDetail(db, id.data);
   if (!detail) notFound();
   const { place: p, openReviewTask: task } = detail;
   const geometry = tab === "geometry" ? await placeGeometry(db, p.id) : null;
-  const facts = tab === "facts" ? await geoFacts(db, p.geoObjectId, { runs }) : null;
-  const highlights = tab === "overview" ? await placeHighlightsView(db, p.geoObjectId) : [];
-  const attr = textParam.parse(sp.attr);
   const active = !p.validTo && !p.mergedIntoId;
   const mergeable = active && p.status === "confirmed";
   const candidates = mergeable ? await mergeCandidates(db, p.id) : [];
@@ -146,7 +124,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
             )}
           </>
         }
-        description="Ein Ankerplatz mit seinem Profil, den Facts, aus denen es entsteht, und der berechneten Geometrie."
+        description="Ein Ankerplatz mit seinem Stand, der Recherche, der berechneten Geometrie und den Bildern."
         actions={
           active && (
             <>
@@ -158,7 +136,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
       />
       {merged && (
         <Notice tone="ok" className="mb-6" title="Orte zusammengelegt">
-          Der Ort <TextLink href={`/places/${merged}`}>{merged.slice(0, 8)}</TextLink> ist jetzt Teil dieses Orts; sein Profil
+          Der Ort <TextLink href={`/places/${merged}`}>{merged.slice(0, 8)}</TextLink> ist jetzt Teil dieses Orts; sein Stand
           bleibt als Verlauf. Liefert das nächste Paket seines Reviers auch diesen Ort, führt es ihn als „zusammengelegt in“
           diesen Ort; sonst (anderes Revier, oder dieser Ort wird nicht geliefert) meldet es ihn als entfernt.
         </Notice>
@@ -190,11 +168,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
           current: t === tab,
         }))}
       />
-      {tab === "profile" ? (
-        <ProfileTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.version)} attr={attr} notice={textParam.parse(sp.notice)} runId={uuidParam.parse(sp.run)} confirm={textParam.parse(sp.confirm)} />
-      ) : tab === "timeline" ? (
-        <TimelineTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.v)} asOf={textParam.parse(sp.asOf)} attr={attr} confirm={textParam.parse(sp.confirm)} />
-      ) : tab === "image" ? (
+      {tab === "image" ? (
         <ImageTabView placeId={p.id} geoObjectId={p.geoObjectId} editable={active} notice={imageNoticeParam.parse(sp.imageNotice)} zoomRefused={sp.imageError === "zoom"} />
       ) : tab === "research" ? (
         <ResearchTab view={await researchView(db, p.id)} />
@@ -202,10 +176,6 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
         <StateTab view={await berthStateView(db, p.id)} />
       ) : tab === "delivery" ? (
         <DeliveryTabView placeId={p.id} />
-      ) : tab === "sources" ? (
-        <SourcesTabView placeId={p.id} geoObjectId={p.geoObjectId} page={mentionPageParam.parse(sp.mp)} />
-      ) : facts ? (
-        <FactsTab groups={facts} runs={runs} runsHref={(r) => `/places/${p.id}?tab=facts${r === "all" ? "&runs=all" : ""}`} />
       ) : geometry ? (
         <GeometryTab
           placeId={p.id}
@@ -215,21 +185,9 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
           positionNotice={positionStatus ? { status: positionStatus, runId: uuidParam.parse(sp.run) } : undefined}
         />
       ) : (
-        <Overview detail={detail} highlights={highlights} />
+        <Overview detail={detail} />
       )}
     </>
-  );
-}
-
-/** „Quellen“: the documents that mention the place's object (spec 09), as on the geo page. */
-async function SourcesTabView({ placeId, geoObjectId, page }: { placeId: string; geoObjectId: string; page: number }) {
-  const mentions = await geoMentions(getDb(), geoObjectId, page);
-  return (
-    <MentionsPanel
-      mentions={mentions}
-      page={page}
-      pageHref={(mp) => `/places/${placeId}?tab=sources${mp > 1 ? `&mp=${mp}` : ""}`}
-    />
   );
 }
 
@@ -247,7 +205,7 @@ function MergeDialog({ placeId, candidates }: { placeId: string; candidates: Mer
     <Dialog
       trigger="Mit Ort zusammenlegen"
       title="Mit Ort zusammenlegen"
-      description="Für eine Dublette: dieser Ort wird verworfen und Teil des gewählten Orts. Namen, Kennungen und Facts gehen auf ihn über, sein Profil wird danach neu berechnet. Lässt sich nicht zurücknehmen."
+      description="Für eine Dublette: dieser Ort wird verworfen und Teil des gewählten Orts. Namen und Kennungen gehen auf ihn über. Lässt sich nicht zurücknehmen."
       wide
     >
       {candidates.length === 0 ? (
@@ -287,48 +245,7 @@ function MergeDialog({ placeId, candidates }: { placeId: string; candidates: Mer
   );
 }
 
-type ProfileTabProps = { placeId: string; geoObjectId: string; version: number | undefined; attr: string | undefined };
-
-async function ProfileTabView({ placeId, geoObjectId, version, attr, notice, runId, confirm }: ProfileTabProps & { notice?: string; runId?: string; confirm?: string }) {
-  const db = getDb();
-  const view = await profileView(db, geoObjectId, { version });
-  const selected = view && attr ? await profileAttributeFacts(db, geoObjectId, view.snapshot.version, attr) : null;
-  const base = `/places/${placeId}?tab=profile${version !== undefined ? `&version=${version}` : ""}`;
-  return (
-    <ProfileTab
-      view={view}
-      selected={selected}
-      notice={notice}
-      noticeRunId={runId}
-      links={{ geoObjectId, placeId, confirm, attrHref: (a) => (a ? `${base}&attr=${encodeURIComponent(a)}` : base) }}
-    />
-  );
-}
-
-async function TimelineTabView({ placeId, geoObjectId, version, asOf, attr, confirm }: ProfileTabProps & { asOf: string | undefined; confirm?: string }) {
-  const db = getDb();
-  const t = await timelineView(db, geoObjectId, { version, asOf });
-  const selected = t.view && attr ? await profileAttributeFacts(db, geoObjectId, t.view.snapshot.version, attr) : null;
-  const baseHref = `/places/${placeId}?tab=timeline`;
-  const shown = t.asOf ? `&asOf=${t.asOf}` : t.view ? `&v=${t.view.snapshot.version}` : "";
-  return (
-    <TimelineTab
-      placeId={placeId}
-      baseHref={baseHref}
-      versions={t.versions}
-      events={t.events}
-      view={t.view}
-      selected={selected}
-      diff={t.diff}
-      diffNotes={t.diffNotes}
-      asOf={t.asOf}
-      asOfInvalid={t.asOfInvalid}
-      links={{ geoObjectId, placeId, confirm, attrHref: (a) => `${baseHref}${shown}${a ? `&attr=${encodeURIComponent(a)}` : ""}` }}
-    />
-  );
-}
-
-function Overview({ detail, highlights }: { detail: Detail; highlights: Awaited<ReturnType<typeof placeHighlightsView>> }) {
+function Overview({ detail }: { detail: Detail }) {
   const p = detail.place;
   const point: GeoJSON.FeatureCollection = {
     type: "FeatureCollection",
@@ -346,15 +263,10 @@ function Overview({ detail, highlights }: { detail: Detail; highlights: Awaited<
             columns={1}
             items={[
               { label: "Statusgrund", value: p.statusReason ?? "–", hint: "Warum der Ort diesen Status hat" },
-              detail.autoDecision && {
-                label: "Automatische Entscheidung",
-                value: <AutoDecisionLine decision={detail.autoDecision} />,
-                hint: "Das System hat den Ort nach Beleg entschieden; die Belege sind verlinkt",
-              },
               {
                 label: "Festmachplatz",
                 value: detail.berthable === null ? "unbekannt" : detail.berthable ? "ja" : "nein",
-                hint: "Ob man hier festmachen kann: Wert des Profils, sonst aus Ortsart und Status abgeleitet",
+                hint: "Ob man hier festmachen kann: aus Ortsart und Status abgeleitet",
               },
               {
                 label: "Website",
@@ -389,7 +301,7 @@ function Overview({ detail, highlights }: { detail: Detail; highlights: Awaited<
                     {p.geoObjectId.slice(0, 8)}
                   </TextLink>
                 ),
-                hint: "Namen, Erwähnungen und Hierarchie des Orts",
+                hint: "Namen und Hierarchie des Orts",
               },
               p.mergedIntoId && {
                 label: "Zusammengeführt in",
@@ -403,8 +315,6 @@ function Overview({ detail, highlights }: { detail: Detail; highlights: Awaited<
             ]}
           />
         </Panel>
-
-        <HighlightsPanel categories={highlights} />
 
         <Panel title="Statusverlauf" flush>
           {detail.statusHistory.length === 0 ? (

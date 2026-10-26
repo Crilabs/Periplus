@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
-import { isStopName } from "../affixes";
-import { linkTextOnly, ngrams } from "../ngrams";
-import { nameHints } from "../unmatched";
+import { isStopName } from "../name-match/affixes";
+import { linkTextOnly, ngrams } from "../name-match/ngrams";
 
 const affixes = getConfig().nameAffixes;
 const cfg = getConfig().mentions;
@@ -69,39 +68,5 @@ describe("affixes", () => {
     for (const s of ["marina", "port", "agios", "kap", "bucht", "12"]) expect(isStopName(s, cfg, affixes)).toBe(true);
     for (const s of ["ab", "1 2", "bucht von"]) expect(isStopName(s, cfg, affixes)).toBe(true);
     for (const s of ["kolona", "vathy", "poros 2"]) expect(isStopName(s, cfg, affixes)).toBe(false);
-  });
-});
-
-describe("nameHints", () => {
-  it("name hints find Kolona Bay, Ormos Vathy and όρμο Βαθύ", () => {
-    expect(nameHints("We anchored in Kolona Bay, later at Ormos Vathy.", affixes).map((h) => [h.display, h.hint])).toEqual([
-      ["Kolona", "bay"],
-      ["Vathy", "bay"],
-    ]);
-    expect(nameHints("Αγκυροβολήσαμε στον όρμο Βαθύ.", affixes)[0]).toMatchObject({ display: "Βαθύ", nameNormalized: "βαθυ" });
-  });
-
-  it("takes up to three capitalised words in the original spelling, with offsets", () => {
-    const text = "Danach in die Bucht von Agios Nikolaos Ost Nord, dann Vathy Cove.";
-    const hints = nameHints(text, affixes);
-    expect(hints.map((h) => [h.display, h.hint])).toEqual([
-      ["Agios Nikolaos Ost", "bay"],
-      ["Vathy", "bay"],
-    ]);
-    for (const h of hints) expect(text.slice(h.start, h.end)).toBe(h.display);
-  });
-
-  it("needs a capitalised word and never crosses a sentence end", () => {
-    expect(nameHints("the bay was calm. Kolona bay", affixes).map((h) => h.display)).toEqual(["Kolona"]);
-    expect(nameHints("Wir lagen in der Bucht. Vathy war voll.", affixes)).toEqual([]);
-  });
-
-  it("a sentence-initial word or a German common noun never joins a suffix name", () => {
-    const stop = cfg.nameHintStopWords;
-    expect(nameHints("In Kolona Bay lagen wir.", affixes, stop).map((h) => h.display)).toEqual(["Kolona"]);
-    expect(nameHints("Wir fuhren im Süden Kolona Bay an.", affixes, stop).map((h) => h.display)).toEqual(["Kolona"]);
-    expect(nameHints("The Vathy Cove was full.", affixes, stop).map((h) => h.display)).toEqual(["Vathy"]);
-    // without stop words the old behaviour stays
-    expect(nameHints("In Kolona Bay lagen wir.", affixes).map((h) => h.display)).toEqual(["In Kolona"]);
   });
 });

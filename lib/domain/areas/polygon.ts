@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { GeoObjectType } from "@/lib/db/schema";
-import { jsonTexts } from "@/lib/domain/mentions/scope";
+import { jsonTexts } from "@/lib/db/json-texts";
 import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 
 /*

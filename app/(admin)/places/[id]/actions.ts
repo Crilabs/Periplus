@@ -8,12 +8,11 @@ import { getDb } from "@/lib/db/client";
 import { placeStatusEnum } from "@/lib/db/schema";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
 import { setPlacePosition } from "@/lib/domain/geometry/place-position";
-import { placeBelongsTo, placeGeoObjectId } from "@/lib/domain/geo-view";
+import { placeGeoObjectId } from "@/lib/domain/geo-view";
 import { endPlaceImage, PlaceImageNotRemovable } from "@/lib/domain/images/remove";
 import { placeImageView } from "@/lib/domain/images/view";
 import { mergePlaceInto, PlaceMergeNotAllowed } from "@/lib/domain/place-merge";
 import { ADMIN_PLACE_STATUSES, PlaceStatusNotAllowed, setPlaceStatusByAdmin } from "@/lib/domain/place-status";
-import { ProfileChanged, removeProfileEntry } from "@/lib/domain/profile-entry-removal";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 import { getBoss } from "@/lib/jobs/boss";
 import { nextViewSlot, startImageRun } from "@/lib/pipeline/images-run";
@@ -108,43 +107,6 @@ export async function setPlaceStatusAction(input: FormData | z.input<typeof plac
     target += `?statusError=${e.reason}`;
   }
   redirect(target);
-}
-const removeEntrySchema = z.object({
-  geoObjectId: z.uuid(),
-  attribute: z.string().min(1).max(64),
-  entryKey: z.string().min(1).max(2000),
-  version: z.coerce.number().int().min(1),
-  /** The place page the form is on (it must belong to the geo object); without it the geo page. */
-  placeId: z.uuid().optional(),
-});
-
-/**
- * „Eintrag entfernen“ on a safety-list entry of the profile tab (place page) or the profile section (geo page): writes
- * the review fact (`removeProfileEntry`) and returns to the attribute with a notice: `entry_removed`, `changed` when the profile has a newer
- * version than the one shown, `error` when the entry cannot be removed.
- */
-export async function removeProfileEntryAction(input: FormData | z.input<typeof removeEntrySchema>): Promise<void> {
-  const admin = await requireAdmin();
-  const raw = fields(input) as Record<string, unknown>;
-  const f = removeEntrySchema.parse({ ...raw, placeId: raw.placeId || undefined });
-  const db = getDb();
-  if (f.placeId && !(await placeBelongsTo(db, f.placeId, f.geoObjectId))) {
-    throw new Error(`Place ${f.placeId} does not belong to geo object ${f.geoObjectId}`);
-  }
-  const back = f.placeId
-    ? `/places/${f.placeId}?tab=profile&attr=${encodeURIComponent(f.attribute)}`
-    : `/geo/${f.geoObjectId}?attr=${encodeURIComponent(f.attribute)}`;
-  let notice: string;
-  try {
-    await removeProfileEntry(db, { geoObjectId: f.geoObjectId, attribute: f.attribute, entryKey: f.entryKey, version: f.version, decidedBy: admin.email });
-    notice = "entry_removed";
-    revalidatePath(f.placeId ? `/places/${f.placeId}` : `/geo/${f.geoObjectId}`);
-  } catch (e) {
-    if (e instanceof ProfileChanged) notice = "changed";
-    else if (e instanceof DecisionNotAllowed) notice = "error";
-    else throw e;
-  }
-  redirect(`${back}&notice=${notice}`);
 }
 
 const mergeSchema = z.object({

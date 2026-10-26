@@ -6,7 +6,6 @@ import { externalCalls, geoNames, geoObjects, places, reviewTasks, runs, tileGeo
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { currentPlaceWebsite } from "@/lib/domain/places/websites";
 import { derivedBerthable } from "@/lib/domain/rules/berthable";
-import { latestProfile } from "@/lib/domain/timeline";
 import { validAt } from "@/lib/db/valid-at";
 
 /** Runs shown on a tile page. */
@@ -101,22 +100,10 @@ export type PlaceDetail = {
   openReviewTask: { id: string; kind: ReviewKind } | null;
   /** Status changes newest first: `status` is the status the place had until `changedAt`. */
   statusHistory: Array<{ status: PlaceStatus; changedAt: Date }>;
-  /** The newest automatic decision of the system (spec 17): status decisions before kind switches; null for none. */
-  autoDecision: AutoDecision | null;
   /** The place's current website (newest `place_websites` row); null for none. */
   website: { url: string; origin: PlaceWebsiteOrigin; bound: boolean } | null;
-  /** The `berthable` the delivery gives the place: the profile's value, else the derivation of spec 17; null = unknown. */
+  /** The `berthable` the delivery gives the place: the derivation of spec 17; null = unknown. */
   berthable: boolean | null;
-};
-
-export type AutoDecision = {
-  /** `candidate`: the research rule withdrew a confirmation (plan N2). */
-  action: "confirm" | "no_anchoring" | "candidate" | "set_kind";
-  rule: string | null;
-  decidedAt: Date;
-  factIds: string[];
-  documentIds: string[];
-  routeStopIds: string[];
 };
 
 /** True for a valid tile with this id. */
@@ -277,37 +264,6 @@ export async function geoObjectDetail(db: Db, id: string): Promise<GeoObjectDeta
   return { object, names, ancestors, children, place, tileIds: tileRows.map((r) => r.tileId) };
 }
 
-const STATUS_ACTIONS = new Set(["confirm", "reject", "no_anchoring"]);
-
-/**
- * The automatic decision the place page shows (final review 6): the newest status decision of the place (a
- * `place_status` decision by anyone, or a `confirm` / `reject` / `no_anchoring` decision of a review task on the place)
- * when `system` made it; else the newest kind decision (a `place_kind` decision, or a review `confirm`, which sets the
- * kind) when `system` made it; null otherwise. An admin's later decision hides the system's.
- */
-async function latestAutoDecision(db: Db, placeId: string): Promise<AutoDecision | null> {
-  const { rows } = await db.execute<{ subject_type: string; decision: Record<string, unknown>; decided_by: string; decided_at: Date | string }>(sql`
-    select t.subject_type, d.decision, d.decided_by, d.decided_at
-    from review_tasks t join review_decisions d on d.task_id = t.id
-    where t.kind = 'place_candidate' and t.subject_type in ('place', 'place_status', 'place_kind') and t.subject_id = ${placeId}
-    order by d.decided_at desc, d.id desc
-  `);
-  const action = (r: (typeof rows)[number]) => r.decision.action;
-  const status = rows.find((r) => r.subject_type === "place_status" || (r.subject_type === "place" && STATUS_ACTIONS.has(action(r) as string)));
-  const kind = rows.find((r) => r.subject_type === "place_kind" || (r.subject_type === "place" && action(r) === "confirm"));
-  const row = status?.decided_by === "system" ? status : kind?.decided_by === "system" ? kind : null;
-  if (!row) return null;
-  const ids = (key: string) => (Array.isArray(row.decision[key]) ? (row.decision[key] as string[]) : []);
-  return {
-    action: row.decision.action as AutoDecision["action"],
-    rule: typeof row.decision.rule === "string" ? row.decision.rule : null,
-    decidedAt: new Date(row.decided_at),
-    factIds: ids("factIds"),
-    documentIds: ids("documentIds"),
-    routeStopIds: ids("routeStopIds"),
-  };
-}
-
 /** A place with its open review task and status history; null when unknown. */
 export async function placeDetail(db: Db, id: string): Promise<PlaceDetail | null> {
   const [place] = await db
@@ -347,14 +303,12 @@ export async function placeDetail(db: Db, id: string): Promise<PlaceDetail | nul
     order by changed_at desc, history_id desc`);
   const [lon, lat] = (place.position as Point).coordinates;
   const website = await currentPlaceWebsite(db, id);
-  const berthableFact = ((await latestProfile(db, place.geoObjectId))?.attributes as Record<string, unknown> | undefined)?.["berthable"];
   return {
     place: { ...place, position: { lon: lon!, lat: lat! } },
     openReviewTask: task,
     statusHistory: history.rows.map((r) => ({ status: r.status, changedAt: new Date(r.changed_at) })),
-    autoDecision: await latestAutoDecision(db, id),
     website: website ? { url: website.url, origin: website.origin, bound: website.bound } : null,
-    berthable: typeof berthableFact === "boolean" ? berthableFact : derivedBerthable(place.kind, place.status),
+    berthable: derivedBerthable(place.kind, place.status),
   };
 }
 
@@ -362,12 +316,6 @@ export async function placeDetail(db: Db, id: string): Promise<PlaceDetail | nul
 export async function placeGeoObjectId(db: Db, placeId: string): Promise<string | null> {
   const [place] = await db.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, placeId));
   return place?.geoObjectId ?? null;
-}
-
-/** Whether the place `placeId` belongs to the geo object `geoObjectId` (a form posted from a place page names both). */
-export async function placeBelongsTo(db: Db, placeId: string, geoObjectId: string): Promise<boolean> {
-  const [place] = await db.select({ id: places.id }).from(places).where(and(eq(places.id, placeId), eq(places.geoObjectId, geoObjectId)));
-  return place !== undefined;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
