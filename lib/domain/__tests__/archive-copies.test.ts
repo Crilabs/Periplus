@@ -1,58 +1,42 @@
 import { describe, expect, it } from "vitest";
-import type { Db } from "@/lib/db/client";
-import { textShingles } from "@/lib/db/schema";
-import { findArchiveCopies } from "@/lib/domain/documents/archive-copies";
-import { shingleHashes } from "@/lib/domain/documents/shingles";
-import { newId } from "@/lib/domain/ids";
-import { withRollback } from "@/test/db";
+import { copyIndex } from "@/lib/domain/documents/archive-copies";
 
 /*
- * The 15-word copy check reads the whole archive by design (ruling M5-P20): the word sequences are salted with a fresh
- * uuid, so no other test's chunk can hold them.
+ * The 15-word copy check of the delivery (spec 08, anti-goal 3): held against the package's source documents, the
+ * markdown its places' facts and landing hints were extracted from (N6).
  */
 
-/** `n` words no other text has: a uuid salt in letters, then a running letter suffix. */
-function saltedWords(n: number): string[] {
-  const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
-  return Array.from({ length: n }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}${"qrstuvwxyz"[Math.floor(i / 26)]}`);
+/** `n` distinct words: letters only, a running suffix. */
+function words(n: number): string[] {
+  return Array.from({ length: n }, (_, i) => `wort${"abcdefghijklmnopqrstuvwxyz"[i % 26]}${"qrstuvwxyz"[Math.floor(i / 26)]}`);
 }
 
-/** The archive holding `text`: its shingles under a chunk id of its own. */
-async function archived(tx: Db, text: string): Promise<void> {
-  const hashes = shingleHashes(text, 15);
-  await tx.insert(textShingles).values(hashes.map((shingleHash) => ({ shingleHash, chunkId: newId() })));
-}
+describe("copyIndex", () => {
+  it("exactly 15 copied words are a hit (spec 08: a 15-word shingle)", () => {
+    const w = words(30);
+    expect(copyIndex([w.join(" ")]).longestRun(`Die Bucht ist schön. ${w.slice(5, 20).join(" ")} Mehr nicht.`)).toBe(15);
+  });
 
-describe("findArchiveCopies", () => {
-  it("exactly 15 copied words are a hit (spec 08: a 15-word shingle)", () =>
-    withRollback(async (tx) => {
-      const words = saltedWords(30);
-      await archived(tx, words.join(" "));
-      expect(await findArchiveCopies(tx, `Die Bucht ist schön. ${words.slice(5, 20).join(" ")} Mehr nicht.`)).toMatchObject({ hits: 1, longestRun: 15 });
-    }));
+  it("a 16-word sequence copied from a source is found, a 14-word one is not, a short text never", () => {
+    const w = words(30);
+    const index = copyIndex([w.join(" ")]);
+    expect(index.longestRun(`Die Bucht ist schön. ${w.slice(5, 21).join(" ")} Mehr nicht.`)).toBe(16);
+    expect(index.longestRun(`Die Bucht ist schön. ${w.slice(5, 19).join(" ")} Mehr nicht.`)).toBe(0);
+    expect(index.longestRun("zu kurz")).toBe(0);
+  });
 
-  it("a 16-word sequence copied from a chunk is found, a 14-word one is not", () =>
-    withRollback(async (tx) => {
-      const words = saltedWords(30);
-      await archived(tx, words.join(" "));
+  it("longestRun is the longest copied run of consecutive words, not the sum of separate copies", () => {
+    const w = words(60);
+    const index = copyIndex([w.join(" ")]);
+    expect(index.longestRun(`${w.slice(0, 15).join(" ")} und dann ${w.slice(30, 45).join(" ")}`)).toBe(15);
+    expect(index.longestRun(`Erst ${w.slice(40, 58).join(" ")} dann`)).toBe(18);
+  });
 
-      const sixteen = `Die Bucht ist schön. ${words.slice(5, 21).join(" ")} Mehr nicht.`;
-      expect(await findArchiveCopies(tx, sixteen)).toMatchObject({ hits: 2, longestRun: 16 });
-      const fourteen = `Die Bucht ist schön. ${words.slice(5, 19).join(" ")} Mehr nicht.`;
-      const r = await findArchiveCopies(tx, fourteen);
-      expect(r.hits).toBe(0);
-      expect(r.shingles).toBeGreaterThan(0);
-      expect(r.longestRun).toBe(0);
-      expect(await findArchiveCopies(tx, "zu kurz")).toEqual({ shingles: 0, hits: 0, longestRun: 0 });
-    }));
-
-  it("longestRun is the longest copied run of consecutive words, not the sum of separate copies", () =>
-    withRollback(async (tx) => {
-      const words = saltedWords(60);
-      await archived(tx, words.join(" "));
-      // two separate 15-word copies (2 hits) are no 16-word copy; an 18-word copy is
-      const twice = `${words.slice(0, 15).join(" ")} und dann ${words.slice(30, 45).join(" ")}`;
-      expect(await findArchiveCopies(tx, twice)).toMatchObject({ hits: 2, longestRun: 15 });
-      expect(await findArchiveCopies(tx, `Erst ${words.slice(40, 58).join(" ")} dann`)).toMatchObject({ hits: 4, longestRun: 18 });
-    }));
+  it("case and accents do not hide a copy; a text from no source document is no copy", () => {
+    const w = words(30);
+    const index = copyIndex(["andere Quelle ohne Bezug", w.join(" ")]);
+    expect(index.longestRun(w.slice(0, 16).join(" ").toUpperCase())).toBe(16);
+    expect(copyIndex(["andere Quelle ohne Bezug"]).longestRun(w.slice(0, 16).join(" "))).toBe(0);
+    expect(copyIndex([]).longestRun(w.join(" "))).toBe(0);
+  });
 });

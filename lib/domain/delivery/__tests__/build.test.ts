@@ -4,12 +4,12 @@ import type { Archive } from "@/lib/adapters/s3";
 import type { Manifest, SpotsFile } from "@/contract";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { berthStates, deliveredObjects, deliveries, places, textShingles } from "@/lib/db/schema";
+import { berthStates, deliveredObjects, deliveries, places } from "@/lib/db/schema";
 import type { BerthStateFact } from "@/lib/db/schema/research-state";
-import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
 import { startWhileLocked, testDb, withRollback } from "@/test/db";
 import { seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
+import { factSourcePage } from "@/test/research-signals";
 import { deleteTestObjects, memoryArchive, testArchive } from "@/test/s3";
 import { SubdivisionNotFound } from "../load";
 import { buildDelivery, previousPackage } from "../build";
@@ -439,7 +439,8 @@ describe("buildDelivery", () => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       const words = saltedWords(30);
-      await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: newId() })));
+      // the page the spot's facts were extracted from holds the words: a delivered text must not copy them
+      await factSourcePage(tx, getConfig(), archive, { placeId: f.places.A.placeId, objectId: f.places.A.geoObjectId }, words.join(" "));
       const copied = `Die Bucht: ${words.slice(2, 18).join(" ")}.`;
       await rewriteStateA(tx, f, { facts: await factsOfA(tx, f, copied), updatedAt: new Date("2026-10-20T08:00:00Z") });
 

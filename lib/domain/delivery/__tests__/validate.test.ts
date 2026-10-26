@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { textShingles } from "@/lib/db/schema";
 import { imageAttributionTexts } from "@/lib/domain/images/delivery-gate";
-import { findArchiveCopies } from "@/lib/domain/documents/archive-copies";
-import { shingleHashes } from "@/lib/domain/documents/shingles";
+import { copyIndex } from "@/lib/domain/documents/archive-copies";
 import { newId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";
 import {
@@ -317,10 +315,12 @@ describe("validatePackage", () => {
     const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
     return Array.from({ length: n }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}é`);
   }
+  /** The source documents of the package per test transaction (the build loads them with `loadCopyIndex`). */
+  const sourcesOf = new WeakMap<Db, string[]>();
   async function archived(tx: Db, text: string): Promise<void> {
-    await tx.insert(textShingles).values(shingleHashes(text, 15).map((shingleHash) => ({ shingleHash, chunkId: newId() })));
+    sourcesOf.set(tx, [...(sourcesOf.get(tx) ?? []), text]);
   }
-  const fromArchive = (tx: Db) => async (text: string) => (await findArchiveCopies(tx, text)).longestRun;
+  const fromArchive = (tx: Db) => async (text: string) => copyIndex(sourcesOf.get(tx) ?? []).longestRun(text);
 
   it("a fact statement copying 16 words of an archived document, with different accents, is a violation (review focus)", async () => {
     await withRollback(async (tx) => {

@@ -901,7 +901,7 @@ export const deliverySchema = z.strictObject({
     maxCopiedWords: z.number().int().min(COPY_SHINGLE_WORDS),
     /** Top-level domains by which a bare domain name in a text is recognised (`foreign_content`): `example.com` blocks the package. */
     domainTlds: z.array(z.string().regex(/^[a-z]{2,24}$/)).min(1),
-    /** Copy checks (`text_shingles` queries) running at once. */
+    /** Copy checks running at once (pure lookups against the package's copy index). */
     copyCheckConcurrency: positiveInt,
     /** Below this `score.confidence` the summary must carry `lowConfidenceNote`. */
     lowConfidence: confidence,

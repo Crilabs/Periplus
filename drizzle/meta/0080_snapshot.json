@@ -4211,55 +4211,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.text_shingles": {
-      "name": "text_shingles",
-      "schema": "",
-      "columns": {
-        "shingle_hash": {
-          "name": "shingle_hash",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "chunk_id": {
-          "name": "chunk_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "text_shingles_chunk_id_idx": {
-          "name": "text_shingles_chunk_id_idx",
-          "columns": [
-            {
-              "expression": "chunk_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "text_shingles_shingle_hash_chunk_id_pk": {
-          "name": "text_shingles_shingle_hash_chunk_id_pk",
-          "columns": [
-            "shingle_hash",
-            "chunk_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.ai_batch_items": {
       "name": "ai_batch_items",
       "schema": "",

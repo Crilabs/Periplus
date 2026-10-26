@@ -39,7 +39,7 @@ export type ValidationReport = { ok: boolean; checks: Array<{ name: CheckName; o
 export type ValidationDeps = {
   /** The subdivision's previous valid package: its data version. */
   previous: { dataVersion: number } | null;
-  /** The longest run of words of the text copied from the archive (`findArchiveCopies(db, text).longestRun`). */
+  /** The longest run of words of the text copied from a source document of the package (`loadCopyIndex(...).longestRun`). */
   findCopies: (text: string) => Promise<number>;
   cfg: DeliveryConfig;
   /**

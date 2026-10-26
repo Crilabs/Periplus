@@ -162,20 +162,6 @@ export const documentVersions = pgTable(
   (t) => [uniqueIndex("document_versions_document_id_content_hash_unique").on(t.documentId, t.contentHash)],
 );
 
-/**
- * Working state: shingle hashes of the archive's texts for the delivery copy check (`findArchiveCopies`, ruling
- * M5-P20). `chunk_id` is the id of a chunk of the old pipeline; the chunks table is gone (N6), so it is a plain column.
- * Nothing writes new rows since the chunks went; the check only knows the texts archived before.
- */
-export const textShingles = pgTable(
-  "text_shingles",
-  {
-    shingleHash: bigint("shingle_hash", { mode: "bigint" }).notNull(),
-    chunkId: uuid("chunk_id").notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.shingleHash, t.chunkId] }), index("text_shingles_chunk_id_idx").on(t.chunkId)],
-);
-
 export const serpLevelEnum = pgEnum("serp_level", ["area", "tile", "place", "place_website", "research"]);
 export type SerpLevel = (typeof serpLevelEnum.enumValues)[number];
 
