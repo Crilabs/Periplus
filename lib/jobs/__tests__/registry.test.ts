@@ -24,7 +24,7 @@ describe("job registries", () => {
   });
 
   it("no removed stage of the old source-driven pipeline is registered", () => {
-    const removed = ["mentions.", "discovery.", "extraction.", "consolidation.", "fetch.source", "fetch.url", "embed.chunks", "sources.wikivoyage", "compare.converters", "classify.document_version", "revisit.freeze", "places.website.freeze"];
+    const removed = ["mentions.", "discovery.", "extraction.", "consolidation.", "fetch.source", "fetch.url", "embed.chunks", "sources.wikivoyage", "compare.converters", "classify.document_version", "revisit.freeze", "places.website.freeze", "quality."];
     for (const name of [...QUEUES, ...Object.keys(STAGES)]) expect(removed.some((r) => name.startsWith(r)), name).toBe(false);
   });
 });
