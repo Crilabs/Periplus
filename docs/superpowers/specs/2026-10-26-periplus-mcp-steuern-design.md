@@ -73,7 +73,7 @@ Annotation `destructiveHint: true`, `readOnlyHint: false`.
 `confirm` schreibt das Werkzeug nichts und liefert: Umfang (Zahl der Kacheln, Plätze bzw. Kandidaten im Bereich), die
 Dienste mit Kosten, die Schätzung und den heutigen Budgetstand je Dienst. Schätzung: Kosten je Einheit aus dem letzten
 beendeten Lauf derselben Art (`external_calls` dieses Laufs geteilt durch seinen Umfang) mal Umfang; ohne solchen Lauf
-„keine Grundlage“ statt einer Zahl. Damit das geht, schreibt jeder Start ab jetzt seinen Umfang in `runs.params`
+„keine Grundlage“ statt einer Zahl. Damit das geht, schreibt jeder Start über MCP ab jetzt seinen Umfang in `runs.params`
 (`scopeSize: { unit, count }`); ältere Läufe haben keinen und ergeben „keine Grundlage“. „Dieselbe Art“ heißt dieselbe
 Stufenliste (`stages`) und dieselbe Einheit. Einheiten: Recherche = Plätze, Bilder = Plätze ohne aktuelles Bild,
 Lieferung = Landesteil, Aufbau und Einzelstufen = Kacheln. `subdivision_build` (Gazetteer, Datensätze, Seed,
