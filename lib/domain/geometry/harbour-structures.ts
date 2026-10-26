@@ -8,7 +8,8 @@ export type HarbourStructure = { osmId: string; manMade: string; geometry: LineS
 /**
  * Replaces the harbour structures of one import box in one transaction, as `replaceRoads`: structures intersecting
  * `box` that the import no longer contains are deleted, every imported one is inserted or updated by `osm_id`. Every
- * `osmId` must be unique. A subdivision has a few hundred, so one statement carries them all.
+ * `osmId` must be unique; an invalid OSM polygon is stored made valid (`ST_MakeValid`), so buffering it never fails.
+ * A subdivision has a few thousand, so one statement carries them all.
  */
 export async function replaceHarbourStructures(
   db: Db,
@@ -33,7 +34,7 @@ export async function replaceHarbourStructures(
     const { rows: stored } = await tx.execute<{ id: string }>(sql`
       insert into harbour_structures (id, osm_id, man_made, geom, dataset_version)
       select gen_random_uuid(), f->>'osm_id', f->>'man_made',
-             ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON(f->'geometry'), 4326)), ${input.datasetVersion}
+             ST_MakeValid(ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON(f->'geometry'), 4326))), ${input.datasetVersion}
       from jsonb_array_elements(${rows}::jsonb) f
       on conflict (osm_id) do update
         set man_made = excluded.man_made, geom = excluded.geom, dataset_version = excluded.dataset_version
