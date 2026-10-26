@@ -17,6 +17,15 @@ export function bufferBbox([west, south, east, north]: Bbox, km: number): Bbox {
   return [west - dLon, south - dLat, east + dLon, north + dLat];
 }
 
+/** The overlap of two boxes, or null when they only touch or lie apart. */
+export function clipBbox([w1, s1, e1, n1]: Bbox, [w2, s2, e2, n2]: Bbox): Bbox | null {
+  const west = Math.max(w1, w2);
+  const south = Math.max(s1, s2);
+  const east = Math.min(e1, e2);
+  const north = Math.min(n1, n2);
+  return west < east && south < north ? [west, south, east, north] : null;
+}
+
 function envelope([west, south, east, north]: Bbox) {
   return sql`ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)`;
 }

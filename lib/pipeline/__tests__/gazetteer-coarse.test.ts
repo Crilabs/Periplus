@@ -5,6 +5,7 @@ import { fixtureTransport } from "@/lib/adapters/http-fixtures";
 import type { Db } from "@/lib/db/client";
 import { subdivisions } from "@/lib/db/schema";
 import { getConfig } from "@/lib/config";
+import { clipBbox, mediterraneanBbox } from "@/lib/domain/gazetteer/land";
 import { newPublicId } from "@/lib/domain/ids";
 import { applySubdivisionPlan } from "@/lib/domain/subdivisions/store";
 import { gazetteerCoarseStage, gazetteerSeasStage } from "@/lib/jobs/handlers/subdivisions";
@@ -105,7 +106,9 @@ describe("importCoarseFeatures", () => {
   };
   const adaptive = { ...overpass, retries: 0, blockDeg: 0.5, minBlockDeg: 0.25 };
   const isIslands = (ql: string) => ql.includes("island");
-  const boxed = (ql: string) => ql.includes("(area.c)(");
+  // every query carries a box: the country's part of the Mediterranean box (for MT its own box) or a block of it
+  const whole = (ql: string) => ql.includes("(area.c)(35.7,14,36.2,15.1)");
+  const boxed = (ql: string) => ql.includes("(area.c)(") && !whole(ql);
 
   it("asks each kind once for the whole country when all answer (B15)", async () => {
     const { bodies, transport } = splitting(() => false);
@@ -114,7 +117,47 @@ describe("importCoarseFeatures", () => {
       const result = await importCoarseFeatures(tx, "MT", { transport, overpass: adaptive });
       expect(bodies).toHaveLength(3);
       expect(bodies.some(boxed)).toBe(false);
+      expect(bodies.every(whole)).toBe(true);
       expect(result).toMatchObject({ splits: 0, blocksSkipped: 0, skippedLarge: 0 });
+    });
+  }, 120_000);
+
+  /** A synthetic country polygon of `country` (no osm_id, see `setUpMalta`). */
+  const insertCountry = (tx: Db, country: string, [w, s, e, n]: [number, number, number, number]) =>
+    tx.execute(sql`INSERT INTO geo_objects (id, type, origin, admin_level, tags, geom)
+      VALUES (gen_random_uuid(), 'country', 'osm', 2, ${JSON.stringify({ country, "ISO3166-1": country })}::jsonb,
+              ST_Multi(ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)))`);
+
+  // GB is configured for Akrotiri and Dhekelia (an `extra` relation), but its country object is the United Kingdom:
+  // the whole-country queries fetched every British island and town, and the land check over its box (no land
+  // polygons there) failed the job three times (N7 check).
+  it("asks nothing for a country whose box lies outside the Mediterranean box (GB) and does not fail the land check", async () => {
+    const { bodies, transport } = splitting(() => false);
+    await withRollback(async (tx) => {
+      await insertCountry(tx, "GB", [-6, 50, 2, 59]);
+      const result = await importCoarseFeatures(tx, "GB", { transport, overpass: adaptive });
+      expect(bodies).toHaveLength(0);
+      expect(result).toEqual({ islands: 0, archipelagos: 0, gulfs: 0, towns: 0, splits: 0, blocksSkipped: 0, skippedLarge: 0 });
+    });
+  }, 120_000);
+
+  // Spain's whole-country queries fetched the Canaries, the Galician rías and the Bay of Biscay (225,000 points), and
+  // the nearest-land rule hung the Atlantic gulfs on Mediterranean subdivisions (N7 check).
+  it("asks only the Mediterranean part of a country whose box reaches beyond it (ES), per block after a failure", async () => {
+    const bbox: [number, number, number, number] = [-10, 35, 4, 44];
+    const [w, s, e, n] = clipBbox(bbox, mediterraneanBbox(getConfig().gazetteer.landBufferKm))!;
+    expect(w).toBeGreaterThan(bbox[0]);
+    const top = `(area.c)(${s},${w},${n},${e})`;
+    const { bodies, transport } = splitting((ql) => isIslands(ql) && ql.includes(top));
+    await withRollback(async (tx) => {
+      await insertCountry(tx, "ES", bbox);
+      const result = await importCoarseFeatures(tx, "ES", { transport, overpass: { ...adaptive, blockDeg: 4 } });
+      expect(bodies.filter((ql) => !isIslands(ql)).every((ql) => ql.includes(top))).toBe(true);
+      // the failed islands query is asked again per 4-degree block of the clipped box, none west of it
+      const blocks = bodies.filter((ql) => isIslands(ql) && !ql.includes(top));
+      expect(blocks.length).toBeGreaterThan(1);
+      expect(blocks.every((ql) => !ql.includes(`,${bbox[0]},`))).toBe(true);
+      expect(result).toMatchObject({ splits: 1 });
     });
   }, 120_000);
 
@@ -178,7 +221,9 @@ describe("importCoarseFeatures", () => {
   }, 120_000);
 
   it("asks no block that misses the country polygon", async () => {
-    const { bodies, transport } = splitting((ql) => isIslands(ql) && !boxed(ql));
+    // the top query of the widened country carries the widened box
+    const top = "(area.c)(35.7,14,36.2,17)";
+    const { bodies, transport } = splitting((ql) => isIslands(ql) && ql.includes(top));
     await withRollback(async (tx) => {
       await setUpMalta(tx);
       // A far-off second piece widens the box to 14.0–17.0: of its six 0.5-degree blocks, 15.5–16.0 and 16.0–16.5 lie
@@ -187,7 +232,7 @@ describe("importCoarseFeatures", () => {
         VALUES (gen_random_uuid(), 'country', 'osm', 2, '{"country":"MT","ISO3166-1":"MT"}'::jsonb,
                 ST_Multi(ST_GeomFromText('POLYGON((16.8 35.8, 17.0 35.8, 17.0 35.9, 16.8 35.9, 16.8 35.8))', 4326)))`);
       const result = await importCoarseFeatures(tx, "MT", { transport, overpass: adaptive });
-      expect(bodies.filter(boxed)).toHaveLength(4);
+      expect(bodies.filter((ql) => isIslands(ql) && !ql.includes(top))).toHaveLength(4);
       expect(bodies.some((b) => b.includes(",15.5,") || b.includes(",16,"))).toBe(false);
       expect(result).toMatchObject({ splits: 1, blocksSkipped: 2 });
     });

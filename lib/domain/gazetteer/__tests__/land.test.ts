@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { asGeoJson } from "@/lib/db/geometry";
 import { landPolygons } from "@/lib/db/schema";
 import { getConfig } from "@/lib/config";
-import { bufferBbox, featureIntersectsBbox, importLandPolygons, landCoverage, mediterraneanBbox } from "@/lib/domain/gazetteer/land";
+import { bufferBbox, clipBbox, featureIntersectsBbox, importLandPolygons, landCoverage, mediterraneanBbox } from "@/lib/domain/gazetteer/land";
 import { TILE_SIZE, type Bbox } from "@/lib/domain/tiles";
 import { withRollback } from "@/test/db";
 
@@ -196,5 +196,14 @@ describe("mediterraneanBbox", () => {
     expect(box[1]).toBeLessThanOrEqual(s);
     expect(box[2]).toBeGreaterThanOrEqual(e);
     expect(box[3]).toBeGreaterThanOrEqual(n);
+  });
+});
+
+describe("clipBbox", () => {
+  it("returns the overlap of two boxes and null when they only touch or lie apart", () => {
+    expect(clipBbox([-10, 35, 4, 44], [-6.75, 29.5, 37, 46.5])).toEqual([-6.75, 35, 4, 44]);
+    expect(clipBbox([14, 35.7, 15.1, 36.2], [-6.75, 29.5, 37, 46.5])).toEqual([14, 35.7, 15.1, 36.2]);
+    expect(clipBbox([-6, 50, 2, 59], [-6.75, 29.5, 37, 46.5])).toBeNull();
+    expect(clipBbox([0, 46.5, 2, 50], [-6.75, 29.5, 37, 46.5])).toBeNull();
   });
 });

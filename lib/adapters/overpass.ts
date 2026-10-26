@@ -152,7 +152,7 @@ export type CoarseKind = (typeof COARSE_KINDS)[number];
 
 /**
  * The coarse feature query of one kind for one country (B15): inside the country's `admin_level=2` area and, when
- * given, `box` (a block of a part that failed for the whole country), with full geometry. `islands`: islands and
+ * given, `box` (the country's part of the Mediterranean box, or a block of it after a failure), with full geometry. `islands`: islands and
  * archipelagos; `bays`: named bays (the caller keeps the large ones as gulfs); `towns`: the nodes of `cfg.placeTypes`.
  * One query for all kinds of a large country overloaded the public Overpass server (HTTP 502). `country` is an
  * ISO 3166-1 alpha-2 code.

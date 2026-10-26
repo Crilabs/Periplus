@@ -19,7 +19,7 @@ import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { builtGeometry, upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
 import type { Bbox } from "@/lib/domain/tiles";
-import { countryBlocks, landCoverage, quadrants } from "@/lib/domain/gazetteer/land";
+import { clipBbox, countryBlocks, landCoverage, mediterraneanBbox, quadrants } from "@/lib/domain/gazetteer/land";
 import { elementGeometry, keptTags, nearCoast, relationPoints } from "./osm";
 
 export const COARSE_STAGE = "gazetteer.coarse";
@@ -292,7 +292,8 @@ async function nonAreaCountryTypes(db: Db, country: string): Promise<string[]> {
  * duplicated. `deps.overpass` replaces the configured Overpass settings (tests lift the rate limit). Subdivision, sea
  * and parent are assigned later, by the stage `subdivisions.assign` after `subdivisions.build` (`assignCoarse`): here
  * neither the subdivisions nor, in a first run, the seas exist yet (B3, B14). Overpass is asked once per kind for
- * the whole country; only a kind that keeps failing is asked again per block (B15). Throws when the country object
+ * the country's part of the Mediterranean box (`mediterraneanBbox`; a country outside it is skipped); only a kind that
+ * keeps failing is asked again per block (B15). Throws when the country object
  * is no (multi)polygon. Returns the stored counts, the number of splits, of blocks skipped outside the country and of
  * relations skipped above `overpass.maxRelationPoints` (`skippedLarge`).
  */
@@ -310,6 +311,16 @@ export async function importCoarseFeatures(
   if (nonArea.length > 0) {
     throw new Error(`gazetteer.coarse ${country}: the country object is no polygon (${nonArea.join(", ")}) – its blocks would be degenerate; repair the boundary import first`);
   }
+  // Only the Mediterranean part of the country is asked (N7 check): queries over the whole country fetched the Atlantic
+  // coast of France and Spain, the Canaries and all of the United Kingdom (of which only Akrotiri and Dhekelia lie
+  // here), and the nearest-land rule then hung Atlantic gulfs and archipelagos on Mediterranean subdivisions; the box of
+  // GB holds no land polygon at all, so its towns step failed. The box is the land import's (`mediterraneanBbox`):
+  // outside it no subdivision has land, so nothing outside can belong to one.
+  const medBox = clipBbox(bbox, mediterraneanBbox(gazetteer.landBufferKm));
+  if (!medBox) {
+    getLog().info({ country, bbox }, "country outside the Mediterranean box: no coarse features asked");
+    return { islands: 0, archipelagos: 0, gulfs: 0, towns: 0, splits: 0, blocksSkipped: 0, skippedLarge: 0 };
+  }
   const ctx = { db, runId: deps.runId, stage: COARSE_STAGE };
   const date = (deps.now ?? new Date()).toISOString().slice(0, 10);
   const overpassCfg = deps.overpass ?? gazetteer.overpass;
@@ -325,10 +336,10 @@ export async function importCoarseFeatures(
     return kept;
   };
   /**
-   * Asks `part` for `box` (none = the whole country). A part that still fails retryably after its retries is asked
-   * again per block: the whole country per `blockDeg` block, a block per quadrant, down to `minBlockDeg` (B15).
+   * Asks `part` for `box` (`top`: the country's Mediterranean box). A part that still fails retryably after its retries
+   * is asked again per block: the top box per `blockDeg` block, a block per quadrant, down to `minBlockDeg` (B15).
    */
-  const ask = async (kind: (typeof COARSE_KINDS)[number], part: string, box: Bbox | undefined): Promise<void> => {
+  const ask = async (kind: (typeof COARSE_KINDS)[number], part: string, box: Bbox, top: boolean): Promise<void> => {
     const ql = buildCoarseKindQuery(country, cfg, kind, timeout, box);
     try {
       const answer = await overpassQueryRetrying(deps.transport, ql, ctx, overpassCfg, { part: `${country} ${part}`, sleep: deps.sleep });
@@ -337,22 +348,22 @@ export async function importCoarseFeatures(
       return;
     } catch (error) {
       if (!(error instanceof RetryableHttpError)) throw error;
-      if (box && Math.max(box[2] - box[0], box[3] - box[1]) / 2 < overpassCfg.minBlockDeg) {
+      if (!top && Math.max(box[2] - box[0], box[3] - box[1]) / 2 < overpassCfg.minBlockDeg) {
         throw new RetryableHttpError(
           `gazetteer.coarse ${country}: overpass part ${part} failed and is not split below overpass.minBlockDeg (${overpassCfg.minBlockDeg}°): ${error.message}`,
           error.status,
           { cause: error },
         );
       }
-      const children = await inCountry(part, box ? quadrants(box) : countryBlocks(bbox, overpassCfg.blockDeg));
+      const children = await inCountry(part, top ? countryBlocks(box, overpassCfg.blockDeg) : quadrants(box));
       stats.splits++;
-      getLog().warn({ country, part, level: box ? "quadrant" : "block", children: children.length }, "split failed coarse Overpass part");
-      for (const { index, box: child } of children) await ask(kind, box ? `${part}.q${index}` : `${part}#b${index}`, child);
+      getLog().warn({ country, part, level: top ? "block" : "quadrant", children: children.length }, "split failed coarse Overpass part");
+      for (const { index, box: child } of children) await ask(kind, top ? `${part}#b${index}` : `${part}.q${index}`, child, false);
     }
   };
-  // Each kind for the whole country first; an element on a block border comes in several answers, the loop below
-  // stores each osm_id once.
-  for (const kind of COARSE_KINDS) await ask(kind, kind, undefined);
+  // Each kind for the country's Mediterranean box first; an element on a block border comes in several answers, the
+  // loop below stores each osm_id once.
+  for (const kind of COARSE_KINDS) await ask(kind, kind, medBox, true);
 
   const result = await db.transaction(async (tx) => {
     const counts = { islands: 0, archipelagos: 0, gulfs: 0, towns: 0 };
@@ -385,7 +396,7 @@ export async function importCoarseFeatures(
         if ((await areaKm2(tx, geometry)) < cfg.gulfMinAreaKm2) continue;
         key = "gulfs";
       } else if (type === "settlement" && tags.place && cfg.placeTypes.includes(tags.place)) {
-        landChecked ??= (await landCoverage(tx, bbox)) > 0;
+        landChecked ??= (await landCoverage(tx, medBox)) > 0;
         if (!landChecked) throw new Error(`land polygons missing for ${country} – run npm run import:land-polygons`);
         if (!(await nearCoast(tx, geometry, cfg.coastDistanceKm * 1000))) continue;
         key = "towns";
