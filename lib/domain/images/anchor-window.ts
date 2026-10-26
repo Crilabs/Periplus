@@ -3,7 +3,7 @@ import type { ImagesConfig, ZoomLevel } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { fitCamera } from "./fit";
 import type { PlaceImageInput } from "./place-input";
-import { predictShares } from "./prediction";
+import { predictSharesBatch } from "./prediction";
 import { projectGround } from "./projection";
 import { camerasOverWater, candidateAzimuths, floorHeightFor, landDistances, type LonLat, type RenderCamera } from "./render-plan";
 
@@ -95,7 +95,7 @@ export type AnchorWindowPlan = { camera: RenderCamera; score: number; water: num
  * (`coastDirection` from the centre). For each window radius the window point lies that far before the shore point
  * towards the centre (the centre itself when it is nearer); each tilt × focus centre × azimuth within `spanDeg` of the
  * direct view onto the shore point is fitted (`fitCamera`, no lower than the height of `floorZoom` at that tilt, `floorHeightFor`), kept when its
- * ground point is over water, and scored (`predictShares`, highlights in frame). The lowest score wins; ties keep the
+ * ground point is over water, and scored (`predictSharesBatch`: one query for all, highlights in frame). The lowest score wins; ties keep the
  * earlier candidate, so the plan is deterministic. `null` without land near the centre or without any camera.
  */
 export async function planAnchorWindow(
@@ -130,10 +130,11 @@ export async function planAnchorWindow(
     }
   }
   const overWater = await camerasOverWater(db, candidates.map((c) => c.camera));
+  const kept = candidates.filter((_, i) => overWater[i]);
+  const shares = await predictSharesBatch(db, kept.map((c) => c.camera), cfg);
   let best: AnchorWindowPlan | null = null;
-  for (const [i, { camera, off }] of candidates.entries()) {
-    if (!overWater[i]) continue;
-    const { water } = await predictShares(db, camera, cfg);
+  for (const [i, { camera, off }] of kept.entries()) {
+    const { water } = shares[i]!;
     const score =
       Math.abs(water - w.targetWater) * w.score.water +
       off / w.score.offDegPerPoint +

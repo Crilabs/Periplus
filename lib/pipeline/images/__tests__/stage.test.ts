@@ -13,7 +13,7 @@ import { STAGES } from "@/lib/jobs/stages";
 import { startBerthFollowupRun } from "@/lib/pipeline/berth-followup-run";
 import { generatePlaceImage, keyDone, type ImageView } from "@/lib/pipeline/images/generate";
 import { setImageModelFactory } from "@/lib/pipeline/images/model";
-import { imageJobs, imageTargets, nextViewSlot } from "@/lib/pipeline/images/stage";
+import { imageJobs, imageTargets, mayHaveKeyDone, nextViewSlot } from "@/lib/pipeline/images/stage";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
 import { startImageRun } from "@/lib/pipeline/images-run";
 import { chromiumInstalled } from "@/test/browser";
@@ -305,6 +305,19 @@ describe("imageTargets", () => {
       const task = await generateTitle(tx, spot.objectId, run.id);
       await decide(tx, task.id, "no_image");
       expect(await imageTargets(tx, run)).toEqual([]);
+    });
+  });
+
+  it("mayHaveKeyDone: only an image or task under the current model and prompt version can carry the key", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const spot = await insertSpot(tx, sd.id);
+      const run = await subdivisionRun(tx, sd.key);
+      expect(await mayHaveKeyDone(tx, spot.objectId, "title", cfg)).toBe(false);
+      await generateTitle(tx, spot.objectId, run.id);
+      expect(await mayHaveKeyDone(tx, spot.objectId, "title", cfg)).toBe(true);
+      expect(await mayHaveKeyDone(tx, spot.objectId, "title", withPromptVersion(3))).toBe(false);
+      expect(await mayHaveKeyDone(tx, spot.objectId, "view-2", cfg)).toBe(false);
     });
   });
 

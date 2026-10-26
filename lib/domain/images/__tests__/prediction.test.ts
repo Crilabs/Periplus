@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import { withRollback } from "@/test/db";
 import { insertLandBox, SEA } from "@/test/fixtures/land-box";
-import { predictShares } from "../prediction";
+import { predictShares, predictSharesBatch } from "../prediction";
 import type { RenderCamera } from "../render-plan";
 
 const cfg = getConfig().images;
@@ -36,5 +36,17 @@ describe("predictShares", () => {
       expect(s.land).toBeGreaterThan(0.3);
       expect(s.water).toBeGreaterThan(0.3);
       expect(s.water + s.land + s.sky).toBeCloseTo(1, 9);
+    }));
+});
+
+describe("predictSharesBatch", () => {
+  it("gives the same shares as one prediction per camera, in camera order", () =>
+    withRollback(async (tx) => {
+      await insertLandBox(tx, SEA, -5_000, 100, 5_000, 5_000);
+      await insertLandBox(tx, SEA, 300, -5_000, 5_000, 5_000);
+      const cameras = [camera, { ...camera, azimuthDeg: 200 }, { ...camera, heightM: 500, distanceM: 500 / Math.tan((40 * Math.PI) / 180) }, { ...camera, azimuthDeg: 90 }];
+      const batch = await predictSharesBatch(tx, cameras, cfg);
+      expect(batch).toEqual(await Promise.all(cameras.map((c) => predictShares(tx, c, cfg))));
+      expect(await predictSharesBatch(tx, [], cfg)).toEqual([]);
     }));
 });
