@@ -2,6 +2,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpCaller } from "@/lib/domain/mcp-tokens";
 import { SqlRejected } from "@/lib/domain/mcp/read";
 import { createLogger } from "@/lib/logger";
+import { RUN_SCOPE_LABELS } from "@/lib/pipeline/run-scope-labels";
+import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 
 /*
  * Results and the per-call log line of the MCP tools (after SITA `src/server/mcp/result.ts`): JSON text results, tool
@@ -33,18 +35,35 @@ const jsonReplacer = (_key: string, value: unknown) => (typeof value === "bigint
 
 const log = () => createLogger("mcp");
 
-/** Runs a tool body: its result as JSON text; a `ToolError` or refused SQL as tool error; anything else as "Interner Fehler". */
-export async function runTool(tool: string, caller: McpCaller, body: () => Promise<unknown>): Promise<CallToolResult> {
+/** Fields of a tool's result for its log line (a run id, a task count), never its arguments. */
+export type LogFields = Record<string, string | number | null>;
+
+/**
+ * Runs a tool body: its result as JSON text; a `ToolError` or refused SQL as tool error; a run that did not start
+ * (`RunScopeNotReady`) as tool error with the admin page's German text; anything else as "Interner Fehler". `logOf`
+ * adds fields of the result to the log line (write tools: the run id).
+ */
+export async function runTool<T>(
+  tool: string,
+  caller: McpCaller,
+  body: () => Promise<T>,
+  logOf?: (value: T) => LogFields,
+): Promise<CallToolResult> {
   const started = Date.now();
-  const line = (outcome: string) => log().info({ tool, userId: caller.userId, tokenId: caller.tokenId, outcome, ms: Date.now() - started }, "mcp tool");
+  const line = (outcome: string, extra: LogFields = {}) =>
+    log().info({ tool, userId: caller.userId, tokenId: caller.tokenId, outcome, ms: Date.now() - started, ...extra }, "mcp tool");
   try {
     const value = await body();
-    line("ok");
+    line("ok", logOf?.(value));
     return textResult(value);
   } catch (e) {
     if (e instanceof ToolError || e instanceof SqlRejected) {
       line("fachfehler");
       return errorResult(e.message);
+    }
+    if (e instanceof RunScopeNotReady) {
+      line("fachfehler", { reason: e.reason });
+      return errorResult(RUN_SCOPE_LABELS[e.reason]);
     }
     log().error({ tool, userId: caller.userId, tokenId: caller.tokenId, err: e instanceof Error ? e.name : "unknown", ms: Date.now() - started }, "mcp tool failed");
     return errorResult("Interner Fehler. Details stehen im Server-Log.");

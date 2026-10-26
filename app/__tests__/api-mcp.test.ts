@@ -4,6 +4,10 @@ import { users } from "@/lib/db/schema";
 import { createApiClient } from "@/lib/domain/api-clients";
 import { createMcpToken, revokeMcpToken } from "@/lib/domain/mcp-tokens";
 import { newId } from "@/lib/domain/ids";
+import { syncConflictTasks } from "@/lib/domain/research/gate-conflicts";
+import { insertPlace } from "@/test/consolidation";
+import { insertTestSubdivision, insertTestTile } from "@/test/text";
+import { tileIdFor } from "@/lib/domain/tiles";
 import { decideAccess } from "@/lib/security/access";
 import { testDb, withRollback } from "@/test/db";
 import { testReaderDb } from "@/test/reader";
@@ -72,14 +76,16 @@ describe("/api/mcp", () => {
       expect(body.result.instructions).toContain("nicht_vertrauenswuerdig");
     }));
 
-  it("lists the read tools, each read only", () =>
+  it("lists the read tools, each read only; every other tool writes", () =>
     withRollback(async (tx) => {
       db = tx;
       const { token } = await tokenFor(tx);
       const res = await rpc(token, "tools/list");
-      const body = (await res.json()) as { result: { tools: Array<{ name: string; annotations?: { readOnlyHint?: boolean } }> } };
-      expect(body.result.tools.map((t) => t.name).sort()).toEqual(["costs", "deliveries", "overview", "place", "runs", "sql"]);
-      expect(body.result.tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
+      const body = (await res.json()) as { result: { tools: Array<{ name: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }> } };
+      const read = body.result.tools.filter((t) => t.annotations?.readOnlyHint === true);
+      expect(read.map((t) => t.name).sort()).toEqual(["checks", "costs", "deliveries", "gate_input", "overview", "place", "review_tasks", "runs", "sql", "version", "worker"]);
+      const others = body.result.tools.filter((t) => t.annotations?.readOnlyHint !== true);
+      expect(others.every((t) => t.annotations?.readOnlyHint === false && t.annotations?.destructiveHint === true)).toBe(true);
     }));
 
   it("tools answer: overview, an unknown place as tool error, sql through the reader role", () =>
@@ -92,11 +98,69 @@ describe("/api/mcp", () => {
 
       expect(await callTool(token, "place", { ref: `no such place ${newId()}` })).toEqual({ isError: true, text: "Kein Platz gefunden" });
 
+      const version = await callTool(token, "version");
+      expect(version.isError).toBe(false);
+      expect(JSON.parse(version.text)).toMatchObject({ gitSha: null, configHash: expect.stringMatching(/^[0-9a-f]{16}$/), gateConfigHash: expect.stringMatching(/^[0-9a-f]{16}$/) });
+
       const sqlOk = JSON.parse((await callTool(token, "sql", { query: "select current_user as u" })).text);
       expect(sqlOk.nicht_vertrauenswuerdig.rows).toEqual([["periplus_mcp_reader"]]);
       const denied = await callTool(token, "sql", { query: "select * from users" });
       expect(denied.isError).toBe(true);
       expect(denied.text).toMatch(/permission denied/);
+    }));
+
+  it("the test run tools: gate_input, checks, review_tasks, worker", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token } = await tokenFor(tx);
+      const key = `XT-${newId().slice(0, 8)}`;
+      const sub = await insertTestSubdivision(tx, key, [20.9, 35.0, 21.5, 35.5]);
+      await insertTestTile(tx, tileIdFor(21.0, 35.2), null, sub.id);
+
+      const gate = await callTool(token, "gate_input", { subdivision: key });
+      expect(gate.isError).toBe(false);
+      const gateBody = JSON.parse(gate.text);
+      expect(gateBody.version).toMatchObject({ gitSha: null, gateConfigHash: expect.stringMatching(/^[0-9a-f]{16}$/) });
+      expect(gateBody.input.nicht_vertrauenswuerdig.tiles.all).toEqual(expect.any(Array));
+      expect(gate.text).not.toContain('"spots"');
+      expect(await callTool(token, "gate_input", { subdivision: "XT-none" })).toEqual({ isError: true, text: "Landesteil XT-none unbekannt" });
+      expect(await callTool(token, "checks", { subdivision: "XT-none" })).toEqual({ isError: true, text: "Landesteil XT-none unbekannt" });
+
+      const checks = JSON.parse((await callTool(token, "checks", { subdivision: key })).text);
+      expect(checks).toHaveProperty("gazetteer");
+      expect(checks).toHaveProperty("geometry");
+
+      const place = await insertPlace(tx, { name: "Zzyzx Cove", lon: 21.0, lat: 35.2, status: "candidate" });
+      await syncConflictTasks(tx, [place.placeId], 2, [place.placeId]);
+      const listed = JSON.parse((await callTool(token, "review_tasks", { kind: "research_conflict" })).text);
+      expect(listed.counts.research_conflict).toBeGreaterThanOrEqual(1);
+      const task = listed.tasks.nicht_vertrauenswuerdig.find((t: { subjectId: string }) => t.subjectId === place.placeId);
+      expect(task).toBeTruthy();
+      const detail = JSON.parse((await callTool(token, "review_tasks", { id: task.id })).text);
+      expect(detail.adminPath).toBe(`/review/${task.id}`);
+      expect(detail.detail.nicht_vertrauenswuerdig).toBeTruthy();
+      expect((await callTool(token, "review_tasks", { id: newId() })).isError).toBe(true);
+
+      const worker = JSON.parse((await callTool(token, "worker")).text);
+      expect(worker.heartbeats).toEqual(expect.any(Array));
+      expect(worker.queues).toBeTypeOf("object");
+    }));
+
+  it("a wrong subdivision key in the read tools: German tool errors for unknown, a retired area key and excluded", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token } = await tokenFor(tx);
+      const excluded = `XT-${newId().slice(0, 8)}`;
+      await insertTestSubdivision(tx, excluded, [21.0, 35.0, 21.5, 35.5], { country: "GR", status: "excluded" });
+      const retired = "Revier-Schlüssel saronic ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)";
+      for (const tool of ["gate_input", "checks"]) {
+        expect(await callTool(token, tool, { subdivision: "XT-none" })).toEqual({ isError: true, text: "Landesteil XT-none unbekannt" });
+        expect(await callTool(token, tool, { subdivision: "saronic" })).toEqual({ isError: true, text: retired });
+        expect(await callTool(token, tool, { subdivision: excluded })).toEqual({ isError: true, text: `Landesteil ${excluded} ist ausgeschlossen` });
+      }
+      expect(await callTool(token, "deliveries", { subdivision: "XT-none" })).toEqual({ isError: true, text: "Landesteil XT-none unbekannt" });
+      expect(await callTool(token, "deliveries", { subdivision: "saronic" })).toEqual({ isError: true, text: retired });
+      expect((await callTool(token, "deliveries", { subdivision: excluded })).isError).toBe(false);
     }));
 
   it("no, a malformed, an unknown or a revoked token: one 401 with WWW-Authenticate; an API key is no MCP token", () =>

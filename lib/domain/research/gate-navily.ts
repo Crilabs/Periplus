@@ -139,7 +139,7 @@ function reasonOf(p: GatePlace, threshold: number): MissReason {
  */
 export function evaluateGate(
   input: { thresholds: number[]; places: GatePlace[]; spots: NavilySpot[]; decisions: Map<string, "berth" | "not_berth">; inArea?: (p: LonLat) => boolean },
-  cfg: Pick<AppConfig, "quality" | "nameAffixes" | "research">,
+  cfg: { quality: Pick<AppConfig["quality"], "navily">; research: Pick<AppConfig["research"], "gate">; nameAffixes: AppConfig["nameAffixes"] },
 ): { rows: GateRow[]; misses: Map<number, GateMiss[]>; conflicts: Map<number, string[]>; errors: Map<number, GateError[]>; core: Map<number, CoreAgreement> } {
   const { thresholds, places, spots, decisions } = input;
   const inArea = input.inArea ?? (() => true);

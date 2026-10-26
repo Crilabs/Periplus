@@ -15,7 +15,9 @@ import { insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { signalPage } from "@/test/research-signals";
 import { insertTestSubdivision, insertTestTile } from "@/test/text";
-import { isInsideRepo, parseArgs, runGate, type GateArgs } from "../research-gate";
+import { configHash } from "@/lib/domain/mcp/version";
+import { gateConfigOf, loadGateInput } from "@/lib/domain/research/gate-report";
+import { isInsideRepo, parseArgs, runGate, runGateViaMcp, type GateArgs, type McpCall } from "../research-gate";
 
 /* The gate CLI against real Postgres with synthetic spots in a temp dir; the invented names must never reach the report. */
 
@@ -72,7 +74,7 @@ async function setup(tx: Db, o: SetupOpts = {}) {
       ...(edge ? [spot({ name: "Zzyzx Edge", lon: 20.9998, lat: 35.1 })] : []),
     ]),
   );
-  const args: GateArgs = { subdivision: key, navily: spotFile, outDir: path.join(dir, "lists"), report: path.join(dir, "report", "n3-tor.md"), syncConflicts: false };
+  const args: GateArgs = { subdivision: key, navily: spotFile, outDir: path.join(dir, "lists"), report: path.join(dir, "report", "n3-tor.md"), syncConflicts: false, viaMcp: false };
   return { key, known, unknown, wrong, edge, unbacked, args, dir, spots: await loadNavilySpots(spotFile) };
 }
 
@@ -86,12 +88,81 @@ describe("research-gate parseArgs", () => {
     expect(d.outDir.startsWith(os.tmpdir())).toBe(true);
   });
 
+  it("knows --via-mcp, once", () => {
+    expect(parseArgs(["--subdivision", "GR-I", "--via-mcp"], { NAVILY_SPOTS_PATH: "/x" })).toMatchObject({ viaMcp: true });
+    expect(parseArgs(["--subdivision", "GR-I"], { NAVILY_SPOTS_PATH: "/x" })).toMatchObject({ viaMcp: false });
+    expect(() => parseArgs(["--subdivision", "a", "--via-mcp", "--via-mcp"], { NAVILY_SPOTS_PATH: "/x" })).toThrow(/usage/);
+  });
+
   it("aborts without subdivision or file, on unknown or doubled flags", () => {
     expect(() => parseArgs(["--navily", "/x"], {})).toThrow(/usage/);
     expect(() => parseArgs(["--subdivision", "a"], {})).toThrow(/NAVILY_SPOTS_PATH/);
     expect(() => parseArgs(["--subdivision", "a", "--bogus", "b"], { NAVILY_SPOTS_PATH: "/x" })).toThrow(/usage/);
     expect(() => parseArgs(["--subdivision", "a", "--sync-conflicts", "--sync-conflicts"], { NAVILY_SPOTS_PATH: "/x" })).toThrow(/usage/);
   });
+});
+
+/** A fake MCP client answering `gate_input` from the test database (as the server would) and recording every call. */
+function fakeMcp(tx: Db, serverCfg: typeof cfg, sha: string | null = "abc1234") {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const call: McpCall = async (name, args) => {
+    calls.push({ name, args: args as Record<string, unknown> });
+    if (name === "gate_input") {
+      const input = await loadGateInput(tx, (args as { subdivision: string }).subdivision, serverCfg);
+      return { version: { gitSha: sha, gateConfigHash: configHash(gateConfigOf(serverCfg)) }, input };
+    }
+    return { angelegt: 1, offen: 1 };
+  };
+  return { call, calls };
+}
+
+describe("runGateViaMcp", () => {
+  it("evaluates the production data locally; same report as the database path, names the production commit", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx);
+      const opts = { now: new Date("2026-10-23T12:00:00Z"), repoRoot: process.cwd() };
+      const { call, calls } = fakeMcp(tx, cfg);
+      const lines = (await runGateViaMcp(call, { ...s.args, viaMcp: true }, s.spots, cfg, opts)).join("\n");
+      expect(lines).toContain(`Produktion: abc1234, Tor-Config ${configHash(gateConfigOf(cfg))}`);
+      expect(lines).not.toContain("weicht ab");
+      expect(lines).toContain("Tor nicht bestanden");
+      expect(lines).not.toMatch(INVENTED);
+      expect(calls.map((c) => c.name)).toEqual(["gate_input"]);
+      const viaMcp = await readFile(s.args.report, "utf8");
+      await runGate(tx, s.args, s.spots, cfg, opts);
+      expect(viaMcp).toBe(await readFile(s.args.report, "utf8"));
+    }));
+
+  it("a differing local gate config is noted; the calculation uses the config of the input", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx);
+      const { call } = fakeMcp(tx, cfg);
+      const local = { ...cfg, research: { ...cfg.research, gate: { ...cfg.research.gate, minConfirmed: 99 } } };
+      const lines = (await runGateViaMcp(call, { ...s.args, viaMcp: true }, s.spots, local, { now: new Date(), repoRoot: process.cwd() })).join("\n");
+      expect(lines).toContain("lokale Tor-Config weicht ab, gerechnet mit der von Produktion");
+      expect(lines).toContain("Tor nicht bestanden");
+      expect(lines).not.toContain("Mindeststichprobe");
+    }));
+
+  it("--sync-conflicts sends subdivision, threshold and place IDs only", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx);
+      const { call, calls } = fakeMcp(tx, cfg);
+      const lines = (await runGateViaMcp(call, { ...s.args, viaMcp: true, syncConflicts: true }, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).join("\n");
+      expect(lines).toContain("conflict tasks (N=2): 1 created, 1 open");
+      const sync = calls.find((c) => c.name === "gate_sync_conflicts")!;
+      expect(sync.args).toEqual({ subdivision: s.key, threshold: 2, placeIds: [s.unknown.placeId] });
+      expect(Object.keys(sync.args).sort()).toEqual(["placeIds", "subdivision", "threshold"]);
+      expect(JSON.stringify(calls)).not.toMatch(INVENTED);
+    }));
+
+  it("refuses an out dir inside the repository before calling the server", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx);
+      const { call, calls } = fakeMcp(tx, cfg);
+      await expect(runGateViaMcp(call, { ...s.args, viaMcp: true, outDir: path.join(process.cwd(), "tmp-lists") }, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).rejects.toThrow(/outside the repository/);
+      expect(calls).toEqual([]);
+    }));
 });
 
 describe("runGate", () => {
