@@ -1,4 +1,4 @@
-import type { RegionBody } from "@/contract";
+import type { RegionBody } from "@/contract/v2";
 import type { z } from "zod";
 import type { regionType } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";

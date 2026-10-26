@@ -32,7 +32,7 @@ import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
 import type { PageKind } from "@/lib/db/schema/research";
 import type { BerthSignalKind, Tone } from "@/lib/db/schema/research-extract";
 import type { ComparisonAttribute, ComparisonMethod, ComparisonResultValue, MetricKey } from "@/lib/db/schema/quality";
-import type { ChangeEntry, ContractFile } from "@/contract";
+import type { ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
 import type { PreviewOmission } from "@/lib/domain/delivery/view";
 import type { MergeRefusal } from "@/lib/domain/place-merge";
@@ -673,55 +673,33 @@ export const DELIVERY_STATUS_LABELS: Record<DeliveryStatus, string> = {
 export const CHECK_LABELS: Record<CheckName, string> = {
   json_schema: "Jede Datei entspricht ihrem JSON-Schema",
   ids: "IDs eindeutig und mit richtigem Präfix",
-  references: "Jede referenzierte ID ist in derselben Lieferung",
+  references: "Jede referenzierte ID ist in derselben Lieferung (Fakt-Bezug in nearby desselben Spots)",
   spot_location: "Spot in der Bounding Box und höchstens 1,5 sm von Wasser",
   shelter: "Schutz: acht Sektoren 0–1, Häfen und Marinas belegt",
   limits: "Tiefgang und Länge im erlaubten Bereich",
   exclude_reason: "Ausgeschlossener Spot mit Grund",
   berth_months: "„Saisonal voll“ mit mindestens einem Monat",
-  low_confidence_note: "Geringe Konfidenz mit Hinweis „wenig belegt“",
-  highlight_selected: "Highlight nur an Spots, die es ausgewählt haben",
   spot_duplicates: "Keine zwei Spots derselben Art näher als 150 m",
-  highlight_duplicates: "Keine zwei Highlights gleichen Namens näher als 500 m",
   verbatim_text: "Kein Text länger als 15 Wörter aus einer Quelle",
   image_attribution: "Bildnachweis nennt Luftbild- und Geländequelle",
-  foreign_content: "Keine fremden Inhalte",
+  foreign_content: "Keine URL und kein Domainname in Texten und Namen",
   data_version: "Datenversion größer als die vorherige",
-  changes_complete: "changes.json enthält genau die geänderten Objekte",
-};
-
-/** Events of `changes.json`. */
-export const CHANGE_EVENT_LABELS: Record<ChangeEntry["event"], string> = {
-  created: "Neu",
-  updated: "Geändert",
-  excluded: "Ausgeschlossen",
-  merged: "Zusammengelegt",
-  removed: "Entfernt",
-};
-
-/** Object types of `changes.json`. */
-export const CHANGE_OBJECT_TYPE_LABELS: Record<ChangeEntry["objectType"], string> = {
-  spot: "Spot",
-  highlight: "Highlight",
-  region: "Region",
 };
 
 /** What the files of a package hold. */
 export const CONTRACT_FILE_LABELS: Record<ContractFile, string> = {
   "manifest.json": "Manifest",
   "spots.json": "Spots",
-  "highlights.json": "Highlights",
   "regions.json": "Regionen",
   "coast.geojson": "Küste",
   "weather-points.json": "Wetterpunkte",
-  "changes.json": "Änderungen",
 };
 
 /** Why the next package would not deliver a place (place page, tab „Lieferung“). */
 export const PREVIEW_OMISSION_LABELS: Record<PreviewOmission, string> = {
   no_name: "Der Ort hat keinen gültigen Namen.",
-  no_profile: "Der Ort hat kein Profil.",
-  shelter_incomplete: "Die Schutzwerte sind unvollständig oder ohne Herkunft.",
+  no_state: "Der Ort hat keinen Stand.",
+  incomplete_core: "Im Stand fehlen Schutzwerte oder die Ankerposition.",
   no_subdivision: "Der Ort gehört zu keinem Landesteil.",
   merged: "Der Ort ist zusammengelegt. Das nächste Paket liefert ihn mit „zusammengelegt in“ (mergedInto) den Ort, in den er aufgegangen ist, sofern das letzte Paket des Landesteils ihn enthielt.",
   merged_removed:

@@ -43,6 +43,25 @@ describe("/deliveries/radius page", () => {
     expect(html).toContain("Noch kein Umkreis-Paket");
   });
 
+  it("shows the object counts of 4.0 with facts and things on land, without highlights", async () => {
+    preview = async () => ({
+      row: { key: "k", days: 7, radiusNm: 100, generatedAt: new Date(), homeMarinaPublicId: "sp_01J9ZD00000000000000000002", fileHashes: {}, warnings: [] },
+      manifest: {
+        scope: { type: "radius", homeMarina: { name: "Heimat" } },
+        coverage: [],
+        objectCounts: { spots: 4, regions: 2, weatherPoints: 3, coastFeatures: 5 },
+      },
+      totalBytes: 2048,
+      spotStats: { facts: 17, nearby: 9 },
+    });
+    const html = await render({ marina: "sp_01J9ZD00000000000000000002", days: "7" });
+    expect(html).toContain("Fakten in den Spots");
+    expect(html).toContain("Dinge an Land in den Spots");
+    expect(html).toContain("Wetterpunkte");
+    expect(html).toContain("17");
+    expect(html).not.toContain("Highlights");
+  });
+
   it("reads the trip range and the radius rule from the config", async () => {
     const { minDays, maxDays, nmPerDay, returnFactor } = getConfig().delivery.radius;
     preview = async () => "invalid_days";

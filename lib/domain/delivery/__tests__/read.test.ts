@@ -9,11 +9,11 @@ import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
 import { insertTestSubdivision } from "@/test/text";
 import { buildDelivery, type DeliveryRow } from "../build";
-import { changesSince, deliveryFiles, spotAsOf } from "../read";
+import { deliveryFiles, spotAsOf } from "../read";
 import { serializeFile, sha256Hex } from "../serialize";
 
 /*
- * `spotAsOf` and `changesSince` on hand-written delivery rows (rolled back): a spot that moved between subdivisions
+ * `spotAsOf` on hand-written delivery rows (rolled back): a spot that moved between subdivisions
  * (ruling M6-P13, NOTE of M6-D-R1) and a broken archive.
  */
 
@@ -92,13 +92,15 @@ describe("deliveryFiles", () => {
         [a]: hash,
         "coast.geojson": hash,
         "regions.json": hash,
+        // a file of contract 3.0 is no file of 4.0
         "highlights.json": hash,
+        "changes.json": hash,
         // not a package file: a traversal and a stray key never become a link
         "../secret": hash,
         "images/notes.txt": hash,
       },
     } as unknown as DeliveryRow;
-    expect(deliveryFiles(row)).toEqual(["manifest.json", "spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json", a, a2, b]);
+    expect(deliveryFiles(row)).toEqual(["manifest.json", "spots.json", "regions.json", "coast.geojson", "weather-points.json", a, a2, b]);
     expect(deliveryFiles({ fileHashes: {} } as unknown as DeliveryRow)).toEqual([]);
   });
 });
@@ -109,7 +111,7 @@ describe("spotAsOf", () => {
       const archive = memoryArchive();
       const [west, east] = [await insertSubdivision(tx), await insertSubdivision(tx, [21.1, 35, 21.2, 35.1])];
       const id = newPublicId("sp");
-      const spot = (v: number, area: string) => ({ id, profileVersion: v, name: `v${v} in ${area}` });
+      const spot = (v: number, area: string) => ({ id, name: `v${v} in ${area}` });
       // v1 in west, then east delivers it as v2, then west reports it removed as v3, then east removes it as v4
       const w1 = await insertDelivery(tx, archive, west, 1, { "spots.json": { spots: [spot(1, "west")] } });
       await insertVersion(tx, { subdivisionId: west.id, publicId: id, version: 1, validFrom: "2040-06-01", deliveryId: w1 });
@@ -149,8 +151,9 @@ describe("spotAsOf", () => {
       expect(await build(second.id, "2040-06-05")).toMatchObject({ status: "valid", dataVersion: 1 });
       const moved = await spotAsOf(tx, archive, m, "2040-06-05");
       // the versions of a spot count across subdivisions: the new subdivision continues them
-      expect(moved).toMatchObject({ subdivision: second.publicId, dataVersion: 1, spot: { id: m, profileVersion: 2, validFrom: "2040-06-05" } });
-      expect(await spotAsOf(tx, archive, m, "2040-06-02")).toMatchObject({ subdivision: f.subdivisionPublicId, dataVersion: 1, spot: { profileVersion: 1 } });
+      expect(moved).toMatchObject({ subdivision: second.publicId, dataVersion: 1, spot: { id: m, asOf: "2026-10-19" } });
+      expect(await spotAsOf(tx, archive, m, "2040-06-02")).toMatchObject({ subdivision: f.subdivisionPublicId, dataVersion: 1, spot: { id: m } });
+      expect(await spotAsOf(tx, archive, m, "2040-06-02")).not.toEqual(moved);
 
       // the old subdivision rebuilds and reports M removed, with a higher version than the new subdivision's
       expect(await build(f.subdivisionId, "2040-06-08")).toMatchObject({ status: "valid", dataVersion: 2 });
@@ -171,20 +174,5 @@ describe("spotAsOf", () => {
       const d = await insertDelivery(tx, archive, subdivision, 1, { "spots.json": { spots: [] } });
       await insertVersion(tx, { subdivisionId: subdivision.id, publicId: id, version: 1, validFrom: "2040-06-01", deliveryId: d });
       await expect(spotAsOf(tx, archive, id)).rejects.toThrow(/not in spots.json/);
-    }));
-});
-
-describe("changesSince", () => {
-  it("reports not_found without a valid delivery and throws when a change file is missing", () =>
-    withRollback(async (tx) => {
-      const archive = memoryArchive();
-      const subdivision = await insertSubdivision(tx);
-      expect(await changesSince(tx, archive, subdivision.id, 1)).toBe("not_found");
-      await insertDelivery(tx, archive, subdivision, 1, { "spots.json": { spots: [] } });
-      await insertDelivery(tx, archive, subdivision, 2, { "spots.json": { spots: [] } });
-      expect(await changesSince(tx, archive, subdivision.id, 2)).toEqual({ dataVersion: 2, changes: [] });
-      expect(await changesSince(tx, archive, subdivision.id, 3)).toBe("invalid_since");
-      expect(await changesSince(tx, archive, subdivision.id, 0)).toBe("invalid_since");
-      await expect(changesSince(tx, archive, subdivision.id, 1)).rejects.toThrow(/has no changes.json/);
     }));
 });

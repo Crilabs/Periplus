@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { regionSchema } from "@/contract/v2";
+import { regionSchema } from "@/contract/v3_0";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
@@ -50,7 +50,6 @@ function region(n: number, o: Partial<RegionSource> = {}): RegionSource {
     areaKm2: null,
     parentGeoObjectIds: [],
     profile: null,
-    sources: [],
     ...o,
   };
 }

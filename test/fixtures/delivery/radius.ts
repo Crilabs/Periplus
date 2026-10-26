@@ -6,9 +6,9 @@ import { deliveredObjects, deliveries, geoNames, subdivisions, tiles } from "@/l
 import { newPublicId } from "@/lib/domain/ids";
 import { manifestSubdivision } from "@/lib/domain/delivery/read";
 import { contentTypeOf, serializeFile, sha256Hex } from "@/lib/domain/delivery/serialize";
-import type { DeliveryPackage } from "@/lib/domain/delivery/types";
 import { insertTestSubdivision, insertTestTile } from "@/test/text";
-import { AREA_ID, HIGHLIGHT, REGION, SPOT_A, SPOT_M, SUBDIVISION_ID, validPackage, WEATHER_POINT } from "./package";
+import type { DeliveryPackage } from "@/lib/domain/delivery/types";
+import { AREA_ID, FACT_LANDSIDE, FACT_SPOT, REGION, SPOT_A, SPOT_M, SUBDIVISION_ID, TAVERNA, validPackage, WEATHER_POINT } from "./package-v4";
 
 /*
  * Radius package tests (spec 18): subdivision packages stored as a build would store them, without a build. A second
@@ -24,7 +24,9 @@ export const EAST = {
   tileId: "q025:807:500",
   spot: "sp_01J9ZE00000000000000000001",
   marina: "sp_01J9ZE00000000000000000002",
-  highlight: "hl_01J9ZE00000000000000000001",
+  landside: "hl_01J9ZE00000000000000000001",
+  factSpot: "fc_01J9ZE00000000000000000001",
+  factLandside: "fc_01J9ZE00000000000000000002",
   region: "rg_01J9ZE00000000000000000001",
   weatherPoint: "wp_01J9ZE00000000000000000001",
   area: "ar_01J9ZE00000000000000000001",
@@ -86,7 +88,9 @@ export type PackageIds = {
   subdivision: { publicId: string; key: string; name: string };
   spot: string;
   marina: string;
-  highlight: string;
+  landside: string;
+  factSpot: string;
+  factLandside: string;
   region: string;
   weatherPoint: string;
   area: string;
@@ -96,17 +100,18 @@ export type PackageIds = {
 /**
  * `validPackage()` as the first package of another subdivision: its ids replaced by `ids`, every position moved by
  * `shift` (default 0.5° east: the anchorage at 21.55° E / 35.195° N, 13.5 nm from the fixture's marina), its tile
- * `ids.tileId` (run 2040-05-01), no `changes.json`. `storeSubdivisionPackage` sets the data version.
+ * `ids.tileId` (run 2040-05-01). `storeSubdivisionPackage` sets the data version.
  */
 export function eastPackage(ids: PackageIds = { ...EAST, subdivision: { publicId: EAST.subdivisionId, key: EAST.key, name: EAST.name } }, shift: LonLat = { lon: 0.5, lat: 0 }): DeliveryPackage {
   const base = validPackage();
-  delete base.files["changes.json"];
   const replace: Array<[string, string]> = [
     [SUBDIVISION_ID, ids.subdivision.publicId],
     ["XT-NISIDA", ids.subdivision.key],
     [SPOT_A, ids.spot],
     [SPOT_M, ids.marina],
-    [HIGHLIGHT, ids.highlight],
+    [TAVERNA, ids.landside],
+    [FACT_SPOT, ids.factSpot],
+    [FACT_LANDSIDE, ids.factLandside],
     [REGION, ids.region],
     [WEATHER_POINT, ids.weatherPoint],
     [AREA_ID, ids.area],
@@ -119,7 +124,7 @@ export function eastPackage(ids: PackageIds = { ...EAST, subdivision: { publicId
   s.subdivision.name = ids.subdivision.name;
   pkg.manifest.coverage = [{ id: ids.subdivision.publicId, key: ids.subdivision.key, name: ids.subdivision.name, status: "delivered", dataVersion: 1 }];
   pkg.manifest.bbox = [round5(20.9 + shift.lon), round5(35.1 + shift.lat), round5(21.3 + shift.lon), round5(35.4 + shift.lat)];
-  pkg.manifest.tiles = [{ id: ids.tileId, lastRunAt: "2040-05-01T00:00:00.000Z", profilesAsOf: "2040-05-01" }];
+  pkg.manifest.tiles = [{ id: ids.tileId, lastRunAt: "2040-05-01T00:00:00.000Z", statesAsOf: "2040-05-01" }];
   // spot A's external ids belong to the fixture's A
   for (const spot of pkg.files["spots.json"].spots) if (spot.externalRefs) spot.externalRefs = { ...spot.externalRefs, osmId: null };
   return pkg;
@@ -131,7 +136,9 @@ export function randomPackageIds(subdivision: PackageIds["subdivision"], tileId:
     subdivision,
     spot: newPublicId("sp"),
     marina: newPublicId("sp"),
-    highlight: newPublicId("hl"),
+    landside: newPublicId("hl"),
+    factSpot: `fc_${newPublicId("sp").slice(3)}`,
+    factLandside: `fc_${newPublicId("sp").slice(3)}`,
     region: newPublicId("rg"),
     weatherPoint: `wp_${newPublicId("sp").slice(3)}`,
     area: newPublicId("ar"),
@@ -143,7 +150,7 @@ export function randomPackageIds(subdivision: PackageIds["subdivision"], tileId:
  * Stores `pkg` as the valid package `dataVersion` of the subdivision, as a build would: data version and generation
  * time set in manifest, coverage and every file envelope, the manifest's `files` from the serialized files and
  * `images`, every file under `deliveries/<key>/<dataVersion>/`, the `deliveries` row and a `delivered_objects` row per
- * spot, highlight and region version not recorded yet. No build, no validation. Returns the delivery id and prefix.
+ * spot and region version not recorded yet. No build, no validation. Returns the delivery id and prefix.
  */
 export async function storeSubdivisionPackage(
   tx: Db,
@@ -174,11 +181,9 @@ export async function storeSubdivisionPackage(
   ];
   pkg.manifest.objectCounts = {
     spots: pkg.files["spots.json"].spots.length,
-    highlights: pkg.files["highlights.json"].highlights.length,
     regions: pkg.files["regions.json"].regions.length,
     weatherPoints: pkg.files["weather-points.json"].points.length,
     coastFeatures: pkg.files["coast.geojson"].features.length,
-    changes: pkg.files["changes.json"]?.changes.length ?? 0,
   };
 
   const prefix = `deliveries/${manifestSubdivision(pkg.manifest)!.key}/${input.dataVersion}/`;
@@ -211,7 +216,6 @@ export async function storeSubdivisionPackage(
   const deliveryId = row!.id;
   const versions = [
     ...pkg.files["spots.json"].spots.map((o) => ({ type: "spot" as const, o })),
-    ...pkg.files["highlights.json"].highlights.map((o) => ({ type: "highlight" as const, o })),
     ...pkg.files["regions.json"].regions.map((o) => ({ type: "region" as const, o })),
   ];
   for (const { type, o } of versions) {
@@ -221,9 +225,9 @@ export async function storeSubdivisionPackage(
         subdivisionId: input.subdivisionId,
         objectType: type,
         publicId: o.id,
-        profileVersion: o.profileVersion,
-        contentHash: `test-${o.profileVersion}`,
-        validFrom: o.validFrom,
+        profileVersion: input.dataVersion,
+        contentHash: `test-${input.dataVersion}`,
+        validFrom: generatedAt.slice(0, 10),
         firstDeliveryId: deliveryId,
       })
       .onConflictDoNothing();

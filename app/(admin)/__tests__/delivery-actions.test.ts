@@ -3,18 +3,16 @@ import { NextRequest } from "next/server";
 import type { PgBoss } from "pg-boss";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { profileSummaries, runs, textShingles } from "@/lib/db/schema";
+import { geoNames, runs } from "@/lib/db/schema";
 import { authenticateApiClient, createApiClient, listApiClients } from "@/lib/domain/api-clients";
 import { setDeliveryArchive } from "@/lib/domain/delivery/archive";
 import { buildDelivery } from "@/lib/domain/delivery/build";
-import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
 import { DELIVERY_STAGE } from "@/lib/pipeline/delivery";
 import { testDb, withRollback } from "@/test/db";
 import { seedImage } from "@/test/fixtures/delivery/images";
 import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
-import { insertTestVersion } from "@/test/text";
 
 /*
  * The admin's delivery actions (plan Task 13): „Paket bauen“, the file download (a rejected package's too) and
@@ -115,20 +113,8 @@ describe("GET /deliveries/[id]/files/[file]", () => {
       const archive = memoryArchive();
       setDeliveryArchive(archive);
       const f = await seedDeliverySubdivision(tx);
-      // A's summary is a 16-word copy of an archived text: the package is rejected
-      const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
-      const words = Array.from({ length: 30 }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}`);
-      const v = await insertTestVersion(tx, [words.join(" ")]);
-      await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
-      await tx.insert(profileSummaries).values({
-        geoObjectId: f.places.A.geoObjectId,
-        profileVersion: 1,
-        text: `Die Bucht: ${words.slice(2, 18).join(" ")}.`,
-        status: "ok",
-        attempts: 1,
-        model: "test",
-        promptVersion: 9,
-      });
+      // A has a second name that is a domain: the package is rejected (a copied fact would only be dropped)
+      await tx.insert(geoNames).values({ geoObjectId: f.places.A.geoObjectId, name: "sailing-guide.example.com", nameNormalized: "sailing-guide.example.com", language: "en", script: "latin", origin: "osm" });
       const rejected = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-01T08:00:00Z"), inCallerTransaction: true });
       expect(rejected.status).toBe("rejected");
 

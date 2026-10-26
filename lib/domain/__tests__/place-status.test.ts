@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import type { SpotsFile } from "@/contract";
+import type { SpotsFile } from "@/contract/v3_0";
 import type { Db } from "@/lib/db/client";
 import { places, reviewDecisions, reviewTasks } from "@/lib/db/schema";
 import { buildDelivery } from "@/lib/domain/delivery/build";

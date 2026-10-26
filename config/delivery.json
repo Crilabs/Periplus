@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "3.0",
+  "schemaVersion": "4.0",
   "build": { "lockTimeoutMs": 300000 },
   "spots": { "statuses": ["confirmed", "no_anchoring"], "maxSources": 20, "excludedFallbackName": "Ankerplatz ohne Namen" },
   "coast": {
@@ -28,6 +28,7 @@
     "harbourMinShelter": 0.8,
     "harbourShelterSources": ["text", "observed", "review"],
     "maxCopiedWords": 15,
+    "domainTlds": ["com", "net", "org", "gr", "de", "it", "fr", "es", "hr", "tr", "eu", "info", "io", "co", "uk"],
     "copyCheckConcurrency": 4,
     "lowConfidence": 0.3,
     "lowConfidenceNote": "wenig belegt"
@@ -44,7 +45,8 @@
         "spots.json#/spots/*/name",
         "spots.json#/spots/*/names",
         "spots.json#/spots/*/externalRefs/osmId",
-        "highlights.json#/highlights/*/name",
+        "spots.json#/spots/*/nearby/*/name",
+        "spots.json#/spots/*/nearby/*/names",
         "regions.json#/regions/*/name",
         "regions.json#/regions/*/names",
         "regions.json#/regions/*/polygon"
@@ -55,21 +57,21 @@
       "attribution": "Luftbild © Hellenic Cadastre (CC BY 3.0)",
       "url": "https://creativecommons.org/licenses/by/3.0/",
       "files": [],
-      "fields": ["spots.json#/spots/*/images", "highlights.json#/highlights/*/images"]
+      "fields": ["spots.json#/spots/*/images"]
     },
     {
       "name": "CC-BY-4.0",
       "attribution": "Sentinel-2 cloudless 2016 © EOX (CC BY 4.0)",
       "url": "https://creativecommons.org/licenses/by/4.0/",
       "files": [],
-      "fields": ["spots.json#/spots/*/images", "highlights.json#/highlights/*/images"]
+      "fields": ["spots.json#/spots/*/images"]
     },
     {
       "name": "Copernicus-DEM",
       "attribution": "Gelände © DLR/Airbus, Copernicus",
       "url": "https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model",
       "files": [],
-      "fields": ["spots.json#/spots/*/images", "highlights.json#/highlights/*/images"]
+      "fields": ["spots.json#/spots/*/images"]
     }
   ],
   "api": { "cacheMaxAgeSeconds": 60 },

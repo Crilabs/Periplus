@@ -1,9 +1,11 @@
-import { sql, type SQL } from "drizzle-orm";
+import { inArray, sql, type SQL } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { DeliveryConfig, ImagesConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import type { GeoObjectType, HighlightCategory, PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
+import { berthStates } from "@/lib/db/schema/research-state";
 import type { DocType } from "@/lib/db/schema/sources";
+import { decideBerth, loadEvidence } from "@/lib/domain/research/confirmation";
 import { popularityForPlaces } from "@/lib/domain/consolidation/derived/popularity";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";
@@ -11,10 +13,13 @@ import { countingSelectionsAt } from "@/lib/domain/highlights/selections";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { imageBlockedBy, imageSources } from "@/lib/domain/images/delivery-gate";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
+import { registrableDomain } from "@/lib/domain/sources/urls";
 import { latestProfiles, validAtAlias } from "@/lib/domain/timeline";
 import type {
+  BerthStateRow,
   DeliverableImage,
   LonLat,
+  NearbyObject,
   PassageSource,
   PoiSource,
   RegionSource,
@@ -28,7 +33,8 @@ import type {
  * Loads what a delivery of one subdivision consists of (spec 08, spec 14), on the build date `today`: the places
  * delivered as spots, merged places, POIs, regions and passages whose geo object belongs to the subdivision
  * (`geo_objects.subdivision_id`, the nearest land; never the tile label, so a harbour in a tile labelled with the
- * neighbour is still delivered here), each with its latest profile, names and documents; the scope tiles with their
+ * neighbour is still delivered here). A spot comes with its berth state (contract 4.0) and the things on land its
+ * state names; POIs, regions and passages with their latest profile, names and documents; the scope tiles with their
  * state and the sailing areas (Reviere) that touch them. One query per kind of object; lists sorted by public id
  * (passages by geo object id).
  */
@@ -76,26 +82,34 @@ export async function loadSubdivisionScope(
   const passages = await loadPassages(db, subdivisionId, today);
   const areaRows = await loadAreas(db, tileArray, today);
 
+  const states = await loadStates(db, spotRows.map((r) => r.placeId));
+  const ownDomains = await loadOwnWebsiteDomains(db, spotRows.map((r) => r.placeId));
+  const evidence = await loadEvidence(db, spotRows.map((r) => r.placeId));
+  const confirmationCfg = getConfig().research.confirmation;
+  const nearbyObjectRows = await loadNearbyObjects(db, [...states.values()].flatMap((st) => st.nearby.map((n) => n.geoObjectId)), today);
   const objectIds = [...spotRows, ...poiRows, ...regionRows].map((r) => r.geoObjectId);
   const profiles = await latestProfiles(db, [...objectIds, ...passages.map((p) => p.geoObjectId)]);
-  const names = await loadNames(db, [loaded.geoObjectId, ...areaRows.map((a) => a.geoObjectId), ...objectIds], today);
+  const names = await loadNames(db, [loaded.geoObjectId, ...areaRows.map((a) => a.geoObjectId), ...objectIds, ...nearbyObjectRows.map((o) => o.geoObjectId)], today);
   const popularity = await popularityForPlaces(db, spotRows.map((r) => r.geoObjectId), today, cfg.popularity.neighbourhoodNm);
-  const withProfile = [...spotRows, ...poiRows].map((r) => r.geoObjectId).filter((id) => profiles.has(id));
+  const withProfile = poiRows.map((r) => r.geoObjectId).filter((id) => profiles.has(id));
   const summaries = await loadSummaries(db, withProfile, profiles);
-  // regions too: their facts and character rest on documents, which the forbidden-domain check needs (final review I-2)
-  const regionsWithProfile = regionRows.map((r) => r.geoObjectId).filter((id) => profiles.has(id));
-  const sources = await loadSources(db, [...withProfile, ...regionsWithProfile], profiles);
+  const sources = await loadSources(db, withProfile, profiles);
   const images = await loadPlaceImages(db, [...spotRows, ...poiRows].map((r) => r.geoObjectId), today, imagesCfg);
 
-  const spots: SpotSource[] = spotRows.map((r) => ({
-    ...r,
-    names: names.get(r.geoObjectId) ?? [],
-    profile: profiles.get(r.geoObjectId) ?? null,
-    summary: summaries.get(r.geoObjectId) ?? null,
-    popularity: popularity.get(r.geoObjectId) ?? null,
-    sources: sources.get(r.geoObjectId) ?? [],
-    images: images.get(r.geoObjectId) ?? [],
-  }));
+  const nearbyObjects = new Map(nearbyObjectRows.map((o): [string, NearbyObject] => [o.geoObjectId, { ...o, names: names.get(o.geoObjectId) ?? [] }]));
+  const spots: SpotSource[] = spotRows.map((r) => {
+    const state = states.get(r.placeId) ?? null;
+    return {
+      ...r,
+      names: names.get(r.geoObjectId) ?? [],
+      state,
+      ownWebsiteDomain: ownDomains.get(r.placeId) ?? null,
+      independentSources: decideBerth(r.kind, evidence.get(r.placeId) ?? [], confirmationCfg).independentSources.length,
+      nearbyObjects: (state?.nearby ?? []).flatMap((n) => nearbyObjects.get(n.geoObjectId) ?? []),
+      popularity: popularity.get(r.geoObjectId) ?? null,
+      images: images.get(r.geoObjectId) ?? [],
+    };
+  });
   const pois: PoiSource[] = poiRows.map((r) => ({
     ...r,
     profile: profiles.get(r.geoObjectId) ?? null,
@@ -107,7 +121,6 @@ export async function loadSubdivisionScope(
     ...r,
     names: (names.get(r.geoObjectId) ?? []).map(({ lang, name }) => ({ lang, name })),
     profile: profiles.get(r.geoObjectId) ?? null,
-    sources: sources.get(r.geoObjectId) ?? [],
   }));
   const { geoObjectId, ...subdivision } = loaded;
   return {
@@ -185,14 +198,12 @@ function spotFilter(subdivisionId: string, cfg: DeliveryConfig, today: string): 
 }
 
 async function loadTiles(db: Db, subdivisionId: string, tileArray: SQL, cfg: DeliveryConfig, today: string): Promise<SubdivisionScope["tiles"]> {
-  const { rows } = await db.execute<{ id: string; last_run_at: string | Date | null; profiles_as_of: string | null }>(sql`
+  const { rows } = await db.execute<{ id: string; last_run_at: string | Date | null; states_as_of: string | null }>(sql`
     select t.id, t.last_run_at,
-      (select max(lp.valid_from)
+      (select max((bs.updated_at at time zone 'UTC')::date)
          from places p
-         cross join lateral (
-           select pr.valid_from from profiles pr where pr.geo_object_id = p.geo_object_id order by pr.version desc limit 1
-         ) lp
-         where p.tile_id = t.id and ${spotFilter(subdivisionId, cfg, today)})::text as profiles_as_of
+         join berth_states bs on bs.place_id = p.id
+         where p.tile_id = t.id and ${spotFilter(subdivisionId, cfg, today)})::text as states_as_of
     from tiles t
     where t.id = any(${tileArray})
     order by t.id
@@ -200,13 +211,14 @@ async function loadTiles(db: Db, subdivisionId: string, tileArray: SQL, cfg: Del
   return rows.map((r) => ({
     id: r.id,
     lastRunAt: r.last_run_at === null ? null : new Date(r.last_run_at).toISOString(),
-    profilesAsOf: r.profiles_as_of,
+    statesAsOf: r.states_as_of,
   }));
 }
 
-type SpotRow = Omit<SpotSource, "names" | "profile" | "summary" | "popularity" | "sources" | "images">;
+type SpotRow = Omit<SpotSource, "names" | "state" | "ownWebsiteDomain" | "independentSources" | "nearbyObjects" | "popularity" | "images">;
 
 async function loadSpotRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, today: string): Promise<SpotRow[]> {
+  const anchorConfidence = getConfig().geometry.anchorArea.positionConfidence;
   const { rows } = await db.execute<{
     place_id: string;
     geo_object_id: string;
@@ -216,11 +228,14 @@ async function loadSpotRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, 
     status_reason: string | null;
     lon: number;
     lat: number;
+    anchor_lon: number | null;
+    anchor_lat: number | null;
     osm_id: string | null;
     wikidata_id: string | null;
   }>(sql`
     select p.id as place_id, p.geo_object_id, p.public_id, p.kind, p.status, p.status_reason,
            ST_X(p.position) as lon, ST_Y(p.position) as lat,
+           ST_X(p.anchor_position) as anchor_lon, ST_Y(p.anchor_position) as anchor_lat,
            g.osm_id, g.wikidata_id
     from places p
     join geo_objects g on g.id = p.geo_object_id
@@ -236,10 +251,55 @@ async function loadSpotRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, 
     status: r.status,
     statusReason: r.status_reason,
     position: point(r.lon, r.lat),
+    anchor: r.anchor_lon === null || r.anchor_lat === null ? null : { ...point(r.anchor_lon, r.anchor_lat), confidence: anchorConfidence },
     name: names.get(r.geo_object_id) ?? "",
     osmId: r.osm_id,
     wikidataId: r.wikidata_id,
   }));
+}
+
+/**
+ * The registrable domain of each place's current website (its newest `place_websites` row, as `currentPlaceWebsite`),
+ * only where that row is bound to the place; a place without one is absent. A contact url is delivered only on this domain.
+ */
+async function loadOwnWebsiteDomains(db: Db, placeIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (placeIds.length === 0) return out;
+  const { rows } = await db.execute<{ place_id: string; url: string; bound: boolean }>(sql`
+    select distinct on (place_id) place_id, url, bound
+    from place_websites
+    where place_id = any(${arrayParam(placeIds, "uuid")})
+    order by place_id, created_at desc, id desc
+  `);
+  for (const r of rows) {
+    if (!r.bound) continue;
+    try {
+      out.set(r.place_id, registrableDomain(r.url));
+    } catch {
+      // an unparsable address binds nothing
+    }
+  }
+  return out;
+}
+
+/** The berth states of the places, by place id (`berth_states`, one row per place). */
+async function loadStates(db: Db, placeIds: string[]): Promise<Map<string, BerthStateRow>> {
+  if (placeIds.length === 0) return new Map();
+  const rows = await db.select().from(berthStates).where(inArray(berthStates.placeId, placeIds));
+  return new Map(rows.map((r) => [r.placeId, r]));
+}
+
+/** The geo objects the states' `nearby` entries name: public id (null without), valid and unmerged on `today`, and position. */
+async function loadNearbyObjects(db: Db, geoObjectIds: string[], today: string): Promise<Array<Omit<NearbyObject, "names">>> {
+  const ids = [...new Set(geoObjectIds)];
+  if (ids.length === 0) return [];
+  const { rows } = await db.execute<{ id: string; public_id: string | null; lon: number; lat: number }>(sql`
+    select o.id, o.public_id, ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat
+    from geo_objects o
+    where o.id = any(${arrayParam(ids, "uuid")}) and o.merged_into_id is null and ${validAtAlias("o", today)}
+  `);
+  const names = await deliveryNames(db, rows.map((r) => r.id), today);
+  return rows.map((r) => ({ geoObjectId: r.id, publicId: r.public_id, name: names.get(r.id) ?? "", position: point(r.lon, r.lat) }));
 }
 
 /**

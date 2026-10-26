@@ -1,14 +1,13 @@
-import { and, asc, desc, eq, gt, lte, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Archive } from "@/lib/adapters/s3";
-import { CONTRACT_FILES, IMAGE_FILE_PATTERN, type ChangeEntry, type ChangesFile, type ContractFile, type Manifest, type Spot, type SpotsFile } from "@/contract";
+import { CONTRACT_FILES, IMAGE_FILE_PATTERN, type ContractFile, type Manifest, type Spot, type SpotsFile } from "@/contract";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { deliveries } from "@/lib/db/schema/deliveries";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";
 import { validAtAlias } from "@/lib/domain/timeline";
 import type { DeliveryRow } from "./build";
-import { mergeChanges } from "./changes";
 import { sha256Hex } from "./serialize";
 
 /*
@@ -106,8 +105,7 @@ export async function validDelivery(db: Db, subdivisionId: string, dataVersion?:
 }
 
 /**
- * The files a delivery has: the contract files in contract order (`changes.json` only from the second package on),
- * then its image files (`images/<public id>-<slot>.jpg`, contract 2.1, sorted by name). Both the API (`currentPackage`)
+ * The files a delivery has: the contract files in contract order, then its image files (`images/<public id>-<slot>.jpg`, contract 2.1, sorted by name). Both the API (`currentPackage`)
  * and the admin package page link every one of them.
  */
 export function deliveryFiles(row: DeliveryRow): string[] {
@@ -143,13 +141,13 @@ export async function readManifest(archive: Archive, row: DeliveryRow): Promise<
   return readJsonFile<Manifest>(archive, row, "manifest.json");
 }
 
-/** The subdivision a manifest describes, with its data version; null for a radius package (contract 3.0). */
-export function manifestSubdivision(m: Manifest): { id: string; key: string; dataVersion: number } | null {
+/** The subdivision a manifest describes, with its data version; null for a radius package. */
+export function manifestSubdivision(m: Pick<Manifest, "scope">): { id: string; key: string; dataVersion: number } | null {
   return m.scope.type === "subdivision" ? { id: m.scope.subdivision.id, key: m.scope.subdivision.key, dataVersion: m.scope.dataVersion } : null;
 }
 
 /** A JSON file of a valid delivery, parsed; throws when the delivery lacks it. */
-export async function readJsonFile<T>(archive: Archive, row: DeliveryRow, file: ContractFile): Promise<T> {
+export async function readJsonFile<T>(archive: Archive, row: DeliveryRow, file: string): Promise<T> {
   const bytes = await readDeliveryFile(archive, row, file);
   if (bytes === null) throw new Error(`delivery ${row.id} has no ${file}`);
   return JSON.parse(new TextDecoder().decode(bytes)) as T;
@@ -201,7 +199,7 @@ export async function currentPackage(
   if (!subdivision || !row) return null;
   const manifest = await readManifest(archive, row);
   const links: PackageLinks = Object.fromEntries(
-    deliveryFiles(row).map((f) => [f, `/api/v3/subdivisions/${subdivision.publicId}/package/${f}?dataVersion=${row.dataVersion}`]),
+    deliveryFiles(row).map((f) => [f, `/api/v4/subdivisions/${subdivision.publicId}/package/${f}?dataVersion=${row.dataVersion}`]),
   );
   return { body: { ...manifest, links }, dataVersion: row.dataVersion!, schemaVersion: row.schemaVersion };
 }
@@ -224,42 +222,6 @@ export async function packageFile(
   const bytes = await readDeliveryFile(archive, row, file);
   // readDeliveryFile checked the bytes against this hash
   return bytes === null ? null : { bytes, sha256: row.fileHashes[file]!.sha256, dataVersion: row.dataVersion!, schemaVersion: row.schemaVersion };
-}
-
-/**
- * The changes of the subdivision's packages after `since` up to the current one, merged per object (`mergeChanges` over the
- * stored `changes.json` of versions `since + 1 … current`, the windows the packages were built from, ruling M6-D-R3).
- * `since` equal to the current version gives no changes; below 1 or above the current version is `invalid_since`.
- */
-export async function changesSince(
-  db: Db,
-  archive: Archive,
-  subdivisionId: string,
-  since: number,
-): Promise<{ dataVersion: number; changes: ChangeEntry[] } | "invalid_since" | "not_found"> {
-  const current = await validDelivery(db, subdivisionId);
-  if (!current) return "not_found";
-  const dataVersion = current.dataVersion!;
-  if (!Number.isSafeInteger(since) || since < 1 || since > dataVersion) return "invalid_since";
-  if (since === dataVersion) return { dataVersion, changes: [] };
-  const rows = await db
-    .select()
-    .from(deliveries)
-    .where(
-      and(
-        eq(deliveries.subdivisionId, subdivisionId),
-        eq(deliveries.status, "valid"),
-        gt(deliveries.dataVersion, since),
-        lte(deliveries.dataVersion, dataVersion),
-      ),
-    )
-    .orderBy(asc(deliveries.dataVersion));
-  if (rows.length !== dataVersion - since) {
-    throw new Error(`subdivision ${subdivisionId} lacks valid deliveries between ${since + 1} and ${dataVersion}`);
-  }
-  const lists: ChangeEntry[][] = [];
-  for (const row of rows) lists.push((await readJsonFile<ChangesFile>(archive, row, "changes.json")).changes);
-  return { dataVersion, changes: mergeChanges(lists) };
 }
 
 /**

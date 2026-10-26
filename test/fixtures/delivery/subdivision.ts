@@ -1,7 +1,9 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { documents, geoNames, geoObjects, landPolygons, places, profileSummaries, restrictedAreas, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
+import { berthStates, documents, geoNames, geoObjects, landPolygons, places, profileSummaries, restrictedAreas, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
+import type { BerthStateFact, BerthStateLanding, BerthStateNearby, BerthStateValue } from "@/lib/db/schema/research-state";
+import { factSchemaV4 } from "@/config/fact-schema/v4";
 import type { PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
 import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
 import { newId, newPublicId, type PublicIdPrefix } from "@/lib/domain/ids";
@@ -106,6 +108,50 @@ export function spotAProvenance(factId: string): Record<string, AttributeProvena
   }
   provenance["anchor_position"] = computed({ confidence: 0.6 });
   return provenance;
+}
+
+/**
+ * The core values of A's berth state (contract 4.0): A's profile attributes of fact schema v4 keys, each with the origin,
+ * confidence and date of its provenance (`computed` or `text`), plus a season note and the derived `berthable`.
+ */
+export function spotACore(factId: string): Record<string, BerthStateValue> {
+  const v4 = new Set(factSchemaV4.levels.place.map((d) => d.key));
+  const provenance = spotAProvenance(factId);
+  const values: Record<string, unknown> = { ...SPOT_A_ATTRIBUTES, season_notes: [{ kind: "open", months: [6, 7, 8, 9] }] };
+  provenance["season_notes"] = provenanceEntry("computed", { confidence: 0.8, observedAt: "2026-10-01" });
+  const core: Record<string, BerthStateValue> = {};
+  for (const [key, value] of Object.entries(values)) {
+    const p = provenance[key];
+    if (!v4.has(key) || !p) continue;
+    core[key] = { value, confidence: p.confidence, origin: p.origin === "text" ? "text" : "computed", observedAt: p.observedAt, factIds: p.origin === "text" ? [factId] : [] };
+  }
+  core["berthable"] = { value: true, confidence: 1, origin: "rule", observedAt: null, factIds: [] };
+  return core;
+}
+
+/** A berth state row for the place (plan N4a); `updatedAt` defaults to now. */
+export async function seedBerthState(
+  tx: Db,
+  placeId: string,
+  o: { core: Record<string, BerthStateValue>; gaps?: string[]; facts?: BerthStateFact[]; landing?: BerthStateLanding[]; nearby?: BerthStateNearby[]; updatedAt?: Date },
+): Promise<void> {
+  await tx.insert(berthStates).values({
+    placeId,
+    core: o.core,
+    gaps: o.gaps ?? [],
+    facts: o.facts ?? [],
+    landing: o.landing ?? [],
+    nearby: o.nearby ?? [],
+    ...(o.updatedAt ? { updatedAt: o.updatedAt } : {}),
+  });
+}
+
+/** The core values of a place's berth state changed (as a research run rewriting it does): `patch` sets each key's value, `updatedAt` is the new state date. */
+export async function changeBerthCore(tx: Db, placeId: string, patch: Record<string, unknown>, updatedAt: Date): Promise<void> {
+  const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, placeId));
+  const core = { ...row!.core };
+  for (const [key, value] of Object.entries(patch)) core[key] = { ...core[key]!, value };
+  await tx.update(berthStates).set({ core, updatedAt }).where(eq(berthStates.placeId, placeId));
 }
 
 export type FixturePlace = { placeId: string; geoObjectId: string; publicId: string | null };
@@ -428,6 +474,30 @@ async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixtu
   });
   const excludedC = { "place.kind": "anchorage", "place.status": "no_anchoring", exclude: { excluded: true, reason: "military", detail: null }, ...sectors(0.5) };
   await insertProfile(tx, C.geoObjectId, excludedC, computedProvenance(Object.keys(excludedC)), { confidence: 0.4 });
+
+  // Berth states (contract 4.0): A complete with facts, a landing point and the taverna nearby; M with shelter only;
+  // B without `shelter.W`; C (no_anchoring) and K have none.
+  await tx.execute(sql`update places set anchor_position = ST_SetSRID(ST_MakePoint(${posAnchor.lon}, ${posAnchor.lat}), 4326) where id = ${A.placeId}`);
+  // fixed fact ids: they reach the package files (`fc_…`), so a snapshot test needs them stable
+  let factNo = 0;
+  const stateFact = (patch: Partial<BerthStateFact>): BerthStateFact => ({
+    factId: `0199f0a0-0000-7000-8000-00000000f${String(++factNo).padStart(3, "0")}`, subject: "berth", subjectName: null, subjectCategory: null, statement: "x", observedAt: "2025-06-10", tone: null, safety: false, mentions: 1, ...patch,
+  });
+  await seedBerthState(tx, A.placeId, {
+    core: spotACore(factId),
+    gaps: ["prices", "contact"],
+    facts: [
+      stateFact({ statement: "Strong gusts come down the valley in the afternoon.", tone: "negative", safety: true, mentions: 2 }),
+      stateFact({ statement: "The taverna on the beach serves fresh fish.", subject: "landside", subjectName: "Taverna Vathi", subjectCategory: "food", tone: "positive" }),
+    ],
+    landing: [{ kind: "beach", lon: x(21.1305), lat: y(35.1452), geoObjectId: null, description: null }],
+    nearby: [{ geoObjectId: poiId, category: "food", distanceM: 1852, access: "foot" }],
+    updatedAt: new Date("2026-10-20T08:00:00Z"),
+  });
+  const coreOf = (values: Record<string, unknown>): Record<string, BerthStateValue> =>
+    Object.fromEntries(Object.entries(values).map(([k, value]) => [k, { value, confidence: 0.8, origin: "computed" as const, observedAt: null, factIds: [] }]));
+  await seedBerthState(tx, M.placeId, { core: coreOf({ ...sectors(0.9), occupancy: { "7": "full", "8": "full" } }), updatedAt: new Date("2026-10-19T08:00:00Z") });
+  await seedBerthState(tx, B.placeId, { core: coreOf(sectors(0.6, ["W"])), gaps: ["shelter.W"], updatedAt: new Date("2026-10-18T08:00:00Z") });
 
   // A and M select the taverna (spec 16; M's profile carries the selection, A's fixed attributes do not)
   await tx.execute(sql`

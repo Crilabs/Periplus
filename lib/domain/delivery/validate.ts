@@ -1,12 +1,10 @@
-import { CONTRACT_SCHEMAS, type CoastCollection, type ContractFile, type FileScope, type Highlight, type Spot } from "@/contract";
-import { GOOGLE_PLACE_ID_PATTERN, highlightCategory, OSM_ID_PATTERN, WIKIDATA_ID_PATTERN } from "@/contract/v2";
+import { CONTRACT_SCHEMAS, type CoastCollection, type ContractFile, type FileScope, type Spot, type SpotBody } from "@/contract";
+import { GOOGLE_PLACE_ID_PATTERN, OSM_ID_PATTERN, WIKIDATA_ID_PATTERN } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
-import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { isPublicId, type PublicIdPrefix } from "@/lib/domain/ids";
 import { isForbiddenUrl, mentionsForbiddenDomain } from "@/lib/domain/sources/forbidden-domains";
 import { distanceNm, distanceToLinesNm, pointInPolygon } from "./geo";
-import type { DroppedHighlight } from "./map-highlight";
 import type { UndeliveredSafety } from "./map-region";
 import type { SpotWarning } from "./map-spot";
 import { checkJsonSchema } from "./schema-check";
@@ -14,7 +12,7 @@ import type { DeliveryPackage, LonLat } from "./types";
 import { weatherPointId, type DroppedWeatherPoint } from "./weather-points";
 
 /*
- * Package validation (spec 08, Teil B "Validierung"): one named check per rule, each with its findings (file, object,
+ * Package validation (spec 08, Teil B "Validierung", contract 4.0): one named check per rule, each with its findings (file, object,
  * JSON pointer, German message, ruling M6-P31); a violation of any check blocks the package. Warnings (objects left
  * out while building, values dropped) never block. Pure apart from the injected copy check.
  */
@@ -28,15 +26,11 @@ export const CHECK_NAMES = [
   "limits",
   "exclude_reason",
   "berth_months",
-  "low_confidence_note",
-  "highlight_selected",
   "spot_duplicates",
-  "highlight_duplicates",
   "verbatim_text",
   "image_attribution",
   "foreign_content",
   "data_version",
-  "changes_complete",
 ] as const;
 export type CheckName = (typeof CHECK_NAMES)[number];
 
@@ -44,27 +38,16 @@ export type Finding = { file: ContractFile; objectId: string | null; path: strin
 export type ValidationReport = { ok: boolean; checks: Array<{ name: CheckName; ok: boolean; findings: Finding[] }>; warnings: Finding[] };
 
 export type ValidationDeps = {
-  /** The subdivision's previous valid package: its data version and the contract version of every object in it. */
-  previous: { dataVersion: number; versions: Map<string, number> } | null;
+  /** The subdivision's previous valid package: its data version. */
+  previous: { dataVersion: number } | null;
   /** The longest run of words of the text copied from the archive (`findArchiveCopies(db, text).longestRun`). */
   findCopies: (text: string) => Promise<number>;
-  /**
-   * The links of forbidden domains behind each delivered spot, highlight and region (`mapSpot` / `mapHighlights` /
-   * `draftSubdivision` `regionForbiddenSources`): such an object's values may come from Navily or Google, so it blocks
-   * (ruling M6-D-R2, final review I-2).
-   */
-  forbiddenSources: Array<{ file: "spots.json" | "highlights.json" | "regions.json"; objectId: string; urls: string[] }>;
   cfg: DeliveryConfig;
   /**
    * The attribution texts of the aerial and the terrain sources (`imageAttributionTexts`): an AI illustration's
    * attribution must contain one of each. Without it the check `image_attribution` has nothing to hold the images to.
    */
   imageAttribution?: { aerial: string[]; terrain: string[] };
-  /**
-   * Per delivered highlight the delivered spots selecting it (`mapHighlights` `selectors`, spec 16): `spotIds` may name
-   * no other spot.
-   */
-  highlightSelectors: ReadonlyMap<string, readonly string[]>;
   /** Build warnings (`buildWarnings`), passed into the report. */
   warnings?: Finding[];
 };
@@ -72,14 +55,20 @@ export type ValidationDeps = {
 const METRES_PER_NM = 1852;
 const WEATHER_POINT_ID = /^wp_[0-9A-HJKMNP-TV-Z]{26}$/;
 const URL_IN_TEXT = /\bhttps?:\/\/|\bwww\.[\p{L}\p{N}-]+\.\p{L}/iu;
+/**
+ * A bare domain name in a text (`example.com`, `sailing-guide.gr`, `a@b.eu`): a dotted word whose last label is one of
+ * `validation.domainTlds`, word-bounded, lowercase (so `geschützt.Es` is text). Not "any dotted word", so `Ag.Nikolaos` and a missing space after a full stop
+ * (`geschützt.Es`) stay text. Returns the matched string, or null.
+ */
+function domainIn(text: string, tlds: readonly string[]): string | null {
+  const re = new RegExp(String.raw`(?<![\p{L}\p{N}])[\p{L}\p{N}][\p{L}\p{N}.-]*\.(?:${tlds.join("|")})(?![\p{L}\p{N}])`, "u");
+  return re.exec(text)?.[0] ?? null;
+}
 const HARBOUR_KINDS = new Set(["port", "marina"]);
-const PREFIX_OF = { spot: "sp", highlight: "hl", region: "rg" } as const;
 
 const SPOTS = "spots.json";
-const HIGHLIGHTS = "highlights.json";
 const REGIONS = "regions.json";
 const WEATHER = "weather-points.json";
-const CHANGES = "changes.json";
 const MANIFEST = "manifest.json";
 
 type Ctx = { pkg: DeliveryPackage; deps: ValidationDeps };
@@ -93,10 +82,8 @@ const finding = (file: ContractFile, objectId: string | null, path: string | nul
 });
 
 const spotsOf = (pkg: DeliveryPackage) => pkg.files[SPOTS].spots;
-const highlightsOf = (pkg: DeliveryPackage) => pkg.files[HIGHLIGHTS].highlights;
 const regionsOf = (pkg: DeliveryPackage) => pkg.files[REGIONS].regions;
 const pointsOf = (pkg: DeliveryPackage) => pkg.files[WEATHER].points;
-const changesOf = (pkg: DeliveryPackage) => pkg.files[CHANGES]?.changes ?? [];
 const fmt = (n: number) => String(Number(n.toFixed(2))).replace(".", ",");
 
 /** Every file of the package with its data, the manifest first. */
@@ -154,28 +141,30 @@ const ids: Check = ({ pkg }) => {
   });
   pkg.manifest.areas.forEach((a, i) => visit(MANIFEST, a.id, `/areas/${i}/id`, "ar"));
   spotsOf(pkg).forEach((s, i) => visit(SPOTS, s.id, `/spots/${i}/id`, "sp"));
-  highlightsOf(pkg).forEach((h, i) => visit(HIGHLIGHTS, h.id, `/highlights/${i}/id`, "hl"));
   regionsOf(pkg).forEach((r, i) => visit(REGIONS, r.id, `/regions/${i}/id`, "rg"));
   pointsOf(pkg).forEach((p, i) => visit(WEATHER, p.id, `/points/${i}/id`, "wp"));
   return out;
 };
 
-/** Teil B "jede referenzierte ID … in derselben Lieferung". */
+/**
+ * Teil B "jede referenzierte ID … in derselben Lieferung": a spot's region and merge target, a region's spots and
+ * parent, a weather point's region; and a landside fact's `subject.id` names an entry of the `nearby` of the same spot.
+ */
 const references: Check = ({ pkg }) => {
   const out: Finding[] = [];
   const spotIds = new Set(spotsOf(pkg).map((s) => s.id));
-  const highlightIds = new Set(highlightsOf(pkg).map((h) => h.id));
   const regionIds = new Set(regionsOf(pkg).map((r) => r.id));
   const missing = (file: ContractFile, objectId: string, path: string, ref: string, what: string) =>
     out.push(finding(file, objectId, path, `Verweis auf ${what} ${ref}, der nicht im Paket ist`));
   spotsOf(pkg).forEach((s, i) => {
-    (s.highlightIds ?? []).forEach((h, j) => highlightIds.has(h) || missing(SPOTS, s.id, `/spots/${i}/highlightIds/${j}`, h, "das Highlight"));
     if (s.regionId != null && !regionIds.has(s.regionId)) missing(SPOTS, s.id, `/spots/${i}/regionId`, s.regionId, "die Region");
     if (s.mergedInto !== null && !spotIds.has(s.mergedInto)) missing(SPOTS, s.id, `/spots/${i}/mergedInto`, s.mergedInto, "den Spot");
-  });
-  highlightsOf(pkg).forEach((h, i) => {
-    h.spotIds.forEach((s, j) => spotIds.has(s) || missing(HIGHLIGHTS, h.id, `/highlights/${i}/spotIds/${j}`, s, "den Spot"));
-    if (h.regionId != null && !regionIds.has(h.regionId)) missing(HIGHLIGHTS, h.id, `/highlights/${i}/regionId`, h.regionId, "die Region");
+    const nearby = new Set(s.nearby.map((n) => n.id));
+    s.facts.forEach((f, j) => {
+      if (f.subject.kind === "landside" && f.subject.id !== null && !nearby.has(f.subject.id)) {
+        out.push(finding(SPOTS, s.id, `/spots/${i}/facts/${j}/subject/id`, `Fakt verweist auf ${f.subject.id}, das nicht in nearby desselben Spots steht`));
+      }
+    });
   });
   regionsOf(pkg).forEach((r, i) => {
     r.spotIds.forEach((s, j) => spotIds.has(s) || missing(REGIONS, r.id, `/regions/${i}/spotIds/${j}`, s, "den Spot"));
@@ -185,14 +174,6 @@ const references: Check = ({ pkg }) => {
   });
   pointsOf(pkg).forEach((p, i) => {
     if (p.regionId !== null && !regionIds.has(p.regionId)) missing(WEATHER, p.id, `/points/${i}/regionId`, p.regionId, "die Region");
-  });
-  const byType = { spot: spotIds, highlight: highlightIds, region: regionIds };
-  changesOf(pkg).forEach((c, i) => {
-    if (c.event !== "removed" && !byType[c.objectType].has(c.objectId)) missing(CHANGES, c.objectId, `/changes/${i}/objectId`, c.objectId, "das Objekt");
-    // a removed object is not in the package: at least its id must fit its type
-    if (c.event === "removed" && !isPublicId(c.objectId, PREFIX_OF[c.objectType])) {
-      out.push(finding(CHANGES, c.objectId, `/changes/${i}/objectId`, `Kennung passt nicht zur Objektart ${c.objectType}`));
-    }
   });
   return out;
 };
@@ -278,38 +259,6 @@ const berthMonths: Check = ({ pkg }) =>
       : [],
   );
 
-/** Teil B "score.confidence < 0,3 → summary.de mit „wenig belegt“"; spots and highlights (`mapSummary`). */
-const lowConfidenceNote: Check = ({ pkg, deps }) => {
-  const { lowConfidence, lowConfidenceNote: note } = deps.cfg.validation;
-  const lacks = (o: Spot | Highlight) => o.score.confidence < lowConfidence && !(o.summary?.de ?? "").toLowerCase().includes(note.toLowerCase());
-  const message = `Konfidenz unter ${fmt(lowConfidence)} ohne Hinweis „${note}“ in der Zusammenfassung`;
-  return [
-    ...spotsOf(pkg).flatMap((s, i) => (lacks(s) ? [finding(SPOTS, s.id, `/spots/${i}/summary`, message)] : [])),
-    ...highlightsOf(pkg).flatMap((h, i) => (lacks(h) ? [finding(HIGHLIGHTS, h.id, `/highlights/${i}/summary`, message)] : [])),
-  ];
-};
-
-/**
- * A listed category, at least one spot, and every spot of `spotIds` a delivered, unmerged, not excluded spot that
- * selected the highlight (ruling M6-P5, spec 16).
- */
-const highlightSelected: Check = ({ pkg, deps }) => {
-  const counting = new Set(spotsOf(pkg).filter((s) => s.mergedInto === null && !s.exclude.excluded).map((s) => s.id));
-  const categories = new Set<string>(highlightCategory.options);
-  const out: Finding[] = [];
-  highlightsOf(pkg).forEach((h, i) => {
-    if (!categories.has(h.category)) out.push(finding(HIGHLIGHTS, h.id, `/highlights/${i}/category`, `Kategorie ${h.category} nicht in der Liste`));
-    if (h.spotIds.length === 0) out.push(finding(HIGHLIGHTS, h.id, `/highlights/${i}/spotIds`, "Kein gelieferter Spot wählt das Highlight aus"));
-    const selectors = new Set(deps.highlightSelectors.get(h.id) ?? []);
-    h.spotIds.forEach((id, j) => {
-      const path = `/highlights/${i}/spotIds/${j}`;
-      if (!counting.has(id)) out.push(finding(HIGHLIGHTS, h.id, path, `${id} ist kein gelieferter, nicht ausgeschlossener Spot`));
-      else if (!selectors.has(id)) out.push(finding(HIGHLIGHTS, h.id, path, `${id} wählt das Highlight nicht aus`));
-    });
-  });
-  return out;
-};
-
 /** Pairs closer than `limitM`, each reported at the later object. */
 function closePairs<T extends { id: string; position: LonLat }>(items: T[], limitM: number, same: (a: T, b: T) => boolean) {
   const pairs: Array<{ a: T; b: T; index: number; metres: number }> = [];
@@ -336,33 +285,28 @@ const spotDuplicates: Check = ({ pkg, deps }) =>
     ({ a, b, metres }) => finding(SPOTS, b.id, `/spots/${spotsOf(pkg).indexOf(b)}/position`, `Gleiche Art wie ${a.id}, nur ${Math.round(metres)} m entfernt`),
   );
 
-/** Teil B "keine zwei Highlights gleichen Namens näher als 500 m" (normalized names). */
-const highlightDuplicates: Check = ({ pkg, deps }) =>
-  closePairs(highlightsOf(pkg), deps.cfg.validation.highlightDuplicateM, (a, b) => normalizeName(a.name) === normalizeName(b.name)).map(
-    ({ a, b, index, metres }) => finding(HIGHLIGHTS, b.id, `/highlights/${index}/name`, `Gleicher Name wie ${a.id}, nur ${Math.round(metres)} m entfernt`),
-  );
-
 type TextField = { file: ContractFile; objectId: string | null; path: string; text: string };
 
-/** The display texts the 15-word rule covers (spec 08), with their pointers. */
+/**
+ * The display texts the 15-word rule covers (spec 08), with their pointers: the free statements of the facts and the
+ * landing descriptions, which come from archived documents, and the texts the build makes itself.
+ */
 function displayTexts(pkg: DeliveryPackage): TextField[] {
   const out: TextField[] = [];
   const add = (file: ContractFile, objectId: string | null, path: string, text: string | null | undefined) => {
     if (typeof text === "string" && text !== "") out.push({ file, objectId, path, text });
   };
   spotsOf(pkg).forEach((s, i) => {
-    add(SPOTS, s.id, `/spots/${i}/summary/de`, s.summary?.de);
+    s.facts.forEach((f, j) => add(SPOTS, s.id, `/spots/${i}/facts/${j}/text`, f.text));
+    s.landingPoints.forEach((l, j) => l.kind === "text" && add(SPOTS, s.id, `/spots/${i}/landingPoints/${j}/description`, l.description));
     (s.seasonNote ?? []).forEach((n, j) => add(SPOTS, s.id, `/spots/${i}/seasonNote/${j}/text`, n.text));
     (s.hazards ?? []).forEach((h, j) => add(SPOTS, s.id, `/spots/${i}/hazards/${j}/text`, h.text));
     add(SPOTS, s.id, `/spots/${i}/exclude/detail`, s.exclude.detail);
     (s.images ?? []).forEach((img, j) => add(SPOTS, s.id, `/spots/${i}/images/${j}/alt/de`, img.alt.de));
-  });
-  highlightsOf(pkg).forEach((h, i) => {
-    add(HIGHLIGHTS, h.id, `/highlights/${i}/summary/de`, h.summary?.de);
-    (h.images ?? []).forEach((img, j) => add(HIGHLIGHTS, h.id, `/highlights/${i}/images/${j}/alt/de`, img.alt.de));
+    add(SPOTS, s.id, `/spots/${i}/contact/vhf`, s.contact?.vhf);
+    add(SPOTS, s.id, `/spots/${i}/contact/phone`, s.contact?.phone);
   });
   regionsOf(pkg).forEach((r, i) => add(REGIONS, r.id, `/regions/${i}/character/de`, r.character?.de));
-  changesOf(pkg).forEach((c, i) => add(CHANGES, c.objectId, `/changes/${i}/summary/de`, c.summary.de));
   return out;
 }
 
@@ -372,8 +316,14 @@ function nameTexts(pkg: DeliveryPackage): TextField[] {
   spotsOf(pkg).forEach((s, i) => {
     out.push({ file: SPOTS, objectId: s.id, path: `/spots/${i}/name`, text: s.name });
     (s.names ?? []).forEach((n, j) => out.push({ file: SPOTS, objectId: s.id, path: `/spots/${i}/names/${j}/name`, text: n.name }));
+    s.facts.forEach((f, j) => {
+      if (f.subject.kind === "landside" && f.subject.name !== null) out.push({ file: SPOTS, objectId: s.id, path: `/spots/${i}/facts/${j}/subject/name`, text: f.subject.name });
+    });
+    s.nearby.forEach((n, j) => {
+      out.push({ file: SPOTS, objectId: s.id, path: `/spots/${i}/nearby/${j}/name`, text: n.name });
+      (n.names ?? []).forEach((x, k) => out.push({ file: SPOTS, objectId: s.id, path: `/spots/${i}/nearby/${j}/names/${k}/name`, text: x.name }));
+    });
   });
-  highlightsOf(pkg).forEach((h, i) => out.push({ file: HIGHLIGHTS, objectId: h.id, path: `/highlights/${i}/name`, text: h.name }));
   regionsOf(pkg).forEach((r, i) => {
     out.push({ file: REGIONS, objectId: r.id, path: `/regions/${i}/name`, text: r.name });
     (r.names ?? []).forEach((n, j) => out.push({ file: REGIONS, objectId: r.id, path: `/regions/${i}/names/${j}/name`, text: n.name }));
@@ -394,17 +344,17 @@ class DependencyFailed extends Error {
  * `maxCopiedWords` (16 words or more). The copy checks run at most `copyCheckConcurrency` at once; any failure of one,
  * also a synchronous throw, is the database's, not the package's (rethrown, the build retries).
  */
-const verbatimText: Check = async ({ pkg, deps }) => {
-  const { maxCopiedWords, copyCheckConcurrency } = deps.cfg.validation;
-  const fields = displayTexts(pkg);
-  const texts = [...new Set(fields.map((f) => f.text))];
+/** The longest copied run per text; a failing lookup is the database's (`DependencyFailed`), no verdict on the package. */
+async function copiedRuns(texts: string[], deps: Pick<ValidationDeps, "findCopies" | "cfg">): Promise<Map<string, number>> {
+  const { copyCheckConcurrency } = deps.cfg.validation;
+  const unique = [...new Set(texts)];
   const runs = new Map<string, number>();
   let next = 0;
   // the first failure stops every worker: the build unwinds, no further query runs on its transaction
   let failed = false;
   const worker = async () => {
-    while (!failed && next < texts.length) {
-      const text = texts[next++]!;
+    while (!failed && next < unique.length) {
+      const text = unique[next++]!;
       try {
         runs.set(text, await Promise.resolve().then(() => deps.findCopies(text)));
       } catch (e) {
@@ -413,13 +363,55 @@ const verbatimText: Check = async ({ pkg, deps }) => {
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(copyCheckConcurrency, texts.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(copyCheckConcurrency, unique.length) }, worker));
+  return runs;
+}
+
+const verbatimText: Check = async ({ pkg, deps }) => {
+  const { maxCopiedWords } = deps.cfg.validation;
+  const fields = displayTexts(pkg);
+  const runs = await copiedRuns(fields.map((f) => f.text), deps);
   return fields.flatMap((f) =>
     runs.get(f.text)! > maxCopiedWords
       ? [finding(f.file, f.objectId, f.path, `Text enthält eine wörtliche Passage aus einer Quelle (mehr als ${maxCopiedWords} Wörter)`)]
       : [],
   );
 };
+
+/**
+ * Final review F3: a fact or a landing description that fails `verbatim_text` or `foreign_content` (a copied run, a
+ * link, a domain) is removed from its spot, with a warning (`fact_dropped`, `safety_fact_dropped`,
+ * `landing_description_dropped`), instead of rejecting the whole subdivision package. Runs on the mapped spots before
+ * versions; the checks still run over the finished package, so every other violation (a domain in a name, a copied
+ * hazard text) rejects as before. A failing copy lookup is the database's and is rethrown.
+ */
+export async function dropCopiedTexts(spots: Array<{ body: SpotBody; warnings: SpotWarning[] }>, deps: Pick<ValidationDeps, "findCopies" | "cfg">): Promise<void> {
+  const { maxCopiedWords } = deps.cfg.validation;
+  let runs: Map<string, number>;
+  try {
+    runs = await copiedRuns(
+      spots.flatMap((s) => [...s.body.facts.map((f) => f.text), ...s.body.landingPoints.flatMap((l) => (l.kind === "text" ? [l.description] : []))]),
+      deps,
+    );
+  } catch (e) {
+    throw e instanceof DependencyFailed ? e.original : e;
+  }
+  const bad = (text: string | null | undefined) =>
+    typeof text === "string" && text !== "" && ((runs.get(text) ?? 0) > maxCopiedWords || foreignTextMessage(text, deps.cfg) !== null);
+  for (const s of spots) {
+    const facts = s.body.facts.filter((f) => {
+      const drop = bad(f.text) || (f.subject.kind === "landside" && bad(f.subject.name));
+      if (drop) s.warnings.push({ code: f.safety ? "safety_fact_dropped" : "fact_dropped", factId: f.id });
+      return !drop;
+    });
+    const landingPoints = s.body.landingPoints.filter((l) => {
+      const drop = l.kind === "text" && bad(l.description);
+      if (drop) s.warnings.push({ code: "landing_description_dropped" });
+      return !drop;
+    });
+    s.body = { ...s.body, facts, landingPoints };
+  }
+}
 
 /**
  * Spec 13: the attribution of an AI illustration names the aerial and the terrain source it was made from (CC BY asks
@@ -436,14 +428,20 @@ const imageAttribution: Check = ({ pkg, deps }) => {
       if (!texts.terrain.some((t) => img.attribution.includes(t))) out.push(finding(file, id, `${base}/images/${j}/attribution`, "Bildnachweis nennt keine Geländequelle"));
     });
   spotsOf(pkg).forEach((s, i) => check(SPOTS, s.id, `/spots/${i}`, s.images));
-  highlightsOf(pkg).forEach((h, i) => check(HIGHLIGHTS, h.id, `/highlights/${i}`, h.images));
   return out;
 };
 
+/** Why a text counts as foreign content (a link, a forbidden domain, a domain name), or null when it does not. */
+function foreignTextMessage(text: string, cfg: DeliveryConfig): string | null {
+  if (URL_IN_TEXT.test(text)) return "Text enthält einen Link";
+  if (mentionsForbiddenDomain(text, cfg.forbiddenDomains)) return "Text nennt eine gesperrte Domain";
+  const domain = domainIn(text, cfg.validation.domainTlds);
+  return domain !== null ? `Text enthält einen Domainnamen (${domain})` : null;
+}
+
 /**
- * Teil B "Keine fremden Inhalte": external refs are ids only; no delivered spot, highlight or region draws on a document
- * of a forbidden domain (`deps.forbiddenSources`, ruling M6-D-R2, final review I-2) or lists one in `sources`; no text links to a page or
- * names a forbidden domain.
+ * Teil B "Keine fremden Inhalte" (contract 4.0: no source, no URL, no domain anywhere): external refs are ids only; no
+ * text (fact statements, landing descriptions, hints, names) holds a link, a domain-like string or a forbidden domain.
  */
 const foreignContent: Check = ({ pkg, deps }) => {
   const out: Finding[] = [];
@@ -451,41 +449,19 @@ const foreignContent: Check = ({ pkg, deps }) => {
   const ref = (file: ContractFile, id: string, path: string, value: string | null | undefined, pattern: RegExp, label: string) => {
     if (value != null && !pattern.test(value)) out.push(finding(file, id, path, `${label} ist keine reine Kennung`));
   };
-  const sources = (file: ContractFile, id: string, base: string, list: Array<{ url: string }> | undefined) =>
-    (list ?? []).forEach((s, j) => {
-      if (isForbiddenUrl(s.url, forbidden)) out.push(finding(file, id, `${base}/sources/${j}/url`, "Quelle von einer gesperrten Domain"));
-    });
   spotsOf(pkg).forEach((s, i) => {
     const base = `/spots/${i}`;
+    // the operator's own site is the one URL a spot may carry (contact); never one of a forbidden domain
+    if (s.contact?.url != null && isForbiddenUrl(s.contact.url, forbidden)) out.push(finding(SPOTS, s.id, `${base}/contact/url`, "Kontaktadresse von einer gesperrten Domain"));
     ref(SPOTS, s.id, `${base}/externalRefs/osmId`, s.externalRefs?.osmId, OSM_ID_PATTERN, "OSM-Kennung");
     ref(SPOTS, s.id, `${base}/externalRefs/wikidataId`, s.externalRefs?.wikidataId, WIKIDATA_ID_PATTERN, "Wikidata-Kennung");
     for (const [category, list] of Object.entries(s.externalRefs?.googlePlaceIds ?? {})) {
       (list ?? []).forEach((g, j) => ref(SPOTS, s.id, `${base}/externalRefs/googlePlaceIds/${category}/${j}`, g, GOOGLE_PLACE_ID_PATTERN, "Google-Kennung"));
     }
-    sources(SPOTS, s.id, base, s.sources);
   });
-  highlightsOf(pkg).forEach((h, i) => {
-    const base = `/highlights/${i}`;
-    ref(HIGHLIGHTS, h.id, `${base}/externalRefs/osmId`, h.externalRefs?.osmId, OSM_ID_PATTERN, "OSM-Kennung");
-    ref(HIGHLIGHTS, h.id, `${base}/externalRefs/wikidataId`, h.externalRefs?.wikidataId, WIKIDATA_ID_PATTERN, "Wikidata-Kennung");
-    ref(HIGHLIGHTS, h.id, `${base}/externalRefs/googlePlaceId`, h.externalRefs?.googlePlaceId, GOOGLE_PLACE_ID_PATTERN, "Google-Kennung");
-    sources(HIGHLIGHTS, h.id, base, h.sources);
-  });
-  const delivered = {
-    [SPOTS]: spotsOf(pkg).map((s) => s.id),
-    [HIGHLIGHTS]: highlightsOf(pkg).map((h) => h.id),
-    [REGIONS]: regionsOf(pkg).map((r) => r.id),
-  };
-  const listName = { [SPOTS]: "spots", [HIGHLIGHTS]: "highlights", [REGIONS]: "regions" } as const;
-  for (const f of deps.forbiddenSources) {
-    const i = delivered[f.file].indexOf(f.objectId);
-    if (i < 0) continue; // left out of the package
-    const list = listName[f.file];
-    for (const url of f.urls) out.push(finding(f.file, f.objectId, `/${list}/${i}`, `Werte aus einer Quelle einer gesperrten Domain (${url})`));
-  }
   for (const f of [...displayTexts(pkg), ...nameTexts(pkg)]) {
-    if (URL_IN_TEXT.test(f.text)) out.push(finding(f.file, f.objectId, f.path, "Text enthält einen Link"));
-    else if (mentionsForbiddenDomain(f.text, forbidden)) out.push(finding(f.file, f.objectId, f.path, "Text nennt eine gesperrte Domain"));
+    const message = foreignTextMessage(f.text, deps.cfg);
+    if (message !== null) out.push(finding(f.file, f.objectId, f.path, message));
   }
   return out;
 };
@@ -511,10 +487,8 @@ const dataVersion: Check = ({ pkg, deps }) => {
   }
   const envelopes: Array<[ContractFile, { scope: FileScope; schemaVersion: string } | undefined]> = [
     [SPOTS, pkg.files[SPOTS]],
-    [HIGHLIGHTS, pkg.files[HIGHLIGHTS]],
     [REGIONS, pkg.files[REGIONS]],
     [WEATHER, pkg.files[WEATHER]],
-    [CHANGES, pkg.files[CHANGES]],
   ];
   for (const [file, e] of envelopes) {
     if (!e) continue;
@@ -528,54 +502,6 @@ const dataVersion: Check = ({ pkg, deps }) => {
     }
     if (e.schemaVersion !== m.schemaVersion) out.push(finding(file, null, "/schemaVersion", `Vertragsversion ${e.schemaVersion} statt ${m.schemaVersion} wie im Manifest`));
   }
-  const changes = pkg.files[CHANGES];
-  if (changes && previous !== null && changes.previousDataVersion !== previous) {
-    out.push(finding(CHANGES, null, "/previousDataVersion", `Vorige Datenversion ${changes.previousDataVersion} statt ${previous}`));
-  }
-  return out;
-};
-
-/**
- * Teil B "changes.json enthält jedes Objekt, dessen profileVersion sich erhöht hat, und kein anderes": new or raised
- * objects and the previous ones missing now, each once, with the version in the package (a removed one above its
- * previous version).
- */
-const changesComplete: Check = ({ pkg, deps }) => {
-  if (pkg.manifest.scope.type !== "subdivision") return [];
-  const out: Finding[] = [];
-  const file = pkg.files[CHANGES];
-  if (deps.previous === null) {
-    if (file) out.push(finding(CHANGES, null, null, "changes.json in der ersten Lieferung"));
-    return out;
-  }
-  if (!file) return [finding(CHANGES, null, null, "changes.json fehlt, obwohl es eine vorige Lieferung gibt")];
-  const versions = deps.previous.versions;
-  const inPackage = new Map<string, number>(
-    [...spotsOf(pkg), ...highlightsOf(pkg), ...regionsOf(pkg)].map((o) => [o.id, o.profileVersion]),
-  );
-  const expected = new Set<string>();
-  for (const [id, v] of inPackage) if (!versions.has(id) || v > versions.get(id)!) expected.add(id);
-  for (const id of versions.keys()) if (!inPackage.has(id)) expected.add(id);
-  const listed = new Set<string>();
-  file.changes.forEach((c, i) => {
-    const path = `/changes/${i}`;
-    if (listed.has(c.objectId)) out.push(finding(CHANGES, c.objectId, `${path}/objectId`, "Objekt mehrfach in changes.json"));
-    listed.add(c.objectId);
-    if (!expected.has(c.objectId)) {
-      out.push(finding(CHANGES, c.objectId, `${path}/objectId`, "Eintrag ohne gestiegene Version"));
-      return;
-    }
-    const v = inPackage.get(c.objectId);
-    if (v !== undefined && c.profileVersion !== v) {
-      out.push(finding(CHANGES, c.objectId, `${path}/profileVersion`, `Version ${c.profileVersion} statt ${v} wie im Paket`));
-    }
-    if (v === undefined && c.event !== "removed") out.push(finding(CHANGES, c.objectId, `${path}/event`, "Fehlendes Objekt nicht als entfernt gemeldet"));
-    const before = versions.get(c.objectId);
-    if (v === undefined && before !== undefined && c.profileVersion <= before) {
-      out.push(finding(CHANGES, c.objectId, `${path}/profileVersion`, `Version ${c.profileVersion} nicht größer als die vorige (${before})`));
-    }
-  });
-  for (const id of expected) if (!listed.has(id)) out.push(finding(CHANGES, id, null, "Geändertes, neues oder entferntes Objekt fehlt in changes.json"));
   return out;
 };
 
@@ -588,24 +514,12 @@ const CHECKS: Record<CheckName, Check> = {
   limits,
   exclude_reason: excludeReason,
   berth_months: berthMonths,
-  low_confidence_note: lowConfidenceNote,
-  highlight_selected: highlightSelected,
   spot_duplicates: spotDuplicates,
-  highlight_duplicates: highlightDuplicates,
   verbatim_text: verbatimText,
   image_attribution: imageAttribution,
   foreign_content: foreignContent,
   data_version: dataVersion,
-  changes_complete: changesComplete,
 };
-
-/** Spots and highlights delivered without a summary (ruling M6-P9: "Zusammenfassung fehlt"). */
-function packageWarnings(pkg: DeliveryPackage): Finding[] {
-  return [
-    ...spotsOf(pkg).flatMap((s, i) => (s.summary ? [] : [finding(SPOTS, s.id, `/spots/${i}/summary`, "Zusammenfassung fehlt")])),
-    ...highlightsOf(pkg).flatMap((h, i) => (h.summary ? [] : [finding(HIGHLIGHTS, h.id, `/highlights/${i}/summary`, "Zusammenfassung fehlt")])),
-  ];
-}
 
 /**
  * Runs every check in `CHECK_NAMES` order (each listed, also when it passes); `ok` when none has a finding. A check
@@ -624,30 +538,24 @@ export async function validatePackage(pkg: DeliveryPackage, deps: ValidationDeps
     }
     checks.push({ name, ok: findings.length === 0, findings });
   }
-  let own: Finding[] = [];
-  try {
-    own = packageWarnings(pkg);
-  } catch {
-    // a package too broken for the summary scan has its findings above
-  }
-  return { ok: checks.every((c) => c.ok), checks, warnings: [...(deps.warnings ?? []), ...own] };
+  return { ok: checks.every((c) => c.ok), checks, warnings: deps.warnings ?? [] };
 }
 
-const SPOT_OMITTED_DE: Record<"no_name" | "no_profile" | "shelter_incomplete", string> = {
+const SPOT_OMITTED_DE: Record<"no_name" | "no_state" | "incomplete_core", string> = {
   no_name: "Nicht geliefert: kein gültiger Name",
-  no_profile: "Nicht geliefert: kein Profil",
-  shelter_incomplete: "Nicht geliefert: Schutzwerte unvollständig oder ohne Herkunft",
+  no_state: "Nicht geliefert: kein Stand",
+  incomplete_core: "Nicht geliefert: Schutz oder Ankerposition fehlt im Stand",
 };
 
-const FIELD_DE: Record<"anchorPosition" | "depth" | "shelter", string> = { anchorPosition: "Ankerposition", depth: "Tiefe", shelter: "Schutz" };
-
-const HIGHLIGHT_DROPPED_DE: Record<DroppedHighlight["reason"], string> = {
-  no_name: "Nicht geliefert: kein gültiger Name",
-  no_profile: "Nicht geliefert: kein Profil",
-  not_existing: "Nicht geliefert: existiert laut Profil nicht mehr",
-  no_importance: "Nicht geliefert: keine Bedeutung",
-  not_selected: "Nicht geliefert: von keinem gelieferten Spot ausgewählt",
-  duplicate: "Nicht geliefert: Dublette",
+const SPOT_WARNING_DE: Record<SpotWarning["code"], string> = {
+  fallback_name: "Ausgeschlossener Spot ohne gültigen Namen, mit Ersatznamen geliefert",
+  nearby_without_id: "Ding an Land ohne öffentliche ID, nicht geliefert",
+  fact_without_subject: "Landfakt ohne Bezugsnamen, nicht geliefert",
+  safety_fact_without_subject: "Sicherheitsfakt ohne Bezugsnamen, nicht geliefert: Sicherheitshinweis geht verloren",
+  contact_url_foreign: "Kontaktadresse nicht von der eigenen Website des Platzes, nicht geliefert",
+  fact_dropped: "Fakt mit wörtlich kopiertem Text oder fremdem Inhalt (Link, Domain), nicht geliefert",
+  safety_fact_dropped: "Sicherheitsfakt mit wörtlich kopiertem Text oder fremdem Inhalt (Link, Domain), nicht geliefert: Sicherheitshinweis geht verloren",
+  landing_description_dropped: "Anlandebeschreibung mit wörtlich kopiertem Text oder fremdem Inhalt (Link, Domain), nicht geliefert",
 };
 
 const WEATHER_DROPPED_DE: Record<DroppedWeatherPoint["reason"], string> = {
@@ -664,7 +572,6 @@ export function buildWarnings(input: {
   omittedSpots?: Array<{ id: string; reason: keyof typeof SPOT_OMITTED_DE }>;
   /** Merged places of the previous package whose target is not delivered: removed, not carried (ruling M6-P14). */
   mergedNotCarried?: Array<{ id: string; into: string }>;
-  droppedHighlights?: DroppedHighlight[];
   droppedRegions?: Array<{ id: string; reason: "no_name" }>;
   droppedWeatherPoints?: DroppedWeatherPoint[];
   /** Text-only safety values without a contract field (`undeliveredSafety`, final review I-3). */
@@ -675,26 +582,12 @@ export function buildWarnings(input: {
   const out: Finding[] = [];
   for (const s of input.spots ?? []) {
     for (const w of s.warnings) {
-      out.push(
-        finding(
-          SPOTS,
-          s.id,
-          null,
-          w.code === "fallback_name"
-            ? "Ausgeschlossener Spot ohne gültigen Namen, mit Ersatznamen geliefert"
-            : w.field === "shelter"
-              ? "Schutzwerte ohne Herkunft geliefert (ausgeschlossener Spot)"
-              : `${FIELD_DE[w.field]} ohne Herkunft, nicht geliefert`,
-        ),
-      );
+      out.push(finding(SPOTS, s.id, null, (w.code === "fact_dropped" || w.code === "safety_fact_dropped") ? `${SPOT_WARNING_DE[w.code]} (${w.factId})` : SPOT_WARNING_DE[w.code]));
     }
   }
   for (const s of input.omittedSpots ?? []) out.push(finding(SPOTS, s.id, null, SPOT_OMITTED_DE[s.reason]));
   for (const m of input.mergedNotCarried ?? []) {
     out.push(finding(SPOTS, m.id, null, `Zusammengelegt mit ${m.into}, das nicht geliefert wird: als entfernt gemeldet`));
-  }
-  for (const h of input.droppedHighlights ?? []) {
-    out.push(finding(HIGHLIGHTS, h.id, null, h.reason === "duplicate" && h.into ? `${HIGHLIGHT_DROPPED_DE.duplicate} von ${h.into}` : HIGHLIGHT_DROPPED_DE[h.reason]));
   }
   for (const r of input.droppedRegions ?? []) out.push(finding(REGIONS, r.id, null, "Nicht geliefert: kein gültiger Name"));
   for (const w of input.droppedWeatherPoints ?? []) out.push(finding(WEATHER, weatherPointId(w.geoObjectId, w.kind), null, WEATHER_DROPPED_DE[w.reason]));
