@@ -222,6 +222,9 @@ describe("loadConfig", () => {
     expect(loadConfig("config").quality.navily).toMatchObject({ protectedThreshold: 0.5, seabedShareMin: 0.3 });
     const bad = { ...repoConfig.quality, navily: { ...repoConfig.quality.navily, protectedThreshold: 1.5 } };
     expect(() => loadConfig(fixtureDir({ quality: bad }))).toThrow(/quality\.json.*protectedThreshold/);
+    expect(loadConfig("config").quality.navily).toMatchObject({ excludedTypes: ["prohibited", "dry-berthing"], prohibitedTypes: ["prohibited"] });
+    const orphan = { ...repoConfig.quality, navily: { ...repoConfig.quality.navily, prohibitedTypes: ["unknown-type"] } };
+    expect(() => loadConfig(fixtureDir({ quality: orphan }))).toThrow(/quality\.json.*prohibitedTypes/);
     const duplicate = { ...repoConfig.quality, navilySample: { ...repoConfig.quality.navilySample, protectedThreshold: 0.5 } };
     expect(() => loadConfig(fixtureDir({ quality: duplicate }))).toThrow(/quality\.json/);
   });

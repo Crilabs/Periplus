@@ -19,6 +19,7 @@ import { SEABED_TYPE_LABELS } from "@/lib/domain/facts/labels";
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import type { LonLat } from "@/lib/domain/geometry/water";
+import type { BerthStateNearby, BerthStateValue } from "@/lib/db/schema/research-state";
 import { latestProfiles, validAt } from "@/lib/domain/timeline";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 
@@ -158,6 +159,21 @@ function normalise(attribute: ComparisonAttribute, s: ComparisonSubject, cfg: Na
       return [{ protected: isProtected }, `${decimal(v)} (${isProtected ? "geschützt" : "offen"})`];
     }
   }
+}
+
+/** The core attributes a berth state carries into the comparison (position, existence, depth and food stay out: see the gate). */
+const STATE_CORE_KEYS: readonly string[] = COMPARISON_ATTRIBUTES.filter((a) => a.startsWith("shelter.") || ["seabed", "mooring.buoys", "services.water"].includes(a));
+
+/**
+ * The attributes map `comparisonValues` reads, from a berth state (pure): the core values under their fact keys, and
+ * `highlight.supply` from `nearby` (a `supply` or `bakery` reachable on foot, as the contract's `services.shop`). A
+ * key without a core value is absent (no own value).
+ */
+export function attributesFromState(core: Record<string, BerthStateValue>, nearby: BerthStateNearby[]): Record<string, unknown> {
+  const attributes: Record<string, unknown> = {};
+  for (const key of STATE_CORE_KEYS) if (core[key] !== undefined) attributes[key] = core[key]!.value;
+  attributes["highlight.supply"] = { present: nearby.some((n) => n.access === "foot" && (n.category === "supply" || n.category === "bakery")) };
+  return attributes;
 }
 
 /** The compared values of a place, one per attribute of `COMPARISON_ATTRIBUTES` (pure). */

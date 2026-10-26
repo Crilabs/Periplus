@@ -24,7 +24,7 @@
 - Nach dem Rückbau läuft ein kompletter Recherche-Lauf + Folgekette + Paketbau auf einer frischen DB aus der Basis-Migration (End-to-End-Test Task 6).
 - Kein verbleibender Import zeigt auf gelöschte Module (tsc), kein Queue-Name ohne Handler (Worker-Start-Test).
 - Die Dokument-Ansicht funktioniert ohne Chunks (liest das Markdown aus dem Archiv).
-- Das Navily-Tor misst Kernwerte gegen `berth_states`, nicht mehr gegen Profile.
+- Das Navily-Tor misst Kernwerte gegen `berth_states`, nicht mehr gegen Profile (gebaut in Plan `2026-10-25-periplus-tor-kernwerte.md`; nach dem Rückbau muss der Tor-Test unverändert grün sein).
 
 ---
 
@@ -38,7 +38,7 @@ Verschieben (Re-Export entfällt, alle Importe anpassen): `lib/pipeline/text/sta
 
 - `pipeline/images/stage.ts` + `consolidation/targets.ts`: Bildziele aus bestätigten Plätzen mit `berth_states` statt `profiles`.
 - `research-confirm.ts`: kein `startConsolidationRun` mehr.
-- Tor (`gate-report.ts`) und Navily-Vergleich (`quality/navily-compare.ts`, `comparison-values.ts`): Werte aus `berth_states` statt `latestProfiles`/`evaluation_profiles`.
+- Qualitätsseite (`quality/navily-compare.ts`, `comparison-values.ts` `loadComparisonSubjects`): Werte aus `berth_states` statt `latestProfiles`/`evaluation_profiles`, über `attributesFromState` wie das Tor. Das Tor selbst liest seit Plan `2026-10-25-periplus-tor-kernwerte.md` schon `berth_states` und `places` und vergleicht die Kernwerte; hier nur prüfen, dass kein Profil-Import zurückkommt.
 - `geometry-run.ts`: keine Konsolidierungsstufen mehr anhängen (Geometrie → fertig; Folgekette nicht nötig).
 - `subdivision-build.ts`: keine Reread- und Discovery-Stufen; stattdessen optional Recherche-Lauf am Ende (Entscheidung im Bericht).
 - `documents/store.ts` `storeFetched`: keine Chunks, keine Shingles, keine Embeddings; Dokument-Ansicht liest Markdown aus dem Archiv.

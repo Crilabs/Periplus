@@ -3,7 +3,9 @@ import { getConfig } from "@/lib/config";
 import type { PlaceStatus } from "@/lib/db/schema";
 import type { LonLat } from "@/lib/domain/geometry/water";
 import type { NavilySpot } from "@/lib/domain/quality/navily-sample";
-import { evaluateGate } from "@/lib/domain/research/gate-navily";
+import type { BerthStateNearby } from "@/lib/db/schema/research-state";
+import { evaluateGate, type GateState } from "@/lib/domain/research/gate-navily";
+import { gateOutcome, type GateMeasurement } from "@/lib/domain/research/gate-report";
 import { ADMIN_SET_REASON, RESTRICTED_REASON, type Verdict } from "@/lib/domain/research/confirmation";
 
 /* The gate evaluation (plan N3 task 2) is pure; only synthetic places and spots (never Navily data). */
@@ -30,12 +32,17 @@ function place(placeId: string, names: string[], position: LonLat, o: { confirme
 }
 const run = (places: In[], spots: NavilySpot[], decisions: Record<string, "berth" | "not_berth"> = {}, inArea?: (p: LonLat) => boolean) =>
   evaluateGate({ thresholds: [2, 3, 4, 5], places, spots, decisions: new Map(Object.entries(decisions)), inArea }, cfg);
+const berthState = (core: Record<string, number | boolean | object>, nearby: BerthStateNearby[] = []): GateState => ({
+  core: Object.fromEntries(Object.entries(core).map(([k, value]) => [k, { value, confidence: 0.8, origin: "computed" as const, observedAt: null, factIds: [] }])),
+  nearby,
+});
+const withState = (p: In, state: GateState | null): In => ({ ...p, state });
 const row = (r: ReturnType<typeof run>, n: number) => r.rows.find((x) => x.threshold === n)!;
 
 describe("evaluateGate", () => {
   it("a confirmed place on a spot of its kind is correct", () => {
     const r = run([place("p1", ["Alpha"], AT)], [spot({ name: "Alpha" })]);
-    expect(row(r, 2)).toEqual({ threshold: 2, confirmed: 1, correct: 1, wrongKind: 0, wrongPosition: 0, conflicts: 0, decidedNotBerth: 0, correctness: 1 });
+    expect(row(r, 2)).toEqual({ threshold: 2, confirmed: 1, correct: 1, wrongKind: 0, wrongPosition: 0, wrongShelter: 0, wrongProhibited: 0, conflicts: 0, decidedNotBerth: 0, correctness: 1, coverage: 1 });
     expect(r.conflicts.get(2)).toEqual([]);
     expect(r.misses.get(2)).toEqual([]);
   });
@@ -59,7 +66,7 @@ describe("evaluateGate", () => {
 
   it("a threshold confirming nothing has correctness null, not 100 % (Review Focus)", () => {
     const r = run([place("p1", ["Alpha"], AT, { confirmedUpTo: 3 })], [spot({ name: "Alpha" })]);
-    expect(row(r, 4)).toEqual({ threshold: 4, confirmed: 0, correct: 0, wrongKind: 0, wrongPosition: 0, conflicts: 0, decidedNotBerth: 0, correctness: null });
+    expect(row(r, 4)).toEqual({ threshold: 4, confirmed: 0, correct: 0, wrongKind: 0, wrongPosition: 0, wrongShelter: 0, wrongProhibited: 0, conflicts: 0, decidedNotBerth: 0, correctness: null, coverage: 0 });
     expect(row(r, 3).correctness).toBe(1);
   });
 
@@ -180,5 +187,164 @@ describe("evaluateGate", () => {
       );
       expect(r.misses.get(2)).toEqual([{ spotIndex: 0, reason: "too_few_sources", placeId: "near" }]);
     });
+  });
+});
+
+describe("evaluateGate core values", () => {
+  const confirmed = (state: GateState | null) => [withState(place("p1", ["Alpha"], AT), state)];
+
+  it("a sector delivered as clearly protected (0.9) that the reference list lacks is a shelter error and breaks correctness", () => {
+    const r = run(confirmed(berthState({ "shelter.N": 0.9 })), [spot({ name: "Alpha", prot: ["S", "SW"] })]);
+    expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongShelter: 1, conflicts: 0, correctness: 0 });
+    expect(r.errors.get(2)).toEqual([{ placeId: "p1", kind: "shelter", spotIndex: 0, distanceM: 0 }]);
+  });
+
+  it("the list is read case-insensitively: a listed sector is no error", () => {
+    const r = run(confirmed(berthState({ "shelter.N": 0.9 })), [spot({ name: "Alpha", prot: ["n"] })]);
+    expect(row(r, 2)).toMatchObject({ correct: 1, wrongShelter: 0 });
+  });
+
+  it("0.6 against the same list is a deviation, no error", () => {
+    const r = run(confirmed(berthState({ "shelter.N": 0.6 })), [spot({ name: "Alpha", prot: ["S"] })]);
+    expect(row(r, 2)).toMatchObject({ correct: 1, wrongShelter: 0 });
+    expect(r.errors.get(2)).toEqual([]);
+    expect(r.core.get(2)!["shelter.N"]).toEqual({ match: 0, deviation: 1, gap: 0, notAtNavily: 0, noState: 0 });
+  });
+
+  it("a reference without a protection list: no shelter comparison, no error", () => {
+    const r = run(confirmed(berthState({ "shelter.N": 0.95 })), [spot({ name: "Alpha", prot: null })]);
+    expect(row(r, 2)).toMatchObject({ correct: 1, wrongShelter: 0 });
+    expect(r.core.get(2)!["shelter.N"]).toMatchObject({ notAtNavily: 1, deviation: 0 });
+  });
+
+  it("a confirmed place without a state counts as no state, no crash, still correct", () => {
+    const r = run(confirmed(null), [spot({ name: "Alpha", prot: ["S"], water: true })]);
+    expect(row(r, 2)).toMatchObject({ correct: 1 });
+    const c = r.core.get(2)!;
+    expect(c["services.water"]).toEqual({ match: 0, deviation: 0, gap: 0, notAtNavily: 0, noState: 1 });
+    expect(c.seabed.noState).toBe(1);
+  });
+
+  it("counts match, deviation, gap (own value missing) and not at reference per attribute", () => {
+    const state = berthState(
+      { "shelter.S": 0.9, "services.water": false, seabed: [{ type: "sand", share: 1 }], "mooring.buoys": { present: true } },
+      [{ geoObjectId: "g", category: "supply", distanceM: 200, access: "foot" }],
+    );
+    const r = run(confirmed(state), [spot({ name: "Alpha", prot: ["S"], water: true, seabeds: [], shop: true, type: "anchorage" })]);
+    const c = r.core.get(2)!;
+    expect(c["shelter.S"].match).toBe(1);
+    expect(c["shelter.N"]).toMatchObject({ gap: 1, match: 0 }); // the reference says N is open, we have no value
+    expect(c["services.water"]).toMatchObject({ deviation: 1, match: 0 });
+    expect(c.seabed).toMatchObject({ notAtNavily: 1 });
+    expect(c["mooring.buoys"]).toMatchObject({ notAtNavily: 1 });
+    expect(c["highlight.supply"]).toMatchObject({ match: 1 });
+  });
+
+  it("a missing own value where the reference has one is a gap, not a deviation (K4); supply comes from nearby on foot", () => {
+    const state = berthState({}, [{ geoObjectId: "g", category: "bakery", distanceM: 300, access: "foot" }, { geoObjectId: "h", category: "supply", distanceM: 9000, access: "transport" }]);
+    const r = run(confirmed(state), [spot({ name: "Alpha", prot: ["S"], water: true, shop: true })]);
+    const c = r.core.get(2)!;
+    expect(c["services.water"]).toMatchObject({ gap: 1, deviation: 0 });
+    expect(c["highlight.supply"]).toMatchObject({ match: 1 });
+    expect(c["shelter.S"]).toMatchObject({ gap: 1, deviation: 0 });
+    for (const a of ["existence", "position", "depth", "highlight.food"] as const) expect(c[a]).toEqual({ match: 0, deviation: 0, gap: 0, notAtNavily: 0, noState: 0 });
+  });
+
+  describe("spot types and coverage", () => {
+    it("a bay beside a prohibited spot is an error and never correct; the spot is no miss and not in the coverage", () => {
+      expect(cfg.quality.navily.prohibitedTypes).toEqual(["prohibited"]);
+      const r = run([place("p1", ["Alpha"], north(50))], [spot({ name: "Alpha", kind: null, type: "prohibited" })]);
+      expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongProhibited: 1, conflicts: 0, correctness: 0, coverage: null });
+      expect(r.errors.get(2)).toEqual([{ placeId: "p1", kind: "prohibited", spotIndex: 0, distanceM: expect.closeTo(50, 0) }]);
+      expect(r.misses.get(2)).toEqual([]);
+    });
+
+    it("a prohibited spot within reach is an error even when the match takes a nearer normal spot", () => {
+      const r = run([place("p1", ["Alpha"], AT)], [spot({ name: "Alpha", ...north(30) }), spot({ name: "Other", kind: null, type: "prohibited", ...north(-80) })]);
+      expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongProhibited: 1, coverage: 0 });
+      expect(r.errors.get(2)).toEqual([{ placeId: "p1", kind: "prohibited", spotIndex: 1, distanceM: expect.closeTo(80, 0) }]);
+      // beyond gate.maxPositionDeviationM it is no error
+      const far = run([place("p1", ["Alpha"], AT)], [spot({ name: "Alpha", ...north(30) }), spot({ name: "Other", type: "prohibited", ...north(-400) })]);
+      expect(row(far, 2)).toMatchObject({ correct: 1, wrongProhibited: 0 });
+      // two places near the same ban are both errors
+      const two = run([place("p1", ["Alpha"], AT), place("p2", ["Beta"], north(20))], [spot({ name: "Gamma", type: "prohibited", ...north(60) })]);
+      expect(row(two, 2).wrongProhibited).toBe(2);
+    });
+
+    it("a match to an excluded, non-prohibited spot of another known kind is a conflict, never wrong_kind", () => {
+      const r = run([place("p1", ["Alpha"], north(50))], [spot({ name: "Alpha", kind: "port", type: "dry-berthing" })]);
+      expect(row(r, 2)).toMatchObject({ wrongKind: 0, conflicts: 1, correct: 0 });
+    });
+
+    it("a human berth decision stays correct on a dry-berthing spot but covers nothing", () => {
+      const r = run([place("p1", ["Alpha"], north(50))], [spot({ name: "Alpha", type: "dry-berthing" })], { p1: "berth" });
+      expect(row(r, 2)).toMatchObject({ correct: 1, conflicts: 0, coverage: null });
+    });
+
+    it("a human berth decision does not clear a prohibited match", () => {
+      const r = run([place("p1", ["Alpha"], north(50))], [spot({ name: "Alpha", type: "prohibited" })], { p1: "berth" });
+      expect(row(r, 2)).toMatchObject({ correct: 0, wrongProhibited: 1 });
+    });
+
+    it("a marina beside a dry-berthing spot is a conflict, not a hit; the spot is not counted", () => {
+      const r = run([place("p1", ["Alpha"], north(50), { kind: "marina" })], [spot({ name: "Alpha", kind: "port", type: "dry-berthing" })]);
+      expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongProhibited: 0, conflicts: 1, correctness: 0, coverage: null });
+      expect(r.conflicts.get(2)).toEqual(["p1"]);
+      expect(r.misses.get(2)).toEqual([]);
+      expect(r.core.get(2)!.seabed).toEqual({ match: 0, deviation: 0, gap: 0, notAtNavily: 0, noState: 0 });
+    });
+
+    it("a prohibited or dry-berthing spot without a place is not in the miss list", () => {
+      const r = run(
+        [place("p1", ["Alpha"], AT)],
+        [spot({ name: "Alpha" }), spot({ name: "Delta", ...north(5000), type: "prohibited" }), spot({ name: "Echo", ...north(8000), type: "dry-berthing" }), spot({ name: "Foxtrot", ...north(11000) })],
+      );
+      expect(r.misses.get(2)).toEqual([{ spotIndex: 3, reason: "no_candidate", placeId: null }]);
+      expect(row(r, 2).coverage).toBeCloseTo(0.5);
+    });
+
+    it("coverage is per threshold: correctly matched spots over spots in the area", () => {
+      const places = [place("p1", ["Alpha"], AT, { confirmedUpTo: 5 }), place("p2", ["Beta"], north(5000), { confirmedUpTo: 2 })];
+      const spots = [spot({ name: "Alpha" }), spot({ name: "Beta", ...north(5000) }), spot({ name: "Gamma", ...north(9000) }), spot({ name: "Delta", ...north(12000) })];
+      const r = run(places, spots);
+      expect(row(r, 2).coverage).toBeCloseTo(0.5);
+      expect(row(r, 3).coverage).toBeCloseTo(0.25);
+    });
+
+    it("an error match does not cover its spot; spots outside the area do not count", () => {
+      const inside = (p: LonLat) => p.lat <= AT.lat + 0.1;
+      const r = run([place("p1", ["Alpha"], north(300))], [spot({ name: "Alpha" }), spot({ name: "Far", ...north(30_000) })], {}, inside);
+      expect(row(r, 2)).toMatchObject({ wrongPosition: 1, coverage: 0 });
+      const ok = run([place("p1", ["Alpha"], AT)], [spot({ name: "Alpha" }), spot({ name: "Far", ...north(30_000) })], {}, inside);
+      expect(row(ok, 2).coverage).toBe(1);
+    });
+  });
+
+  it("the gate no longer reads the old profiles", async () => {
+    const { readFile } = await import("node:fs/promises");
+    expect(await readFile("lib/domain/research/gate-report.ts", "utf8")).not.toContain("latestProfiles");
+  });
+});
+
+describe("gateOutcome and coverage", () => {
+  const base = { unbacked: [], passedAt: null, tooFewConfirmed: null, minConfirmed: 25, minCoverage: 0.5, lowCoverage: null, rows: [{ confirmed: 30, conflicts: 0 }] } as unknown as GateMeasurement;
+
+  it("shows the coverage floored and lists every threshold below the minimum", () => {
+    const low = { ...base, lowCoverage: [{ threshold: 2, coverage: 0.496 }, { threshold: 3, coverage: 0.2 }] };
+    expect(gateOutcome(low)).toBe("Tor nicht bestanden: Abdeckung N=2: 49 %, N=3: 20 % (mindestens 50 %)");
+    expect(gateOutcome({ ...base, lowCoverage: [{ threshold: 2, coverage: 0.496 }] })).toBe("Tor nicht bestanden: Abdeckung 49 % (mindestens 50 %)");
+  });
+
+  it("30 confirmed places on 60 spots: all correct passes at exactly 50 % coverage, 29 of 60 does not; no spot at all never passes", () => {
+    const spotAt = (i: number) => spot({ name: `S${i}`, ...north(i * 2000) });
+    const spots = Array.from({ length: 60 }, (_, i) => spotAt(i));
+    const placesOf = (n: number) => Array.from({ length: n }, (_, i) => place(`p${i}`, [`S${i}`], north(i * 2000)));
+    const r30 = evaluateGate({ thresholds: [2], places: placesOf(30), spots, decisions: new Map() }, cfg);
+    expect(r30.rows[0]).toMatchObject({ confirmed: 30, correct: 30, correctness: 1, coverage: 0.5 });
+    expect(r30.rows[0]!.coverage! >= cfg.research.gate.minCoverage).toBe(true);
+    const r29 = evaluateGate({ thresholds: [2], places: placesOf(29), spots, decisions: new Map() }, cfg);
+    expect(r29.rows[0]!.coverage! >= cfg.research.gate.minCoverage).toBe(false);
+    const none = evaluateGate({ thresholds: [2], places: placesOf(3), spots: [], decisions: new Map(), inArea: () => true }, cfg);
+    expect(none.rows[0]!.coverage).toBeNull();
   });
 });

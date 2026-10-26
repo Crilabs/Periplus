@@ -33,6 +33,8 @@
     "protectedThreshold": 0.5,
     "seabedShareMin": 0.3,
     "depthStepM": 0.5,
+    "excludedTypes": ["prohibited", "dry-berthing"],
+    "prohibitedTypes": ["prohibited"],
     "proposalVersion": "navily-assistant/1"
   },
   "extrapolation": { "subdivisionsMin": 60, "subdivisionsMax": 100, "placesPerSubdivision": null }
