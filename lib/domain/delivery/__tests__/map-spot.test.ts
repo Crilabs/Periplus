@@ -90,6 +90,7 @@ function spotA(
     nearbyObjects: [object()],
     ownWebsiteDomain: "marina.example",
     independentSources: 1,
+    popularity: 0.55,
     images: [],
     ...o.src,
   };
@@ -213,13 +214,16 @@ const FIELD_CASES: Record<keyof SpotBody, () => void> = {
   seasonNote: () => expect(mapped().seasonNote).toEqual([{ months: [6, 7, 8, 9], text: "Geöffnet" }]),
   score: () => {
     // the mean confidence of the 22 non-rule core values; the confirmation's independent sources, the newest text date
-    expect(mapped().score).toEqual({ confidence: 0.77, popularity: 0, quietness: null, sourcesCount: 1, lastObserved: "2025-06-10" });
+    expect(mapped().score).toEqual({ confidence: 0.77, popularity: 0.55, quietness: null, sourcesCount: 1, lastObserved: "2025-06-10" });
     // many facts do not raise the count; only the confirmation's sources do
     const withFacts = mapped(spotA({ state: { facts: [fact({ factId: FACT_2, observedAt: "2026-09-01", memberIds: [FACT_2, FACT_3] })] } }));
     expect(withFacts.score).toMatchObject({ sourcesCount: 1, lastObserved: "2026-09-01" });
     expect(mapped(spotA({ src: { independentSources: 4 } })).score.sourcesCount).toBe(4);
-    // a spot without a state (excluded) has none
+    // a spot without a state (excluded) has none, and no popularity
+    expect(mapped(excludedC({ state: null, src: { popularity: 0.9 } })).score.popularity).toBe(0);
     expect(mapped(excludedC({ state: null, src: { independentSources: 4 } })).score.sourcesCount).toBe(0);
+    // popularity is the loader's value, rounded to 3 decimals
+    expect(mapped(spotA({ src: { popularity: 0.123456 } })).score.popularity).toBe(0.123);
   },
   externalRefs: () => expect(mapped().externalRefs).toEqual({ googlePlaceIds: {}, osmId: "way/123456789", wikidataId: null }),
   images: () => {

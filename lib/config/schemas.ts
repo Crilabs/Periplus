@@ -883,6 +883,8 @@ export const deliverySchema = z.strictObject({
     .refine((r) => r.minDays <= r.maxDays, "minDays must not exceed maxDays")
     // 28 is the contract's ceiling (manifest scope `days`); a longer trip would make packages the contract refuses
     .refine((r) => r.maxDays <= RADIUS_MAX_DAYS, { message: `maxDays must not exceed the contract's ${RADIUS_MAX_DAYS}`, path: ["maxDays"] }),
+  /** `popularity` is normalised within this distance of each place, across subdivisions (spec 18), nautical miles. */
+  popularity: z.strictObject({ neighbourhoodNm: positive }),
   validation: z.strictObject({
     maxWaterDistanceNm: positive,
     spotDuplicateM: positive,

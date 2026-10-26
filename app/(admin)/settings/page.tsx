@@ -60,6 +60,7 @@ const DELIVERY_GROUPS: Record<Exclude<keyof AppConfig["delivery"], "schemaVersio
   regions: "Regionen",
   weather: "Wetterpunkte",
   radius: "Umkreis-Lieferung",
+  popularity: "Beliebtheit (Nachbarschaft)",
   validation: "Validierung",
   api: "API",
   confirmation: "Bestätigung nach Beleg",

@@ -9,6 +9,7 @@ import { deliveryNames } from "@/lib/domain/gazetteer/names";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { imageBlockedBy, imageSources } from "@/lib/domain/images/delivery-gate";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
+import { popularityForPlaces } from "./popularity";
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { validAtAlias } from "@/lib/db/valid-at";
 import type {
@@ -79,6 +80,10 @@ export async function loadSubdivisionScope(
   const ownDomains = await loadOwnWebsiteDomains(db, spotRows.map((r) => r.placeId));
   const evidence = await loadEvidence(db, spotRows.map((r) => r.placeId));
   const confirmationCfg = getConfig().research.confirmation;
+  const independent = new Map(
+    spotRows.map((r): [string, number] => [r.placeId, decideBerth(r.kind, evidence.get(r.placeId) ?? [], confirmationCfg).independentSources.length]),
+  );
+  const popularity = await popularityForPlaces(db, spotRows.map((r) => r.geoObjectId), today, cfg.popularity.neighbourhoodNm, independent);
   const nearbyObjectRows = await loadNearbyObjects(db, [...states.values()].flatMap((st) => st.nearby.map((n) => n.geoObjectId)), today);
   const objectIds = [...spotRows, ...regionRows].map((r) => r.geoObjectId);
   const names = await loadNames(db, [loaded.geoObjectId, ...areaRows.map((a) => a.geoObjectId), ...objectIds, ...nearbyObjectRows.map((o) => o.geoObjectId)], today);
@@ -92,7 +97,8 @@ export async function loadSubdivisionScope(
       names: names.get(r.geoObjectId) ?? [],
       state,
       ownWebsiteDomain: ownDomains.get(r.placeId) ?? null,
-      independentSources: decideBerth(r.kind, evidence.get(r.placeId) ?? [], confirmationCfg).independentSources.length,
+      independentSources: independent.get(r.placeId) ?? 0,
+      popularity: popularity.get(r.geoObjectId) ?? 0,
       nearbyObjects: (state?.nearby ?? []).flatMap((n) => nearbyObjects.get(n.geoObjectId) ?? []),
       images: images.get(r.geoObjectId) ?? [],
     };
@@ -193,7 +199,7 @@ async function loadTiles(db: Db, subdivisionId: string, tileArray: SQL, cfg: Del
   }));
 }
 
-type SpotRow = Omit<SpotSource, "names" | "state" | "ownWebsiteDomain" | "independentSources" | "nearbyObjects" | "images">;
+type SpotRow = Omit<SpotSource, "names" | "state" | "ownWebsiteDomain" | "independentSources" | "popularity" | "nearbyObjects" | "images">;
 
 async function loadSpotRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, today: string): Promise<SpotRow[]> {
   const anchorConfidence = getConfig().geometry.anchorArea.positionConfidence;

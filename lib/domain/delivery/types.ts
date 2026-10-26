@@ -55,6 +55,8 @@ export type SpotSource = {
   state: BerthStateRow | null;
   /** The independent sources behind the confirmation, counted as the confirmation rule does (`decideBerth`); 0 without evidence. */
   independentSources: number;
+  /** `score.popularity`: `independentSources` log-normalised within the fixed neighbourhood (spec 18), 0-1; 0 without a value. */
+  popularity: number;
   /** Registrable domain of the place's current website when it is bound (`place_websites`); null without one. Only a contact url of this domain is delivered. */
   ownWebsiteDomain: string | null;
   /** The computed anchor position of the place (`places.anchor_position`) with the configured confidence; null without one. */
