@@ -6,7 +6,6 @@ import type { Db } from "@/lib/db/client";
 import {
   berthStates,
   comparisonSet,
-  evaluationProfiles,
   geoNames,
   places,
   COMPARISON_ATTRIBUTES,
@@ -189,15 +188,9 @@ export function comparisonValues(s: ComparisonSubject, cfg: NavilyConfig): Recor
 
 /**
  * The places of the subdivision's comparison set (any status: existence compares it), sorted by name. Attributes from
- * the place's berth state (`attributesFromState`, as the gate reads it); a place without a state has none. With
- * `evaluationRunId` (the old evaluation runs, removed with them) from that run's `evaluation_profiles`. An unknown
- * subdivision has no set: empty list.
+ * the place's berth state (`attributesFromState`, as the gate reads it); a place without a state has none. An unknown subdivision has no set: empty list.
  */
-export async function loadComparisonSubjects(
-  db: Db,
-  subdivisionKey: string,
-  opts: { evaluationRunId?: string } = {},
-): Promise<ComparisonSubject[]> {
+export async function loadComparisonSubjects(db: Db, subdivisionKey: string): Promise<ComparisonSubject[]> {
   const sub = await subdivisionByKey(db, subdivisionKey);
   if (!sub) return [];
   const rows = await db
@@ -226,26 +219,14 @@ export async function loadComparisonSubjects(
   for (const n of nameRows) namesOf.set(n.geoObjectId, [...(namesOf.get(n.geoObjectId) ?? []), n.name]);
 
   const attributesOf = new Map<string, Record<string, unknown>>();
-  const evaluated = new Set<string>();
-  if (opts.evaluationRunId) {
-    const evaluations = await db
-      .select({ geoObjectId: evaluationProfiles.geoObjectId, attributes: evaluationProfiles.attributes })
-      .from(evaluationProfiles)
-      .where(and(eq(evaluationProfiles.runId, opts.evaluationRunId), inArray(evaluationProfiles.geoObjectId, objectIds)));
-    for (const e of evaluations) {
-      attributesOf.set(e.geoObjectId, e.attributes);
-      evaluated.add(e.geoObjectId);
-    }
-  } else {
-    const states = await db
-      .select({ placeId: berthStates.placeId, core: berthStates.core, nearby: berthStates.nearby })
-      .from(berthStates)
-      .where(inArray(berthStates.placeId, rows.map((r) => r.placeId)));
-    const byPlace = new Map(states.map((s) => [s.placeId, attributesFromState(s.core, s.nearby)]));
-    for (const r of rows) {
-      const attributes = byPlace.get(r.placeId);
-      if (attributes) attributesOf.set(r.geoObjectId, attributes);
-    }
+  const states = await db
+    .select({ placeId: berthStates.placeId, core: berthStates.core, nearby: berthStates.nearby })
+    .from(berthStates)
+    .where(inArray(berthStates.placeId, rows.map((r) => r.placeId)));
+  const byPlace = new Map(states.map((s) => [s.placeId, attributesFromState(s.core, s.nearby)]));
+  for (const r of rows) {
+    const attributes = byPlace.get(r.placeId);
+    if (attributes) attributesOf.set(r.geoObjectId, attributes);
   }
 
   const point = (g: unknown): LonLat | null => {
@@ -255,7 +236,6 @@ export async function loadComparisonSubjects(
   };
   const subjects = rows.map((r): ComparisonSubject => {
     const attributes = attributesOf.get(r.geoObjectId) ?? {};
-    const evaluation = evaluated.has(r.geoObjectId);
     return {
       placeId: r.placeId,
       publicId: r.publicId,
@@ -263,8 +243,8 @@ export async function loadComparisonSubjects(
       names: namesOf.get(r.geoObjectId) ?? [],
       kind: r.kind,
       status: r.status,
-      position: (evaluation ? lonLatOf(attributes["place.position"]) : null) ?? point(r.position)!,
-      anchorPosition: opts.evaluationRunId ? (evaluation ? lonLatOf(attributes["anchor_position"]) : null) : point(r.anchorPosition),
+      position: point(r.position)!,
+      anchorPosition: point(r.anchorPosition),
       attributes,
       profileVersion: null,
     };

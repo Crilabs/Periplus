@@ -19,7 +19,6 @@ const HEX16 = /^[0-9a-f]{16}$/;
 const placeSchema = z.strictObject({
   placeId: z.uuid(),
   subdivisionKey,
-  evaluationRunId: z.uuid().optional(),
 });
 
 const recordSchema = placeSchema.extend({
@@ -52,7 +51,6 @@ export async function recordComparisonAction(input: {
   attribute: ComparisonAttribute;
   result: "match" | "deviation" | "not_at_navily";
   valueHash: string;
-  evaluationRunId?: string;
 }): Promise<RecordComparisonResult> {
   const admin = await requireAdmin();
   const parsed = recordSchema.parse(input);
@@ -75,7 +73,6 @@ export async function acceptProposalsAction(input: {
   placeId: string;
   subdivisionKey: string;
   digest: string;
-  evaluationRunId?: string;
 }): Promise<AcceptProposalsResult> {
   const admin = await requireAdmin();
   const parsed = acceptSchema.parse(input);

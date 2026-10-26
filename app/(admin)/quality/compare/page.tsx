@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
@@ -9,7 +8,7 @@ import { activeSubdivisionKeys, listSubdivisionOptions } from "@/lib/domain/subd
 import { SEABED_TYPE_LABELS } from "@/lib/domain/facts/labels";
 import type { ComparisonAttribute } from "@/lib/domain/quality/comparison-values";
 import { loadNavilyFromEnv } from "@/lib/domain/quality/navily-assistant";
-import { isEvaluationRun, subdivisionComparisonView, type PlaceComparison } from "@/lib/domain/quality/navily-compare";
+import { subdivisionComparisonView, type PlaceComparison } from "@/lib/domain/quality/navily-compare";
 import { navilySeabedTypes, type NavilySpot } from "@/lib/domain/quality/navily-sample";
 import { createLogger } from "@/lib/logger";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -47,8 +46,6 @@ const querySchema = z.object({
   subdivision: z.string().optional().catch(undefined),
   place: z.uuid().optional().catch(undefined),
   filter: z.enum(["open", "all"]).default("open").catch("open"),
-  /** Checked below: an id that is no evaluation run is a 404, never a page of empty values. */
-  evaluation: z.string().optional().catch(undefined),
 });
 
 const metres = (m: number) => (m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toLocaleString("de-DE", { maximumFractionDigits: 1 })} km`);
@@ -107,8 +104,6 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
   await connection();
   const config = getConfig();
   const query = querySchema.parse(await searchParams);
-  if (query.evaluation !== undefined && !(z.uuid().safeParse(query.evaluation).success && (await isEvaluationRun(getDb(), query.evaluation))))
-    notFound();
   const withTiles = new Set(await activeSubdivisionKeys(getDb()));
   const options = (await listSubdivisionOptions(getDb())).filter((o) => withTiles.has(o.key));
   const subdivision = options.find((o) => o.key === query.subdivision) ?? options[0];
@@ -132,7 +127,6 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
   }
   const view = await subdivisionComparisonView(getDb(), {
     subdivisionKey: subdivision.key,
-    evaluationRunId: query.evaluation,
     spots,
     cfg: config.quality.navily,
     affixes: config.nameAffixes,
@@ -144,7 +138,6 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
       subdivision: o.subdivision ?? subdivision.key,
       filter: o.filter ?? query.filter,
       ...(o.place ? { place: o.place } : {}),
-      ...(query.evaluation ? { evaluation: query.evaluation } : {}),
     })}`;
   const placeName = (p: PlaceComparison) => p.subject.name ?? p.subject.publicId ?? p.subject.placeId;
 
@@ -177,11 +170,6 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
         ) : (
           <Notice tone="warn" data-testid="navily-status">
             NAVILY_SPOTS_PATH nicht gesetzt – Vergleich nur von Hand
-          </Notice>
-        )}
-        {query.evaluation && (
-          <Notice tone="accent">
-            Bewertungslauf <span className="font-mono">{query.evaluation}</span>: verglichen werden die Bewertungsprofile dieses Laufs.
           </Notice>
         )}
       </div>
@@ -267,7 +255,6 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
             key={selected.subject.placeId}
             placeId={selected.subject.placeId}
             subdivisionKey={subdivision.key}
-            evaluationRunId={query.evaluation}
             title={placeName(selected)}
             description={[
               PLACE_KIND_LABELS[selected.subject.kind],

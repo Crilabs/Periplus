@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Point } from "geojson";
 import type { NameAffixesConfig } from "@/lib/config";
 import type { QualityConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
-import { geoNames, geoObjects, places, runs } from "@/lib/db/schema";
+import { geoNames, geoObjects, places } from "@/lib/db/schema";
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
@@ -104,15 +104,6 @@ export async function subdivisionTilePredicate(db: Db, subdivisionKey: string): 
   return (p) => ids.has(tileIdFor(p.lon, p.lat));
 }
 
-/** Whether `runId` is an evaluation run (`params.evaluation`), the only runs the page compares profiles of. */
-export async function isEvaluationRun(db: Db, runId: string): Promise<boolean> {
-  const [row] = await db
-    .select({ id: runs.id })
-    .from(runs)
-    .where(and(eq(runs.id, runId), sql`${runs.params} @> '{"evaluation": true}'::jsonb`));
-  return row !== undefined;
-}
-
 type Proposal = {
   match: NavilyMatch;
   spot: NavilySpot | null;
@@ -174,9 +165,9 @@ const digestOf = (p: Proposal) =>
  * Inside the write transaction: takes the place's comparison lock, then loads the comparison set (so the subject is
  * the one the outcome is recorded for, ruling M7-B-R2) and finds the place in it.
  */
-async function lockedSubjects(tx: Db, subdivisionKey: string, placeId: string, evaluationRunId?: string) {
+async function lockedSubjects(tx: Db, subdivisionKey: string, placeId: string) {
   await lockComparisonPlace(tx, placeId);
-  const subjects = await loadComparisonSubjects(tx, subdivisionKey, { evaluationRunId });
+  const subjects = await loadComparisonSubjects(tx, subdivisionKey);
   const subject = subjects.find((s) => s.placeId === placeId);
   if (!subject) throw new Error(`place ${placeId} is not in the comparison set of subdivision ${subdivisionKey}`);
   return { subjects, subject };
@@ -194,17 +185,15 @@ export async function recordManualComparison(
     attribute: ComparisonAttribute;
     result: "match" | "deviation" | "not_at_navily";
     valueHash: string;
-    evaluationRunId?: string;
     checkedBy: string;
     cfg: NavilyConfig;
   },
 ): Promise<{ written: number; tasks: number }> {
   return db.transaction(async (tx) => {
-    const { subject } = await lockedSubjects(tx, input.subdivisionKey, input.placeId, input.evaluationRunId);
+    const { subject } = await lockedSubjects(tx, input.subdivisionKey, input.placeId);
     return recordComparisonResults(tx, {
       subject,
       entries: [{ attribute: input.attribute, result: input.result, valueHash: input.valueHash, profileVersion: subject.profileVersion }],
-      evaluationRunId: input.evaluationRunId,
       method: "manual",
       checkedBy: input.checkedBy,
       cfg: input.cfg,
@@ -222,10 +211,10 @@ export async function recordManualComparison(
  */
 export async function acceptNavilyProposals(
   db: Db,
-  input: { placeId: string; subdivisionKey: string; evaluationRunId?: string; spots: NavilySpot[]; digest: string; checkedBy: string } & Settings,
+  input: { placeId: string; subdivisionKey: string; spots: NavilySpot[]; digest: string; checkedBy: string } & Settings,
 ): Promise<{ written: number; tasks: number; skippedManual: number }> {
   return db.transaction(async (tx) => {
-    const { subjects, subject } = await lockedSubjects(tx, input.subdivisionKey, input.placeId, input.evaluationRunId);
+    const { subjects, subject } = await lockedSubjects(tx, input.subdivisionKey, input.placeId);
     const areaPlaces = await confirmedSubdivisionPlaces(tx, input.subdivisionKey);
     const proposal = proposalsFor(subjects, areaPlaces, input.spots, input).proposals.get(subject.placeId)!;
     if (digestOf(proposal) !== input.digest) throw new StaleComparison(subject.placeId, "proposals");
@@ -244,7 +233,6 @@ export async function acceptNavilyProposals(
     const out = await recordComparisonResults(tx, {
       subject,
       entries,
-      evaluationRunId: input.evaluationRunId,
       method: "proposal_confirmed",
       checkedBy: input.checkedBy,
       cfg: input.cfg,
@@ -289,19 +277,18 @@ export type SubdivisionComparisonView = {
 
 /**
  * The comparison of the subdivision's set: own values, proposals (with spots) and their digest, the newest outcome per
- * current value hash (`carried` when it was recorded on another profile version or evaluation run: an outcome from before the berth state) and the coverage
+ * current value hash (`carried` when it was recorded on a profile version or an evaluation run: an outcome from before the berth state) and the coverage
  * of the subdivision's spots from the same matching the proposals use (set plus all confirmed places of the subdivision).
  */
 export async function subdivisionComparisonView(
   db: Db,
-  input: { subdivisionKey: string; evaluationRunId?: string; spots: NavilySpot[] | null } & Settings,
+  input: { subdivisionKey: string; spots: NavilySpot[] | null } & Settings,
 ): Promise<SubdivisionComparisonView> {
-  const subjects = await loadComparisonSubjects(db, input.subdivisionKey, { evaluationRunId: input.evaluationRunId });
+  const subjects = await loadComparisonSubjects(db, input.subdivisionKey);
   const latest = await latestComparisonResults(db, subjects.map((s) => s.placeId));
   const areaPlaces = input.spots ? await confirmedSubdivisionPlaces(db, input.subdivisionKey) : [];
   const matching = input.spots ? proposalsFor(subjects, areaPlaces, input.spots, input) : null;
   const proposals = matching?.proposals ?? null;
-  const evaluationRunId = input.evaluationRunId ?? null;
 
   const placeViews = subjects.map((subject): PlaceComparison => {
     const values = proposals?.get(subject.placeId)?.values ?? comparisonValues(subject, input.cfg);
@@ -315,7 +302,7 @@ export async function subdivisionComparisonView(
         proposal: p?.proposals[attribute] ?? null,
         stored: stored && {
           ...stored,
-          carried: stored.profileVersion !== subject.profileVersion || stored.evaluationRunId !== evaluationRunId,
+          carried: stored.profileVersion !== subject.profileVersion || stored.evaluationRunId !== null,
         },
       };
     });

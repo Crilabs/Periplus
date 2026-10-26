@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { comparisonSet, places, runs } from "@/lib/db/schema";
+import { comparisonSet, places } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
@@ -110,27 +110,11 @@ describe("/quality/compare page", () => {
       }
     }));
 
-  it("the subdivision select lists the subdivisions with tiles; the filter links keep subdivision, filter and evaluation run", () =>
+  it("the subdivision select lists the subdivisions with tiles; the filter links keep subdivision and filter", () =>
     withRollback(async (tx) => {
       const { key } = await setUp(tx);
-      const [run] = await tx
-        .insert(runs)
-        .values({ kind: "reprocess", scopeType: "system", scopeId: "test", triggeredBy: "test", params: { evaluation: true } })
-        .returning({ id: runs.id });
-      const html = await render({ subdivision: key, filter: "all", evaluation: run!.id });
+      const html = await render({ subdivision: key, filter: "all" });
       expect(html).toContain(`<option value="${key}"`);
-      expect(html).toContain(`href="/quality/compare?subdivision=${key}&amp;filter=open&amp;evaluation=${run!.id}"`);
-    }));
-
-  it("an unknown evaluation run is a 404", () =>
-    withRollback(async (tx) => {
-      const { key } = await setUp(tx);
-      const [plain] = await tx
-        .insert(runs)
-        .values({ kind: "reprocess", scopeType: "system", scopeId: "test", triggeredBy: "test" })
-        .returning({ id: runs.id });
-      for (const evaluation of ["0190a1b2-0000-7000-8000-00000000abcd", plain!.id, "not-a-uuid"]) {
-        await expect(render({ subdivision: key, evaluation })).rejects.toThrow("NEXT_HTTP_ERROR_FALLBACK;404");
-      }
+      expect(html).toContain(`href="/quality/compare?subdivision=${key}&amp;filter=open"`);
     }));
 });

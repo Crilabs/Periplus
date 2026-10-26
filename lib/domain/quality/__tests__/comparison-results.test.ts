@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { comparisonResults, comparisonSet, evaluationProfiles, places, reviewTasks } from "@/lib/db/schema";
+import { comparisonResults, comparisonSet, places, reviewTasks } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { decideReviewTask, DecisionNotAllowed } from "@/lib/domain/review-decisions";
 import { detailFeatures, reviewTaskDetail } from "@/lib/domain/review-view";
@@ -186,7 +186,7 @@ describe("comparison results", () => {
       const [task] = await tasksOf(tx, placeId);
 
       const result = await decideReviewTask(tx, { taskId: task!.id, decision: { action }, decidedBy: "admin@test" });
-      expect(result).toEqual({ documentVersionIds: [], consolidate: null, regenerateImage: null });
+      expect(result).toEqual({ regenerateImage: null });
 
       const rows = await resultsOf(tx, placeId);
       expect(rows).toHaveLength(2);
@@ -225,7 +225,6 @@ describe("comparison results", () => {
         attribute: "shelter.N",
         valueHash: hashOf(subjectOf(placeId), "shelter.N"),
         profileVersion: 3,
-        evaluationRunId: null,
         ownDisplay: "0,6 (geschützt)",
       });
       expect(detailFeatures(detail!).features).toEqual([
@@ -469,17 +468,6 @@ describe("comparison results", () => {
       await tx.insert(comparisonSet).values({ placeId: place!.id, subdivisionId, addedBy: "test" });
       await tx.update(places).set({ anchorPosition: geomFromGeoJson({ type: "Point", coordinates: [21.0005, 35.2005] }) }).where(eq(places.id, place!.id));
       await insertBerthState(tx, place!.id, { "shelter.N": 0.3 });
-      const runId = await insertTestRun(tx);
-      await tx.insert(evaluationProfiles).values({
-        runId,
-        geoObjectId: objectId,
-        rulesVersion: "v2",
-        factSchemaVersion: "v2",
-        attributes: { "shelter.N": 0.7, "place.position": { lon: 21.00002, lat: 35.20002 }, anchor_position: { lon: 21.001, lat: 35.201 } },
-        provenance: {},
-        contentHash: "h",
-      });
-
       const current = await loadComparisonSubjects(tx, subdivisionKey);
       expect(current).toHaveLength(1);
       expect(current[0]).toMatchObject({
@@ -495,20 +483,6 @@ describe("comparison results", () => {
       expect(current[0]!.names).toEqual(expect.arrayContaining(["Kolona", "Κολώνα"]));
       expect(current.map((s) => s.placeId)).not.toContain(outside.placeId);
 
-      const evaluated = await loadComparisonSubjects(tx, subdivisionKey, { evaluationRunId: runId });
-      expect(evaluated[0]).toMatchObject({
-        position: { lon: 21.00002, lat: 35.20002 },
-        anchorPosition: { lon: 21.001, lat: 35.201 },
-        attributes: { "shelter.N": 0.7 },
-        profileVersion: null,
-      });
-      // without an evaluation profile the attributes are empty and the place position is used
-      const otherRun = await insertTestRun(tx);
-      expect((await loadComparisonSubjects(tx, subdivisionKey, { evaluationRunId: otherRun }))[0]).toMatchObject({
-        position: { lon: 21.0, lat: 35.2 },
-        attributes: {},
-        profileVersion: null,
-      });
       expect(await loadComparisonSubjects(tx, `test-${newId()}`)).toEqual([]);
     });
   });

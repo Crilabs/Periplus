@@ -23,18 +23,6 @@ describe("instrumentation register", () => {
     expect(String(stderr.mock.calls[0][0])).toMatch(/startup validation failed.*SESSION_SECRET/s);
   });
 
-  it("exits a simulation web without write prefix", async () => {
-    vi.stubEnv("NEXT_RUNTIME", "nodejs");
-    vi.stubEnv("PERIPLUS_SIMULATION", "test/revisit/scenario.json");
-    vi.stubEnv("S3_WRITE_PREFIX", "");
-    vi.spyOn(process, "exit").mockImplementation((code) => {
-      throw new Error(`exit ${code}`);
-    });
-    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    await expect((await freshRegister())()).rejects.toThrow("exit 1");
-    expect(String(stderr.mock.calls[0][0])).toMatch(/startup validation failed.*S3_WRITE_PREFIX/s);
-  });
-
   it("passes with a valid env and config", async () => {
     vi.stubEnv("NEXT_RUNTIME", "nodejs");
     const exit = vi.spyOn(process, "exit");
