@@ -79,6 +79,12 @@ describe("htmlToMarkdown", () => {
   it("an invalid boilerplate selector is an error naming the selector", () => {
     expect(() => htmlToMarkdown(boilerplateHtml, "https://x.gr/a", ["div[["])).toThrow(/div\[\[/);
   });
+
+  it("a body without any element (empty, whitespace, plain text, comment) converts to nothing instead of throwing", () => {
+    for (const html of ["", "  \n", "plain text", "<!-- only a comment -->"]) {
+      expect(htmlToMarkdown(html, "https://x.gr/a", [])).toEqual({ markdown: "", title: null, mainChars: 0 });
+    }
+  });
 });
 
 describe("local converter", () => {
