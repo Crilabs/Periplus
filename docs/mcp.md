@@ -61,7 +61,7 @@ Schätzungen. Läufe aus der Oberfläche haben keinen → Schätzung „keine Gr
 | `run_end` | `runId` | Lauf beenden, offene Jobs abbrechen |
 | `job_retry` | `queue`, `jobId` | fehlgeschlagenen Job wiederholen; schließt eine offene Aufgabe „Fehlgeschlagener Job“ (einzige Entscheidung über MCP) |
 | `queue_pause` / `queue_resume` | `queue` | Queue anhalten / freigeben (auch Budget-Pause) |
-| `gate_sync_conflicts` | `subdivision`, `threshold`, `placeIds` | Konfliktaufgaben der Abnahme abgleichen |
+| `gate_sync_conflicts` | `subdivision`, `threshold`, `placeIds` (0–5000) | Konfliktaufgaben der Abnahme abgleichen; `placeIds` ist die **vollständige** Konfliktliste des Landesteils bei dieser Schwelle, kein Nachtrag: nie aufteilen, offene Aufgaben von Plätzen außerhalb der Liste werden verworfen |
 
 Die Abnahme (Spec 12) läuft lokal gegen die Produktionsdaten, die Navily-Referenz bleibt auf dem Rechner:
 ```bash

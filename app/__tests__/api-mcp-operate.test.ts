@@ -404,6 +404,19 @@ describe("/api/mcp start tools", () => {
       expect((await conflicts()).length).toBe(before + 2);
     }));
 
+  it("gate_sync_conflicts takes the whole conflict list, up to 5000 ids, in one call", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token } = await tokenFor(tx);
+      const key = `XT-${newId().slice(0, 8)}`;
+      await seedCandidates(tx, key);
+      const ids = (n: number) => Array.from({ length: n }, () => newId());
+      expect(await callTool(token, "gate_sync_conflicts", { subdivision: key, threshold: 3, placeIds: ids(5000) })).toEqual({ isError: true, text: `5000 Platz-IDs gehören nicht zu ${key}` });
+      const tooMany = await callTool(token, "gate_sync_conflicts", { subdivision: key, threshold: 3, placeIds: ids(5001) });
+      expect(tooMany.isError).toBe(true);
+      expect(tooMany.text).not.toContain("gehören nicht");
+    }));
+
   it("tools/list marks the control tools as writing", () =>
     withRollback(async (tx) => {
       db = tx;

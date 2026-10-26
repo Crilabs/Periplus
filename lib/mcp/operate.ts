@@ -312,11 +312,11 @@ export function registerOperateTools(server: McpServer, caller: McpCaller): void
     {
       title: "Konfliktaufgaben abgleichen",
       description:
-        "Gleicht die Aufgaben „Recherche-Konflikt“ eines Landesteils mit den Plätzen ab, die die Referenz nicht kennt: je Platz höchstens eine offene Aufgabe, keine neue für einen schon entschiedenen Platz, offene Aufgaben von Plätzen, die kein Konflikt mehr sind, werden verworfen. `threshold` ist die Bestätigungsschwelle der Messung (aus der Config), `placeIds` müssen Plätze des Landesteils sein.",
+        "Gleicht die Aufgaben „Recherche-Konflikt“ eines Landesteils mit den Plätzen ab, die die Referenz nicht kennt: je Platz höchstens eine offene Aufgabe, keine neue für einen schon entschiedenen Platz, offene Aufgaben von Plätzen, die kein Konflikt mehr sind, werden verworfen. `placeIds` ist die vollständige Konfliktliste des Landesteils bei dieser Schwelle, kein Nachtrag: nie aufteilen, jede offene Aufgabe eines Platzes außerhalb der Liste wird verworfen. `threshold` ist die Bestätigungsschwelle der Messung (aus der Config), `placeIds` müssen Plätze des Landesteils sein.",
       inputSchema: {
         subdivision: subdivisionArg,
         threshold: z.number().int().describe("Bestätigungsschwelle der Messung, einer der Werte research.gate.thresholds"),
-        placeIds: z.array(z.uuid()).max(500).describe("Plätze, die die Referenz nicht kennt (0–500)"),
+        placeIds: z.array(z.uuid()).max(5000).describe("Vollständige Konfliktliste: alle Plätze des Landesteils, die die Referenz bei dieser Schwelle nicht kennt (0–5000), in einem Aufruf"),
       },
       annotations: WRITE,
     },
