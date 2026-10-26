@@ -28,6 +28,7 @@
     "smoke:ai": "tsx --env-file-if-exists=.env.local scripts/smoke-ai.ts",
     "research:gate": "tsx --env-file-if-exists=.env.local scripts/research-gate.ts",
     "compare:navily": "tsx --env-file-if-exists=.env.local scripts/compare-navily.ts",
+    "archive:migrate": "tsx --env-file-if-exists=.env.local scripts/migrate-archive.ts",
     "contract:generate": "tsx scripts/contract-generate.ts",
     "delivery:consume": "tsx --env-file-if-exists=.env.local scripts/delivery-consume.ts",
     "pois:reclassify": "tsx --env-file-if-exists=.env.local scripts/reclassify-pois.ts",
