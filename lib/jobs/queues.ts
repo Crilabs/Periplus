@@ -28,7 +28,6 @@ export const QUEUES = [
   "ai.batch.poll",
   "images.place",
   "delivery.build",
-  "quality.measure",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 

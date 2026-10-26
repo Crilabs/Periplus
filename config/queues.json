@@ -24,6 +24,5 @@
   "research.landside_extract": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "ai.batch.poll": { "concurrency": 2, "retryLimit": 7, "retryDelaySeconds": 60, "retryBackoff": true, "expireInSeconds": 3600 },
   "images.place": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 120, "retryBackoff": true, "expireInSeconds": 1200 },
-  "delivery.build": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true, "expireInSeconds": 3600 },
-  "quality.measure": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
+  "delivery.build": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true, "expireInSeconds": 3600 }
 }

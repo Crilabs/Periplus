@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { type Converter, type ConverterName } from "@/lib/adapters/fetch";
-import type { SimulatedFetcher } from "@/lib/adapters/fetch/simulated";
 import { isPublicHttpUrl } from "@/lib/adapters/fetch/ssrf";
 import { httpCall, RetryableHttpError, type CallContext, type HttpResponse, type Transport } from "@/lib/adapters/http";
 import { type runPdftotext } from "@/lib/adapters/pdf";
@@ -36,8 +35,6 @@ export type FetchUrlDeps = {
   now?: () => Date;
   /** Address check before every request and redirect hop (default `isPublicHttpUrl`). */
   isAllowed?: (url: string) => Promise<boolean>;
-  /** A simulated revisit: pages come from the scenario instead of the network (`fetchSimulated`). */
-  simulated?: SimulatedFetcher;
 };
 
 export type FetchUrlOutcome =

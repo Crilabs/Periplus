@@ -1,5 +1,7 @@
 # Periplus Runbook
 
+> **Rückbau N6 (Oktober 2026):** Die alte quellengetriebene Pipeline ist entfernt (Erwähnungen, Texte-Auswertung, Konsolidierung zu Profilen, Zusammenfassungen, Quellenfindung und -freigabe, Crawl, Wikivoyage, Konverter- und Modellvergleich, Revisit-Simulation, Messläufe und Bewertung). Die Abschnitte dieses Runbooks zu Meilenstein 3 bis 7 (Quellen, Texte, Profile, Revisit, Messen) beschreiben diese Funktionen und die Befehle `check:texts`, `check:profiles`, `check:sources`, `consolidate`, `review:auto-pairs`, `compare:models`, `report:models`, `report:converters`, `pdf:compare`, `fixtures:record`, `sim:*`, `report:pilot` und `report:costs`; sie gibt es nicht mehr. Es gilt der Ablauf der Neuausrichtung (Recherche je Liegeplatz, Stand, Lieferung 4.0); ältere Verträge 1.0 bis 2.3 und `/api/v1` sind entfernt, 3.0 bleibt veröffentlicht.
+
 Betrieb des Produktivsystems unter `https://periplus.marvoy.app` (Hetzner-Server `app-server`, 188.245.181.182, Docker Compose). Der Server ist geteilt: Andere Apps laufen dort mit pm2, und TLS macht der Caddy des Servers (systemd), nicht ein Container. Alle Pfade von Periplus auf dem Server liegen unter `/opt/periplus`, Benutzer ist `periplus`.
 
 Auf dem Server vor manuellen Compose-Befehlen immer:
@@ -451,7 +453,7 @@ dc run --rm worker node --import tsx scripts/apikey.ts create <abnehmer> --scope
 Der Schlüssel (`pk_…`) wird nur einmal ausgegeben. Sperren: „Einstellungen“ → „API-Clients“ → „Sperren“ (wirkt sofort, nicht umkehrbar) oder `npm run apikey:revoke -- <abnehmer>`. Rate-Limit je Schlüssel: `api_clients.rate_limit_per_min` (Standard 60 je Minute, darüber 429).
 
 ### Liefer-API
-Alle Endpunkte unter `/api/v4` (und `/api/v1/schema/…`; `/api/v3` gibt es nicht mehr, Abruf ergibt 404) brauchen `Authorization: Bearer pk_…` mit Scope `delivery:read`. Antworten tragen `ETag` (mit `If-None-Match` → 304), `Cache-Control: private, max-age=60`, `Periplus-Schema-Version` und, wo es eine gibt, `Periplus-Data-Version`. Fehler kommen als `{ "error": { "code", "message" } }` mit 400/401/403/404/429/500. `<subdivision>` ist der Landesteil-Schlüssel (`GR-I`) oder die öffentliche ID (`sd_…`); ein Revier-Schlüssel (`saronic`) ergibt 404. Nur gültige Pakete werden ausgeliefert. Die Endpunkte von Vertrag 1.0 (`/api/v1/areas/…`, `/api/v1/spots/…`) gibt es nicht mehr.
+Alle Endpunkte unter `/api/v4` (`/api/v1` und `/api/v3` gibt es nicht mehr, Abruf ergibt 404) brauchen `Authorization: Bearer pk_…` mit Scope `delivery:read`. Antworten tragen `ETag` (mit `If-None-Match` → 304), `Cache-Control: private, max-age=60`, `Periplus-Schema-Version` und, wo es eine gibt, `Periplus-Data-Version`. Fehler kommen als `{ "error": { "code", "message" } }` mit 400/401/403/404/429/500. `<subdivision>` ist der Landesteil-Schlüssel (`GR-I`) oder die öffentliche ID (`sd_…`); ein Revier-Schlüssel (`saronic`) ergibt 404. Nur gültige Pakete werden ausgeliefert. Die Endpunkte von Vertrag 1.0 (`/api/v1/areas/…`, `/api/v1/spots/…`) gibt es nicht mehr.
 
 ```bash
 read -rs PERIPLUS_API_KEY && export PERIPLUS_API_KEY   # pk_… einfügen, Enter: nicht in der Shell-History; nie in Dateien oder Tickets schreiben

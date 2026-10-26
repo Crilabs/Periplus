@@ -4,7 +4,6 @@ import type { Db } from "@/lib/db/client";
 import { getConfig, type AppConfig, type ModelTaskConfig } from "@/lib/config";
 import { getEnv } from "@/lib/env";
 import { assertWithinBudget, recordExternalCall, reservedBatchEur } from "@/lib/domain/costs";
-import { assertNotSimulated } from "@/lib/adapters/simulation";
 import { createLogger } from "@/lib/logger";
 import { resolveTaskModel, usageCostEur } from "./cost";
 import { loadPrompt, renderPrompt } from "./prompts";
@@ -198,11 +197,8 @@ function batchItemResult<O>(
 
 export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), options: AnthropicClientOptions = {}): ModelClient {
   let sdk = options.sdk;
-  // Every provider request goes through here. A simulation may reach Anthropic (ruling M7-P8, budget-checked and booked).
-  const getSdk = () => {
-    assertNotSimulated("anthropic", "messages");
-    return (sdk ??= defaultSdk());
-  };
+  // Every provider request goes through here.
+  const getSdk = () => (sdk ??= defaultSdk());
   const timeout = config.models.batch.providerTimeoutSeconds * 1000;
   const callTimeout = config.models.callTimeoutSeconds * 1000;
 

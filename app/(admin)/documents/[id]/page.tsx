@@ -56,7 +56,7 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
     <>
       <PageHeader
         title={<span className="break-all">{document.url}</span>}
-        back={{ href: `/sources/${source.id}`, label: source.domain }}
+        back={{ href: "/", label: "Übersicht" }}
         meta={
           <>
             <Badge tone={document.status === "gone" ? "warn" : "neutral"}>{DOCUMENT_STATUS_LABELS[document.status]}</Badge>
@@ -137,7 +137,7 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
                   label: "Quelle",
                   value: (
                     <>
-                      <TextLink href={`/sources/${source.id}`}>{source.name}</TextLink>
+                      <span className="font-medium">{source.name}</span>
                       <div className="text-xs text-muted">
                         {source.domain} · Gewicht {share(source.weight)}
                       </div>

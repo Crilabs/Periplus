@@ -12,13 +12,10 @@
     "types": ["island", "archipelago", "coast_section", "gulf", "channel"],
     "pointRadiusNm": 2,
     "memberMarginNm": 0.5,
-    "simplifyToleranceM": 50,
-    "character": { "meltemiHigh": 0.6, "meltemiLow": 0.3 }
+    "simplifyToleranceM": 50
   },
   "weather": { "regionBufferNm": 3, "regionMinWaterShare": 0.05, "capeOffsetNm": 1, "capeLandRadiusM": 2000 },
   "radius": { "nmPerDay": 50, "returnFactor": 0.5, "minDays": 1, "maxDays": 28 },
-  "popularity": { "neighbourhoodNm": 50 },
-  "highlights": { "maxSpotIds": 50 },
   "validation": {
     "maxWaterDistanceNm": 1.5,
     "spotDuplicateM": 150,
@@ -33,7 +30,6 @@
     "lowConfidence": 0.3,
     "lowConfidenceNote": "wenig belegt"
   },
-  "severity": { "shelterDelta": 0.2 },
   "forbiddenDomains": ["navily.com", "google.*", "goo.gl", "g.co", "g.page", "googleusercontent.com", "googleapis.com", "gstatic.com", "ggpht.com"],
   "licenses": [
     {

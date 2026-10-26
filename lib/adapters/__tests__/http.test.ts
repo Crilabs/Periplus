@@ -215,12 +215,12 @@ describe("httpCall", () => {
     withRollback(async (tx) => {
       const day = await quietDay(tx);
       const at = new Date(day.getTime() + 3_600_000);
-      await recordExternalCall(tx, { service: "voyage", operation: "test", units: 1, unit: "call", costEur: 1000, at });
+      await recordExternalCall(tx, { service: "jina", operation: "test", units: 1, unit: "call", costEur: 1000, at });
       const transport = stubTransport(200);
       const rateKey = `budget-${newId()}`;
       const err = await httpCall(
         transport,
-        { service: "voyage", operation: "embed", url: "https://example.invalid/v", timeoutMs: 1000, budget: "voyage", ratePerMinute: 1, rateKey },
+        { service: "jina", operation: "embed", url: "https://example.invalid/v", timeoutMs: 1000, budget: "jina", ratePerMinute: 1, rateKey },
         { db: tx },
         { now: () => new Date(at.getTime() + 60_000) },
       ).catch((e: unknown) => e);
@@ -239,12 +239,12 @@ describe("httpCall", () => {
       const transport = stubTransport(200);
       const sleep = async (ms: number) => {
         // Meanwhile another call spends the whole day's budget.
-        await recordExternalCall(tx, { service: "voyage", operation: "test", units: 1, unit: "call", costEur: 1000, at: new Date(t) });
+        await recordExternalCall(tx, { service: "jina", operation: "test", units: 1, unit: "call", costEur: 1000, at: new Date(t) });
         t += ms;
       };
       const err = await httpCall(
         transport,
-        { service: "voyage", operation: "embed", url: "https://example.invalid/v", timeoutMs: 1000, budget: "voyage", ratePerMinute: 1, rateKey },
+        { service: "jina", operation: "embed", url: "https://example.invalid/v", timeoutMs: 1000, budget: "jina", ratePerMinute: 1, rateKey },
         { db: tx },
         { now: () => new Date(t), sleep },
       ).catch((e: unknown) => e);

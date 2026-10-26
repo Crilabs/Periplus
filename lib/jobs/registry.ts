@@ -20,7 +20,6 @@ import { imagesPlaceHandler } from "./handlers/images";
 import { placeWebsiteHandler } from "./handlers/place-website";
 import { gazetteerCoarseHandler, subdivisionsBuildHandler } from "./handlers/subdivisions";
 import { detectBaysHandler, geometryPlaceHandler } from "./handlers/geometry";
-import { qualityMeasureHandler } from "./handlers/quality";
 import { advanceHandler } from "./handlers/run-advance";
 import { seedTileHandler } from "./handlers/seed";
 import { pingHandler } from "./handlers/system-ping";
@@ -61,5 +60,4 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "ai.batch.poll": aiBatchPollHandler,
   "images.place": imagesPlaceHandler,
   "delivery.build": deliveryBuildHandler,
-  "quality.measure": qualityMeasureHandler,
 };

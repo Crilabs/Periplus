@@ -82,49 +82,8 @@ export function attributesForPrompt(level: FactLevel, version?: string): string 
     .join("\n");
 }
 
-/**
- * Whether the attribute's value is a list of entries that consolidation unites across facts (rules `union` and
- * `prohibitions`, ruling M7-G-R2). `seabed` is a list too, but of shares summing to 1: one composition, not entries.
- */
-export const isEntryListAttribute = (def: Pick<AttributeDef, "rule"> | undefined): boolean =>
-  def?.rule === "union" || def?.rule === "prohibitions";
-
-/**
- * The text attributes of `level` whose value is a list of entries (`isEntryListAttribute`), as the prompt clause
- * `` `a`, `b` `` (`none on this level` when it has none): the extract-facts prompt (since v4) asks for one fact per entry of these
- * (ruling M7-G-R5).
- */
-export function listAttributesForPrompt(level: FactLevel, version?: string): string {
-  const keys = getFactSchema(version)
-    .levels[level].filter((d) => d.origins.includes("text") && isEntryListAttribute(d))
-    .map((d) => `\`${d.key}\``);
-  return keys.length === 0 ? "none on this level" : keys.join(", ");
-}
-
 /** The list attributes that carry safety entries: prompt v5 keeps all their entries first at the fact limit (ruling M7-FIN-R1). */
 export const SAFETY_LIST_ATTRIBUTES = ["prohibitions", "hazards", "restricted_zones"] as const;
-
-/**
- * The safety list attributes (`SAFETY_LIST_ATTRIBUTES`) that `level` has as text attributes, as the prompt clause
- * `` `a`, `b` `` (`none` when it has none).
- */
-export function safetyAttributesForPrompt(level: FactLevel, version?: string): string {
-  const keys = getFactSchema(version)
-    .levels[level].filter((d) => d.origins.includes("text") && isEntryListAttribute(d) && (SAFETY_LIST_ATTRIBUTES as readonly string[]).includes(d.key))
-    .map((d) => `\`${d.key}\``);
-  return keys.length === 0 ? "none" : keys.join(", ");
-}
-
-/**
- * The text attributes of `level` whose values hold proper names checked against the quote (`textNames`, ruling
- * M4-G-R5), as the prompt clause `, and each name in the values of `a`, `b`` (empty when the level has none).
- */
-export function nameValuesForPrompt(level: FactLevel, version?: string): string {
-  const keys = getFactSchema(version)
-    .levels[level].filter((d) => d.origins.includes("text") && d.textNames)
-    .map((d) => `\`${d.key}\``);
-  return keys.length === 0 ? "" : `, and each name in the values of ${keys.join(", ")}`;
-}
 
 /** JSON with object keys sorted at every depth and no whitespace: equal values give equal strings. */
 export function canonicalJson(v: unknown): string {

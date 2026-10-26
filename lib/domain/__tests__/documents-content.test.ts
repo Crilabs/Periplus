@@ -1,17 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { chunkMarkdown } from "@/lib/domain/documents/chunker";
 import { detectLanguage } from "@/lib/domain/documents/language";
-import { extractLinks } from "@/lib/domain/documents/links";
-import { normalizeUrl } from "@/lib/domain/sources/urls";
 import { extractPublishedAt, observedFrom } from "@/lib/domain/documents/metadata";
 import { contentHash, normalizeMarkdown, normalizeText } from "@/lib/domain/documents/normalize";
 import { shingleHashes, shingleWords } from "@/lib/domain/documents/shingles";
 import { structuredToMarkdown } from "@/lib/domain/documents/structured";
 
 const html = (name: string) => readFileSync(join("test/fixtures/html", name), "utf8");
-const tp = ["utm_*", "fbclid", "gclid", "msclkid", "mc_cid", "mc_eid"];
 const languages = { deu: "de", eng: "en", ell: "el", ita: "it", hrv: "hr", fra: "fr" };
 const fetchedAt = new Date("2026-10-19T10:00:00Z");
 const bytes = (s: string) => new TextEncoder().encode(s);
@@ -32,9 +28,6 @@ describe("normalizeMarkdown", () => {
     const once = normalizeMarkdown("e\u200B\u0301 text");
     expect(once).toBe("\u00e9 text\n");
     expect(normalizeMarkdown(once)).toBe(once);
-    for (const c of chunkMarkdown(once, { targetWords: 500, maxWords: 800, maxOverlapWords: 200 })) {
-      expect(once.slice(c.charStart, c.charEnd)).toBe(c.text);
-    }
   });
 });
 
@@ -121,36 +114,6 @@ describe("observedFrom", () => {
   });
   it("uses the UTC fetch day otherwise", () => {
     expect(observedFrom(null, new Date("2026-10-19T23:30:00Z"))).toEqual({ observedAt: "2026-10-19", basis: "fetched" });
-  });
-});
-
-describe("extractLinks", () => {
-  it("resolves, normalizes and dedupes http(s) links; drops fragments to the page itself, mailto and javascript", () => {
-    expect(extractLinks(html("article.html"), "https://x.gr/blog/a", tp)).toEqual(["https://x.gr/blog/b", "https://y.example/z"]);
-  });
-  it("returns nothing when meta robots says nofollow", () => {
-    expect(extractLinks(html("nofollow.html"), "https://x.gr/", tp)).toEqual([]);
-  });
-  it("treats meta robots none as nofollow", () => {
-    expect(extractLinks(`<meta name="Robots" content="none"><a href="/a">a</a>`, "https://x.gr/", tp)).toEqual([]);
-  });
-  it("resolves against <base href>", () => {
-    const page = `<html><head><base href="https://x.gr/docs/"></head><body><a href="c">c</a></body></html>`;
-    expect(extractLinks(page, "https://x.gr/blog/a", tp)).toEqual(["https://x.gr/docs/c"]);
-  });
-  it("yields links in the frontier's form: normalizeUrl with the same tracking parameters leaves each unchanged", () => {
-    const hrefs = [
-      "HTTP://X.GR.:80/a/../b?z=1&a=%20x&utm_source=n&a=b#top",
-      "https://xn--bcher-kva.de/ä ö?q=\"<>\"&ü=1",
-      "/c?a+b=1&a%20b=0&&fbclid=1",
-      "https://user:pw@Y.example/%7Euser/?",
-      "d?b",
-    ];
-    const page = hrefs.map((h) => `<a href='${h}'>x</a>`).join("");
-    const links = extractLinks(page, "https://x.gr/blog/a", tp);
-    expect(links).toHaveLength(hrefs.length);
-    for (const link of links) expect(normalizeUrl(link, tp)).toBe(link);
-    expect(links[0]).toBe("http://x.gr/b?a=%20x&a=b&z=1");
   });
 });
 

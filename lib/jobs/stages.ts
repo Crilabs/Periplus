@@ -26,7 +26,6 @@ import {
 } from "./handlers/gazetteer";
 import { seedTileStage } from "./handlers/seed";
 import { gazetteerCoarseStage, subdivisionsBuildStage } from "./handlers/subdivisions";
-import { qualityMeasureStage } from "./handlers/quality";
 import { pingStage } from "./handlers/system-ping";
 import { tilesEnsureStage } from "./handlers/tiles";
 
@@ -59,5 +58,4 @@ export const STAGES: Record<string, StageDefinition> = {
   [researchLandsideExtractStage.name]: researchLandsideExtractStage,
   [imagesPlaceStage.name]: imagesPlaceStage,
   [deliveryBuildStage.name]: deliveryBuildStage,
-  [qualityMeasureStage.name]: qualityMeasureStage,
 };
