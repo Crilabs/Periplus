@@ -20,6 +20,8 @@ const envSchema = z.object({
   JINA_API_KEY: z.string().min(1).optional(),
   FIRECRAWL_API_KEY: z.string().min(1).optional(),
   CONTACT_EMAIL: z.string().min(1),
+  /** Password of the database role `periplus_mcp_reader` (MCP tool `sql`, runbook „MCP“); unset: the tool is off. */
+  MCP_READER_PASSWORD: z.string().min(1).optional(),
   /** The Navily spot file, read at runtime only (Grundprinzip 9); unset: comparisons by hand only. */
   NAVILY_SPOTS_PATH: z.string().min(1).optional(),
   /**

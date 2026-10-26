@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { getConfig, type AppConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { listApiClients } from "@/lib/domain/api-clients";
+import { listMcpTokens } from "@/lib/domain/mcp-tokens";
 import { loadAreaFiles } from "@/lib/domain/areas/file";
 import { consolidationConfigFor } from "@/lib/domain/rules/active";
 import { getFactSchema } from "@/lib/domain/facts/schema";
@@ -27,6 +29,8 @@ import {
   trClass,
 } from "../_components/ui";
 import { revokeApiClientAction } from "./actions";
+import { revokeMcpTokenAction } from "./mcp-actions";
+import { McpTokenForm } from "./mcp-token-form";
 
 export const metadata: Metadata = { title: "Einstellungen" };
 
@@ -76,10 +80,16 @@ function parameterText(value: unknown, prefix = ""): string[] {
 }
 
 export default async function Page({ searchParams }: PageProps<"/settings">) {
-  await requireAdmin();
+  const claims = await requireAdmin();
   const revoked = (await searchParams).notice === "api_client_revoked";
   const db = getDb();
   const apiClients = await listApiClients(db);
+  const mcpTokens = await listMcpTokens(db, claims.sub);
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
+  const proto = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  const mcpUrl = `${proto}://${host}/api/mcp`;
+  const now = new Date();
   const { gazetteer, ...configured } = getConfig();
   const subdivisionsCfg = configured.subdivisions;
   const areasCfg = configured.areas;
@@ -392,6 +402,66 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
           />
         </Panel>
       </div>
+
+      <Panel
+        id="mcp"
+        title="Claude Code (MCP)"
+        description="Persönliche Tokens für den Periplus-MCP-Server: Claude Code liest damit Produktionsdaten in deinem Namen (Läufe, Plätze, Kosten, Lieferungen, Lese-SQL), schreibt aber nichts. Ein Token gilt 30, 90 oder 365 Tage; höchstens 10 aktive. Anleitung: docs/mcp.md."
+        className="mt-6"
+        flush
+      >
+        <McpTokenForm mcpUrl={mcpUrl} />
+        {mcpTokens.length > 0 && (
+          <Table>
+            <thead>
+              <tr>
+                <th className={thClass}>Name</th>
+                <th className={thClass}>Präfix</th>
+                <th className={thClass}>Status</th>
+                <th className={thClass}>Gültig bis</th>
+                <th className={thClass}>Zuletzt benutzt</th>
+                <th className={thClass}>
+                  <span className="sr-only">Aktion</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {mcpTokens.map((t) => {
+                const active = !t.revokedAt && t.expiresAt > now;
+                return (
+                  <tr key={t.id} className={trClass}>
+                    <td className={cx(tdClass, "font-medium")}>{t.name}</td>
+                    <td className={tdClass}>
+                      <Mono>{t.prefix}…</Mono>
+                    </td>
+                    <td className={tdClass}>
+                      {t.revokedAt ? <Badge>Widerrufen</Badge> : active ? <Badge tone="ok">Aktiv</Badge> : <Badge>Abgelaufen</Badge>}
+                    </td>
+                    <td className={cx(tdClass, "whitespace-nowrap")}>{fmt.date(t.expiresAt)}</td>
+                    <td className={cx(tdClass, "whitespace-nowrap")}>{t.lastUsedAt ? fmt.date(t.lastUsedAt) : "nie"}</td>
+                    <td className={cx(tdClass, "text-right")}>
+                      {active && (
+                        <Dialog
+                          trigger="Widerrufen"
+                          triggerVariant="danger"
+                          triggerSize="sm"
+                          title={`Token „${t.name}“ widerrufen?`}
+                          description="Claude Code mit diesem Token bekommt ab sofort 401. Für weiteren Zugang ein neues Token anlegen und neu einrichten."
+                        >
+                          <form action={revokeMcpTokenAction} className="flex justify-end">
+                            <input type="hidden" name="id" value={t.id} />
+                            <Button variant="danger">Endgültig widerrufen</Button>
+                          </form>
+                        </Dialog>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        )}
+      </Panel>
 
       <Panel
         id="api-clients"

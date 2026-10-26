@@ -41,6 +41,7 @@
     "@anthropic-ai/sdk": "^0.135.0",
     "@aws-sdk/client-s3": "^3.1152.0",
     "@joplin/turndown-plugin-gfm": "^1.0.68",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@mozilla/readability": "^0.6.0",
     "@node-rs/argon2": "^2.2.2",
     "ajv": "^8.20.0",

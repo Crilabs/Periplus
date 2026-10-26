@@ -144,6 +144,18 @@ Einmalig, in dieser Reihenfolge (Stand 26.10.2026; Produktion war leer bis auf d
 3. Archiv übernehmen (Abschnitt „Archiv übernehmen“): Export lokal aus der Dev-Umgebung (während des Exports den Dev-Worker anhalten, damit der Stand in sich stimmt), Verzeichnis per `rsync` auf den Server, Import im Worker-Container; Zählung Dokumente und Versionen vorher = nachher (Prüfplan Attika 2, T0).
 4. API: `/api/v4`; `/api/v3` und `/api/v1` gibt es nicht mehr.
 
+## MCP (Claude Code liest Produktionsdaten)
+
+Server unter `https://periplus.marvoy.app/api/mcp`; Einrichtung je Person über Einstellungen → Claude Code (MCP), Anleitung `docs/mcp.md`.
+Einmalig nach dem Deploy mit Migration 0082: Passwort der Leserolle setzen, damit das Werkzeug `sql` arbeitet (Vorspann oben, `dc`-Alias):
+```bash
+PW=$(openssl rand -base64 32 | tr -d '/+=' | cut -c1-40)
+dc exec -T postgres psql -U periplus -d periplus -c "alter role periplus_mcp_reader password '$PW'"
+echo "MCP_READER_PASSWORD=$PW" >> /opt/periplus/.env
+dc up -d web
+```
+Ohne den Eintrag antwortet `sql` „nicht eingerichtet“; alle anderen Werkzeuge laufen. Rolle sperren: `alter role periplus_mcp_reader nologin`.
+
 ## Rollback
 Eine frühere Version erneut ausrollen:
 ```bash
