@@ -46,7 +46,7 @@ export async function scopeSize(db: Db, kind: StartKind, scope: StartScope): Pro
   if (kind === "subdivisions") return { unit: "subdivision", count: 0 };
   if (kind === "delivery") return { unit: "subdivision", count: 1 };
   if (kind === "research") {
-    if ("tileId" in scope) throw new Error("A research run takes a subdivision or places, not a tile");
+    if (!("subdivisionKey" in scope) && !("placeIds" in scope)) throw new Error("A research run takes a subdivision or places");
     return { unit: "places", count: (await researchCandidates(db, scope)).length };
   }
   if (kind === "images") {
@@ -58,6 +58,7 @@ export async function scopeSize(db: Db, kind: StartKind, scope: StartScope): Pro
     if (kind !== "geometry") throw new Error(`A ${kind} run takes a subdivision or a tile, not places`);
     return { unit: "places", count: scope.placeIds.length };
   }
+  if (!("subdivisionKey" in scope)) throw new Error(`A ${kind} run takes a subdivision or a tile`);
   const sub = await requireSubdivision(db, scope.subdivisionKey);
   return { unit: "tiles", count: (await subdivisionTileIds(db, sub.id)).length };
 }
