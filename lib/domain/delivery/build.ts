@@ -16,7 +16,6 @@ import { manifestSubdivision } from "./read";
 import { contentDigest, contentTypeOf, serializeFile, sha256Hex } from "./serialize";
 import { currentSnapshot, openBuildSnapshot } from "./snapshot";
 import type { DeliveryPackage, SubdivisionScope } from "./types";
-import { undeliveredSafety } from "./map-region";
 import { buildWarnings, dropCopiedTexts, spotsInMilitaryAreas, validatePackage, type ValidationReport } from "./validate";
 import { assignVersions, latestDelivered, type ObjectDraft, type RemovedObject, type VersionedObject } from "./versioning";
 import { buildWeatherPoints } from "./weather-points";
@@ -250,7 +249,6 @@ async function assemble(
       mergedNotCarried: notCarried,
       droppedRegions: draft.droppedRegions,
       droppedWeatherPoints: weather.dropped,
-      undeliveredSafety: undeliveredSafety(draft.deliveredRegions, draft.scope.passages),
       militaryAreaSpots: spotsInMilitaryAreas(files["spots.json"].spots, coast),
     }),
   });

@@ -3,13 +3,12 @@ import type { SpotBody } from "@/contract/v2";
 import { spotSchema } from "@/contract/v2";
 import { loadConfig } from "@/lib/config";
 import type { BerthStateFact, BerthStateNearby, BerthStateValue } from "@/lib/db/schema/research-state";
-import type { ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import { provenanceEntry } from "@/test/consolidation";
 import { spotACore } from "@/test/fixtures/delivery/subdivision";
 import { factPublicId } from "../map-facts";
 import { mapSpot, SPOT_FIELDS, type SpotWarning } from "../map-spot";
 import type { NearbyObject, SpotSource } from "../types";
-import { aggregateProvenance, combineSource, ORIGIN } from "../vocab";
+import { aggregateProvenance, combineSource, ORIGIN, type ProvenanceOrigin } from "../vocab";
 
 const cfg = loadConfig("config").delivery;
 const FACT_ID = "01a15602-0000-7000-8000-000000000001";
@@ -91,7 +90,6 @@ function spotA(
     nearbyObjects: [object()],
     ownWebsiteDomain: "marina.example",
     independentSources: 1,
-    popularity: 0.55,
     images: [],
     ...o.src,
   };
@@ -215,7 +213,7 @@ const FIELD_CASES: Record<keyof SpotBody, () => void> = {
   seasonNote: () => expect(mapped().seasonNote).toEqual([{ months: [6, 7, 8, 9], text: "Geöffnet" }]),
   score: () => {
     // the mean confidence of the 22 non-rule core values; the confirmation's independent sources, the newest text date
-    expect(mapped().score).toEqual({ confidence: 0.77, popularity: 0.55, quietness: null, sourcesCount: 1, lastObserved: "2025-06-10" });
+    expect(mapped().score).toEqual({ confidence: 0.77, popularity: 0, quietness: null, sourcesCount: 1, lastObserved: "2025-06-10" });
     // many facts do not raise the count; only the confirmation's sources do
     const withFacts = mapped(spotA({ state: { facts: [fact({ factId: FACT_2, observedAt: "2026-09-01", memberIds: [FACT_2, FACT_3] })] } }));
     expect(withFacts.score).toMatchObject({ sourcesCount: 1, lastObserved: "2026-09-01" });
@@ -351,7 +349,7 @@ describe("mapSpot", () => {
     const { spot, asOf, warnings } = mappedWithWarnings(excludedC({ state: null }));
     expect(spot.exclude).toEqual({ excluded: true, reason: "military", detail: "Militärisches Sperrgebiet (ausgeschlossen – keine Schutzwerte)" });
     expect(spot.shelter).toEqual({ sectors: { N: 0, NE: 0, E: 0, SE: 0, S: 0, SW: 0, W: 0, NW: 0 }, swell: 0, source: ORIGIN.rule });
-    expect(spot.score).toEqual({ confidence: 0, popularity: 0.55, quietness: null, sourcesCount: 0, lastObserved: null });
+    expect(spot.score).toEqual({ confidence: 0, popularity: 0, quietness: null, sourcesCount: 0, lastObserved: null });
     expect(spot.provenance).toEqual({ anchorPosition: { source: "computed", confidence: 0.3, observedAt: null } });
     expect(spot).toMatchObject({ gaps: [], facts: [], landingPoints: [], nearby: [], berthable: null });
     expect(asOf).toBeNull();

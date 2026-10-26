@@ -1,5 +1,4 @@
 import { and, eq, isNull } from "drizzle-orm";
-import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documents, extractionUnits, geoObjects, mentions, places, placeWebsites, routes, routeStops, type DocType, type PlaceKind, type PlaceStatus } from "@/lib/db/schema";
 import { insertExtraction, insertMention, insertMentionFact, insertPlace, insertSource, type TestMention } from "@/test/consolidation";
@@ -10,7 +9,8 @@ import { insertTestExtractionRun, insertTestRun, insertTestVersion } from "@/tes
  * type, route stops and pages bound to a place. Meant for `withRollback`; objects at 21.0° E / 35.2° N.
  */
 
-const extractFacts = loadConfig("config").models.tasks["extract-facts"]!;
+/** The extraction model of the removed old pipeline: only the fixtures of its stored rows name it (N6). */
+const extractFacts = { model: "claude-sonnet-5-5", promptVersion: 6 };
 
 /** A place of `kind` and `status` (default a candidate anchorage) on a new bay, with OSM `tags`. */
 export async function placeOf(

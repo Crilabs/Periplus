@@ -5,9 +5,8 @@ import { berthStates, documents, geoNames, geoObjects, landPolygons, places, pro
 import type { BerthStateFact, BerthStateLanding, BerthStateNearby, BerthStateValue } from "@/lib/db/schema/research-state";
 import { factSchemaV4 } from "@/config/fact-schema/v4";
 import type { PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
-import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
 import { newId, newPublicId, type PublicIdPrefix } from "@/lib/domain/ids";
-import { insertProfile, insertSource, insertTextFact, provenanceEntry } from "@/test/consolidation";
+import { insertProfile, insertSource, insertTextFact, provenanceEntry, type AttributeProvenance } from "@/test/consolidation";
 import { insertNamedObject, insertTestTile } from "@/test/text";
 
 /*

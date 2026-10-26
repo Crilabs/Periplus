@@ -467,13 +467,11 @@ describe("buildWarnings", () => {
     ]);
   });
 
-  it("text-only safety values and spots in a military area of the package become warnings (final review I-3, M-7)", () => {
+  it("spots in a military area of the package become warnings (M-7)", () => {
     const out = buildWarnings({
-      undeliveredSafety: [{ file: "regions.json", id: "rg_01J9ZD00000000000000000002", message: "Sperrgebiet laut Text nicht geliefert: Schießgebiet" }],
       militaryAreaSpots: [SPOT_A],
     });
     expect(out.map((f) => [f.file, f.objectId, f.message])).toEqual([
-      ["regions.json", "rg_01J9ZD00000000000000000002", "Sperrgebiet laut Text nicht geliefert: Schießgebiet"],
       ["spots.json", SPOT_A, "Liegt in einem militärischen Sperrgebiet des Pakets (coast.geojson), ist aber nicht ausgeschlossen: Profil oder Status prüfen"],
     ]);
   });

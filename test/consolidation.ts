@@ -17,9 +17,56 @@ import {
   type PlaceStatus,
 } from "@/lib/db/schema";
 import type { GeoObjectType } from "@/lib/db/schema/geo";
-import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
+import type { ConfidenceClass, RuleName, RuleOrigin } from "@/lib/domain/rules/types";
 import { newId } from "@/lib/domain/ids";
 import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestVersion } from "@/test/text";
+
+/** Stored shape of an old profile's provenance (the profiles table stays until the schema migration, N6 task 5). */
+/** Where a profile value comes from: a rule origin, the gazetteer (identity fields) or a derived value. */
+export type ProvenanceOrigin = RuleOrigin | "gazetteer" | "derived";
+
+/**
+ * Where one profile value comes from. A proposed change under review is not stored here (ruling M5-P8): the view
+ * derives it from the open `uncertain_change` task.
+ */
+export type AttributeProvenance = {
+  origin: ProvenanceOrigin;
+  rule: RuleName | "identity" | "derived";
+  confidence: number;
+  confidenceClass: ConfidenceClass;
+  observedAt: string | null;
+  lastConfirmedAt: string | null;
+  factIds: string[];
+  sourceKeys: string[];
+  computationIds: string[];
+  poiIds: string[];
+  /** Older than two cycles of the tile: the value stays, its confidence drops one class. */
+  expired: boolean;
+  /**
+   * Every supporting document is gone and no input outside documents (computation, review, observation, POI) carries
+   * the value: it is no longer "currently confirmed" (part of the content hash, ruling M5-E-R3 M-1/M-2).
+   */
+  onlyGoneSources: boolean;
+  conflictKey: string | null;
+  observedMonths: number[];
+  /**
+   * List rules only (union lists `hazards`, `restricted_zones` …, ruling M5-C-R1 (5); `prohibitions`, ruling M5-E-R3):
+   * entry identity key → the sorted input ids (`inputId`) naming the entry; an entry a review added cites the review
+   * fact.
+   */
+  entryFactIds?: Record<string, string[]>;
+  /**
+   * Safety lists only (ruling M6-FIN-R3): entry identity key → `in_review` for a kept entry that cites no fact any
+   * more (its source ended or was rejected) while the change removing it waits in an `uncertain_change` task. The
+   * entry stays (safe direction) until the task is decided. Provenance, not part of the content hash.
+   */
+  entryMarkers?: Record<string, "in_review">;
+  /**
+   * Derived and identity values only (ruling M5-E-R3 I-3, M-5): the inputs that decided the value, which cannot be
+   * reconstructed later (spatial candidates, sitelinks, the ferry basis). Provenance, not part of the content hash.
+   */
+  derivedFrom?: Record<string, unknown>;
+};
 
 /*
  * Fixtures for consolidation tests against the database: places, sources, mentions with text facts of an active
@@ -28,7 +75,8 @@ import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestVe
  * use other coordinates (see `store.test.ts`): committed places at 21.0° E / 35.2° N join the geometry test tiles.
  */
 
-const extractFacts = loadConfig("config").models.tasks["extract-facts"]!;
+/** The extraction model of the removed old pipeline: only the fixtures of its stored rows name it (N6). */
+const extractFacts = { model: "claude-sonnet-5-5", promptVersion: 6 };
 /** The active fact schema version: fixtures that mean "the active schema" use it, so a schema switch breaks no test. */
 const ACTIVE_SCHEMA = loadConfig("config").factSchema.version;
 const QUOTE = "good holding in sand";

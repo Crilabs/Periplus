@@ -149,13 +149,13 @@
   "files": [
     {
       "name": "spots.json",
-      "sha256": "76a53656e0061e80cce0e512fbe61c119efad7b54fb4202ccfe52da66f056ea0",
-      "bytes": 10345
+      "sha256": "476ae72fa12cc46a8b1a038e6f154e66d810f328b0d6837a0550981db2878732",
+      "bytes": 10343
     },
     {
       "name": "regions.json",
-      "sha256": "97d36a7f1233808e6400789750fb2712b47b88860047fce1691456a98c20dc97",
-      "bytes": 1890
+      "sha256": "0ac6dd169314d808d30136dc9adff823aa885f400bb3af601c7a169f7a531725",
+      "bytes": 1642
     },
     {
       "name": "coast.geojson",

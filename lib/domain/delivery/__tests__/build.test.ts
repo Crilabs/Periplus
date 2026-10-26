@@ -8,7 +8,6 @@ import { berthStates, deliveredObjects, deliveries, places, textShingles } from 
 import type { BerthStateFact } from "@/lib/db/schema/research-state";
 import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { startWhileLocked, testDb, withRollback } from "@/test/db";
 import { seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { deleteTestObjects, memoryArchive, testArchive } from "@/test/s3";
@@ -129,7 +128,6 @@ function shuffled(scope: SubdivisionScope): SubdivisionScope {
       state: s.state && { ...s.state, facts: mix(s.state.facts), nearby: mix(s.state.nearby), gaps: mix(s.state.gaps) },
     })),
     merged: mix(scope.merged),
-    pois: mix(scope.pois),
     regions: mix(scope.regions).map((r) => ({ ...r, names: mix(r.names) })),
     passages: mix(scope.passages),
   };
@@ -409,32 +407,6 @@ describe("buildDelivery", () => {
       });
       // the excluded place is delivered with its reason, no state date and no free parts
       expect(spots.spots.find((s) => s.id === f.places.C.publicId)).toMatchObject({ exclude: { excluded: true, reason: "military" }, asOf: null, facts: [], nearby: [] });
-    });
-  });
-
-  it("a restricted zone known only from the island's text is reported as not delivered (final review I-3)", async () => {
-    await withRollback(async (tx) => {
-      const f = await seedDeliverySubdivision(tx);
-      await insertProfile(
-        tx,
-        f.islandId,
-        { meltemi_exposure: 0.7, ferry_traffic: "high", charter_bases: ["X"], restricted_zones: [{ kind: "military", name: "Kalami" }] },
-        {
-          meltemi_exposure: provenanceEntry("text", { confidence: 0.6 }),
-          ferry_traffic: provenanceEntry("text", { confidence: 0.6 }),
-          charter_bases: provenanceEntry("text", { confidence: 0.6 }),
-          restricted_zones: provenanceEntry("text", { confidence: 0.6 }),
-        },
-        { version: 2, confidence: null },
-      );
-      const result = await buildDelivery(tx, memoryArchive(), f.subdivisionId, { now: NOW, inCallerTransaction: true });
-      expect(result.status).toBe("valid");
-      expect(result.report.warnings).toContainEqual({
-        file: "regions.json",
-        objectId: f.islandPublicId,
-        path: null,
-        message: "Sperrgebiet laut Text nicht geliefert: Militärisches Sperrgebiet Kalami",
-      });
     });
   });
 

@@ -1,12 +1,10 @@
 import type { CoastCollection, Manifest, RegionsFile, SpotsFile, WeatherPointsFile } from "@/contract/v2";
-import type { GeoObjectType, PlaceKind, PlaceStatus, HighlightCategory } from "@/lib/db/schema/geo";
+import type { GeoObjectType, PlaceKind, PlaceStatus} from "@/lib/db/schema/geo";
 import type { berthStates } from "@/lib/db/schema/research-state";
-import type { DocType } from "@/lib/db/schema/sources";
-import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 
 /*
- * What a delivery build reads for one subdivision (spec 08, spec 14): the delivered objects with their latest profiles,
- * names and the documents behind them. Loaded by `loadSubdivisionScope` (load.ts), mapped to the contract by the
+ * What a delivery build reads for one subdivision (spec 08, spec 14): the delivered objects with their berth states
+ * and names. Loaded by `loadSubdivisionScope` (load.ts), mapped to the contract by the
  * `map-*.ts` modules. Content belongs to the subdivision by `geo_objects.subdivision_id`, never by tile label.
  */
 
@@ -14,12 +12,6 @@ import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 export type BerthStateRow = typeof berthStates.$inferSelect;
 
 export type LonLat = { lon: number; lat: number };
-
-/**
- * A document behind an object's profile: its URL, effective type and newest observation date (never a quote). `gone`:
- * the document is gone; it is never listed in `sources`, but still checked against `forbiddenDomains` (final review M-1).
- */
-export type SourceRefRow = { url: string; docType: DocType; observedAt: string; gone?: boolean };
 
 /**
  * A current image of a place that may be delivered (`loadPlaceImages`): every source of its render has its delivery
@@ -69,8 +61,6 @@ export type SpotSource = {
   anchor: { lon: number; lat: number; confidence: number } | null;
   /** The geo objects the state's `nearby` entries point at (public id, names, position); an entry whose object is missing here is not delivered. */
   nearbyObjects: NearbyObject[];
-  /** `popularityForPlaces` on the build date (fixed neighbourhood across subdivisions, spec 18); null for a place outside its map (ruling M6-P8). */
-  popularity: number | null;
   /** The deliverable current images, best first (rank, sort order, slot). */
   images: DeliverableImage[];
 };
@@ -80,23 +70,6 @@ export type NearbyObject = { geoObjectId: string; publicId: string | null; name:
 
 /** A place merged into another: its public id and the final target's (ruling M6-P14). */
 export type MergedSpot = { publicId: string; mergedIntoPublicId: string };
-
-export type PoiSource = {
-  geoObjectId: string;
-  publicId: string;
-  category: HighlightCategory;
-  name: string;
-  position: LonLat;
-  osmId: string | null;
-  wikidataId: string | null;
-  profile: ProfileSnapshot | null;
-  summary: string | null;
-  sources: SourceRefRow[];
-  /** The deliverable current images, best first (rank, sort order, slot). */
-  images: DeliverableImage[];
-  /** The places selecting the POI as a highlight (spec 16), with the selection's distance; by place geo object id. */
-  selectedBy: Array<{ placeGeoObjectId: string; distanceKm: number }>;
-};
 
 export type RegionSource = {
   geoObjectId: string;
@@ -111,7 +84,6 @@ export type RegionSource = {
   areaKm2: number | null;
   /** Ancestors via `parent_id`, nearest first. */
   parentGeoObjectIds: string[];
-  profile: ProfileSnapshot | null;
 };
 
 export type PassageSource = {
@@ -119,8 +91,6 @@ export type PassageSource = {
   type: "cape" | "strait" | "channel";
   name: string;
   point: LonLat;
-  /** The latest profile: its text-only safety values have no contract field and are reported as not delivered. */
-  profile: ProfileSnapshot | null;
 };
 
 export type SubdivisionScope = {
@@ -140,7 +110,6 @@ export type SubdivisionScope = {
   tiles: Array<{ id: string; lastRunAt: string | null; statesAsOf: string | null }>;
   spots: SpotSource[];
   merged: MergedSpot[];
-  pois: PoiSource[];
   regions: RegionSource[];
   passages: PassageSource[];
 };

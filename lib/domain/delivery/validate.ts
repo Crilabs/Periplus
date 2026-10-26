@@ -5,7 +5,6 @@ import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { isPublicId, type PublicIdPrefix } from "@/lib/domain/ids";
 import { isForbiddenUrl, mentionsForbiddenDomain } from "@/lib/domain/sources/forbidden-domains";
 import { distanceNm, distanceToLinesNm, pointInPolygon } from "./geo";
-import type { UndeliveredSafety } from "./map-region";
 import type { SpotWarning } from "./map-spot";
 import { checkJsonSchema } from "./schema-check";
 import type { DeliveryPackage, LonLat } from "./types";
@@ -574,8 +573,6 @@ export function buildWarnings(input: {
   mergedNotCarried?: Array<{ id: string; into: string }>;
   droppedRegions?: Array<{ id: string; reason: "no_name" }>;
   droppedWeatherPoints?: DroppedWeatherPoint[];
-  /** Text-only safety values without a contract field (`undeliveredSafety`, final review I-3). */
-  undeliveredSafety?: UndeliveredSafety[];
   /** Non-excluded spots inside a military restricted area of the package's own coast (`spotsInMilitaryAreas`, M-7). */
   militaryAreaSpots?: string[];
 }): Finding[] {
@@ -591,7 +588,6 @@ export function buildWarnings(input: {
   }
   for (const r of input.droppedRegions ?? []) out.push(finding(REGIONS, r.id, null, "Nicht geliefert: kein gültiger Name"));
   for (const w of input.droppedWeatherPoints ?? []) out.push(finding(WEATHER, weatherPointId(w.geoObjectId, w.kind), null, WEATHER_DROPPED_DE[w.reason]));
-  for (const u of input.undeliveredSafety ?? []) out.push(finding(u.file, u.id, null, u.message));
   for (const id of input.militaryAreaSpots ?? []) {
     out.push(finding(SPOTS, id, null, "Liegt in einem militärischen Sperrgebiet des Pakets (coast.geojson), ist aber nicht ausgeschlossen: Profil oder Status prüfen"));
   }

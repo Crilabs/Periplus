@@ -142,7 +142,7 @@
       ],
       "score": {
         "confidence": 0.77,
-        "popularity": 1,
+        "popularity": 0,
         "quietness": null,
         "sourcesCount": 0,
         "lastObserved": "2025-06-10"
@@ -355,7 +355,7 @@
       },
       "score": {
         "confidence": 0.8,
-        "popularity": 0.5,
+        "popularity": 0,
         "quietness": null,
         "sourcesCount": 0,
         "lastObserved": null

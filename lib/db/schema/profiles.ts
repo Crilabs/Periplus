@@ -16,11 +16,14 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { AttributeProvenance, ProfileGap } from "@/lib/domain/consolidation/types";
 import type { ConflictNote } from "@/lib/domain/rules/types";
 import { newId } from "@/lib/domain/ids";
 import { geoObjects, poiCategoryEnum } from "./geo";
 import { runs } from "./ops";
+
+/** Stored shape of a profile's provenance and gaps; only the old profiles (removed with the schema) wrote it (N6, task 5). */
+type AttributeProvenance = Record<string, unknown>;
+type ProfileGap = { attribute: string; reason: string };
 
 /*
  * Consolidated profiles (spec 07). profiles, change_events and profile_summaries are append-only

@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { visibleChangeEventsFilter } from "@/lib/domain/change-feed";
 import { changeEvents, geoObjects, profileSummaries, profiles } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/client";
 import { withRollback } from "@/test/db";
@@ -148,22 +147,6 @@ describe("profiles, change events and summaries", () => {
       await expect(
         tx.insert(profileSummaries).values({ ...base, promptVersion: 2, text: "Eine Bucht.", status: "ok" }),
       ).resolves.toBeTruthy();
-    });
-  });
-
-  it("a change event records its transaction id; the visibility filter hides rows of transactions still in flight", async () => {
-    await withRollback(async (tx) => {
-      const geoObjectId = await insertGeoObject(tx);
-      const [row] = await tx
-        .insert(changeEvents)
-        .values({ geoObjectId, type: "place_new", severity: "info" })
-        .returning({ id: changeEvents.id, xactId: changeEvents.xactId });
-      expect(row!.xactId).toMatch(/^\d+$/);
-      const current = await tx.execute<{ xid: string }>(sql`select pg_current_xact_id()::text as xid`);
-      expect(row!.xactId).toBe(current.rows[0]!.xid);
-      // This transaction is still running, so its own event is not yet safe to hand out.
-      const visible = await tx.select({ id: changeEvents.id }).from(changeEvents).where(visibleChangeEventsFilter());
-      expect(visible.map((v) => v.id)).not.toContain(row!.id);
     });
   });
 

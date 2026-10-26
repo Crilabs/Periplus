@@ -1,5 +1,4 @@
 import { sql, type SQL } from "drizzle-orm";
-import { simulationActive } from "@/lib/adapters/simulation";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { getEnv, type Env } from "@/lib/env";
@@ -84,7 +83,7 @@ async function plannedKey(db: Db, geoObjectId: string, view: ImageView, cfg: Ima
  * (`eligibleSpots`) whose current generation key is not done yet (`keyDone`: a current image of the slot, an open or a
  * decided task with that key; a forced scope passes over the decided task). Since the key depends on the imagery tiles, it is computed from the current
  * `imagery_tiles` rows of the windows around the camera target; a missing tile makes the key new. None in an
- * evaluation run or a simulation (no paid image calls there), and none (logged once per plan) while no image model
+ * evaluation run (no paid image calls there), and none (logged once per plan) while no image model
  * is usable (`imageModelAvailable`: the model this process set, else `env.OPENAI_API_KEY`; the web server plans the
  * first stage of a run it starts), so no run downloads imagery and renders for nothing.
  */
@@ -94,7 +93,7 @@ export async function imageTargets(
   cfg: ImageStageConfig = getConfig(),
   env: Pick<Env, "OPENAI_API_KEY"> = getEnv(),
 ): Promise<ImageTarget[]> {
-  if (run.params.evaluation === true || simulationActive()) return [];
+  if (run.params.evaluation === true) return [];
   if (!imageModelAvailable(db, env)) {
     getLog().warn({ runId: run.id }, "no usable image model (OPENAI_API_KEY missing?): the run generates no place images");
     return [];
