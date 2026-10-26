@@ -78,7 +78,7 @@ describe("/api/mcp", () => {
       const { token } = await tokenFor(tx);
       const res = await rpc(token, "tools/list");
       const body = (await res.json()) as { result: { tools: Array<{ name: string; annotations?: { readOnlyHint?: boolean } }> } };
-      expect(body.result.tools.map((t) => t.name).sort()).toEqual(["costs", "deliveries", "overview", "place", "runs", "sql"]);
+      expect(body.result.tools.map((t) => t.name).sort()).toEqual(["costs", "deliveries", "overview", "place", "runs", "sql", "version"]);
       expect(body.result.tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
     }));
 
@@ -91,6 +91,10 @@ describe("/api/mcp", () => {
       expect(JSON.parse(overview.text)).toMatchObject({ subdivisions: expect.any(Array), costEur: expect.any(Object) });
 
       expect(await callTool(token, "place", { ref: `no such place ${newId()}` })).toEqual({ isError: true, text: "Kein Platz gefunden" });
+
+      const version = await callTool(token, "version");
+      expect(version.isError).toBe(false);
+      expect(JSON.parse(version.text)).toMatchObject({ gitSha: null, configHash: expect.stringMatching(/^[0-9a-f]{16}$/), gateConfigHash: expect.stringMatching(/^[0-9a-f]{16}$/) });
 
       const sqlOk = JSON.parse((await callTool(token, "sql", { query: "select current_user as u" })).text);
       expect(sqlOk.nicht_vertrauenswuerdig.rows).toEqual([["periplus_mcp_reader"]]);

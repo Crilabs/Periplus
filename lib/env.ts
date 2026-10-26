@@ -31,6 +31,8 @@ const envSchema = z.object({
     .string()
     .regex(S3_WRITE_PREFIX_PATTERN, "must be lower-case segments ending in /, e.g. sim/2026-10-20/")
     .optional(),
+  /** The commit the image was built from (build arg in CI); unset locally. */
+  GIT_SHA: z.string().optional(),
   /** `playwright`: the worker renders pages in headless Chromium when a crawl rule asks for it; `off`: never. */
   PERIPLUS_RENDERER: z.enum(["playwright", "off"]).default("playwright"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),

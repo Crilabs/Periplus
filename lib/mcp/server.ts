@@ -1,13 +1,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
+import { getEnv } from "@/lib/env";
 import { getReaderDb } from "@/lib/db/reader";
 import { subdivisions } from "@/lib/db/schema";
 import { budgetStatus, spendBreakdown, spendByService } from "@/lib/domain/costs";
 import { deliveryDetail, listDeliveries } from "@/lib/domain/delivery/view";
 import type { McpCaller } from "@/lib/domain/mcp-tokens";
 import { failedJobsOfRun, findPlaces, overview, readOnlySql } from "@/lib/domain/mcp/read";
+import { deployVersion } from "@/lib/domain/mcp/version";
 import { berthStateView, researchView } from "@/lib/domain/research/view";
 import { getRun, listRuns } from "@/lib/domain/runs";
 import { runTool, ToolError, untrusted } from "./result";
@@ -150,6 +153,17 @@ export function createPeriplusMcpServer(caller: McpCaller): McpServer {
         if (!reader) throw new ToolError("Das Werkzeug `sql` ist nicht eingerichtet (MCP_READER_PASSWORD fehlt, Runbook „MCP“).");
         return untrusted(await readOnlySql(reader, args.query));
       }),
+  );
+
+  server.registerTool(
+    "version",
+    {
+      title: "Stand des Deploys",
+      description: "Git-SHA, letzte Migration und wirksame Config von Produktion; nach einem Deploy prüfen, dass die Änderung wirkt.",
+      inputSchema: {},
+      annotations: READ,
+    },
+    () => runTool("version", caller, () => deployVersion(getDb(), getConfig(), { GIT_SHA: getEnv().GIT_SHA })),
   );
 
   return server;
