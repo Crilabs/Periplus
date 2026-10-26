@@ -69,7 +69,8 @@ npm run research:gate -- --via-mcp --subdivision GR-I --sync-conflicts --out-dir
 ```
 `PERIPLUS_MCP_URL` (z. B. `https://periplus.marvoy.app/api/mcp`) und `PERIPLUS_MCP_TOKEN` stehen in `.env.local`
 (gitignored), **nie im Repo und nie als Argument**. Das Skript liest `gate_input`, rechnet lokal und ruft mit
-`--sync-conflicts` `gate_sync_conflicts`; ohne `--via-mcp` braucht es `DATABASE_URL`.
+`--sync-conflicts` `gate_sync_conflicts`; ohne `--via-mcp` braucht es `DATABASE_URL`. Der Client (`scripts/mcp-client.ts`) schickt das Token nur über
+https (http nur an `localhost`/`127.0.0.1`) und bricht einen Aufruf nach 120 s ab.
 
 ## Lesen: Hinweise
 
