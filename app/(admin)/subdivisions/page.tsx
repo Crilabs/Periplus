@@ -87,7 +87,7 @@ function SubdivisionRows({ rows, country }: { rows: SubdivisionRow[]; country: s
                     size="sm"
                     variant={s.status === "aufgebaut" ? "secondary" : "primary"}
                     aria-label={`Aufbauen: ${s.name}`}
-                    title={`Startet den Aufbau von ${s.name} (${country}): Gazetteer, Datensätze, Seed, Geometrie, Discovery.`}
+                    title={`Startet den Aufbau von ${s.name} (${country}): Gazetteer, Datensätze, Seed, Orts-Websites, Geometrie, Dinge an Land, Reviere.`}
                   >
                     Aufbauen
                   </Button>
@@ -118,7 +118,7 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
     <>
       <PageHeader
         title="Länder und Landesteile"
-        description="Je Land seine Landesteile mit Mittelmeerküste. „Aufbauen“ startet Gazetteer, Datensätze, Seed, Geometrie und Discovery für einen Landesteil; „Alle offenen aufbauen“ stellt die noch nie aufgebauten Landesteile eines Landes – nicht begonnene, teilweise aufgebaute und fehlgeschlagene – nacheinander in die Warteschlange. Abruf, Texte und Paket bleiben eigene Läufe. „teilweise“: einzelne Stufen des Aufbaus sind beendet (Einzelläufe), der Aufbau als Ganzes nicht; „läuft“ gilt für jeden Lauf mit dem Landesteil als Umfang. Länder mit einem begonnenen Landesteil sind aufgeklappt."
+        description="Je Land seine Landesteile mit Mittelmeerküste. „Aufbauen“ startet Gazetteer, Datensätze, Seed, Orts-Websites, Geometrie, Dinge an Land und Revier-Import für einen Landesteil; „Alle offenen aufbauen“ stellt die noch nie aufgebauten Landesteile eines Landes – nicht begonnene, teilweise aufgebaute und fehlgeschlagene – nacheinander in die Warteschlange. Recherche, Abruf, Texte und Paket bleiben eigene Läufe. „teilweise“: einzelne Stufen des Aufbaus sind beendet (Einzelläufe), der Aufbau als Ganzes nicht; „läuft“ gilt für jeden Lauf mit dem Landesteil als Umfang. Länder mit einem begonnenen Landesteil sind aufgeklappt."
         actions={
           <form action={rebuildSubdivisionsAction} className="flex items-center gap-2">
             <input

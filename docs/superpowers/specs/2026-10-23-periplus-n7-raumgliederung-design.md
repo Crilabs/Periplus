@@ -118,7 +118,10 @@ sie höchstens `poiCoastDistanceKm` (20 km) von einem Meer liegen, also auch die
 
 **Welcher Lauf** (Entscheidung Claude, beim Planen korrigiert): Der Seed braucht die Sperrflächen aus der
 Datensatz-Stufe (`no_anchoring`) und kann deshalb nicht in den Gazetteer-Lauf wandern. Die neue Stufe
-`gazetteer.land` steht im Lauf „Aufbauen“ (`SUBDIVISION_BUILD_STAGES`) direkt nach `seed.tile`. Zusätzlich gibt es einen
+`gazetteer.land` steht im Lauf „Aufbauen“ (`SUBDIVISION_BUILD_STAGES`) nach den Geometrie-Stufen und vor `areas.import`
+(beim Review korrigiert, vorher direkt nach `seed.tile`): `geometry.detect_bays` legt berechnete Buchten als neue
+Kandidaten an, und `geometry.place` setzt die berechnete Ankerposition, um die die Ringe liegen; davor bekämen die
+meisten Kandidaten keine Dinge an Land. Keine der beiden Geometrie-Stufen liest POIs. Zusätzlich gibt es einen
 eigenen Lauf „Dinge an Land“ für einen Landesteil oder einzelne Kandidaten. Die Zuordnung der neuen Objekte (Landesteil,
 Meer, Eltern, Kacheln) übernimmt die Stufe selbst am Ende, ein zweiter Durchgang von `gazetteer.hierarchy` ist nicht
 nötig. Eine Stufe darf je Lauf nur einmal vorkommen (`run_stages` eindeutig je Lauf und Stufe). „Minuten statt
@@ -129,7 +132,7 @@ usw. zählen nicht.
 
 - Das **Gerüst** bleibt landesweit: Inseln, Eilande, Orte (bis `coastDistanceM`), Buchten, Kaps, Häfen, Marinas,
   Bojenfelder, Seezeichen. Es ist die Grundlage der Kandidaten und muss vollständig sein.
-- **Dinge an Land** kommen aus einer neuen Stufe des Landesteil-Laufs, die nach dem Seed läuft (dann gibt es Kandidaten:
+- **Dinge an Land** kommen aus einer neuen Stufe des Landesteil-Laufs, die nach Seed und Geometrie läuft (dann gibt es Kandidaten:
   `places` gültig, nicht zusammengeführt, Status `candidate` oder `confirmed`, wie N1). Sie lädt in zwei Ringen um jeden
   Kandidaten (Entscheidung Claude, abgeleitet aus Spec 5.7):
   - **Nahbereich** (Startwert 2,1 km Luftlinie = 1,5 km Fußweg × Umwegfaktor 1,4): Tavernen, Restaurants, Cafés,
@@ -228,7 +231,7 @@ Spalten); Aufteilung in Aufgaben und PRs; Wahl des dritten Prüf-Landesteils.
 B13 wie in 4.5; eigene Dev-DB für N7; Plan vor Code.
 
 **Claude** (änderbar): Mittelmeer-Box in Konfiguration statt aus den Meeren; `subdivisions.build` wartet auf alle
-Länder, Nachholen per Lauf nur für die fehlenden Länder; Dinge an Land als Stufe nach dem Seed in „Aufbauen“ und als eigener Lauf; zwei Ringe
+Länder, Nachholen per Lauf nur für die fehlenden Länder; Dinge an Land als Stufe nach Seed und Geometrie in „Aufbauen“ und als eigener Lauf; zwei Ringe
 (2,1 km / 15 km) mit Sehenswertem im Fernring nur ab 5 Sitelinks; Anlandestellen, Bus und Taxi auch ohne Namen; die neue
 Stufe schreibt nur POIs; Anlandestellen, Bus, Taxi, Fähre und Bäcker als Kategorien schon
 in N7; kein eigener Overpass-Spiegel; Speicherlimit je N7-Container; Prüfung an drei schweren Landesteilen statt am
