@@ -126,6 +126,23 @@ export async function imageTargets(
   return targets;
 }
 
+/**
+ * How many title images a run for `subdivisionKey` would plan now: the eligible spots (`eligibleSpots`) whose current
+ * generation key is not done yet, as `imageTargets` decides, but without the per-run cap and without the model check
+ * (the scope estimate of a start tool wants the whole backlog).
+ */
+export async function pendingImageSpotCount(db: Db, subdivisionKey: string, cfg: ImageStageConfig = getConfig()): Promise<number> {
+  const sub = await subdivisionByKey(db, subdivisionKey);
+  if (!sub) return 0;
+  const view = titleView();
+  let n = 0;
+  for (const id of await eligibleSpots(db, sql`o.subdivision_id = ${sub.id}::uuid`, cfg)) {
+    const key = await plannedKey(db, id, view, cfg);
+    if (key === null || !(await keyDone(db, id, view.slot, key))) n++;
+  }
+  return n;
+}
+
 /** One job per target, key `<geoObjectId>:<slot>`; a forced target's job carries `force`. */
 export async function imageJobs(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<JobData[]> {
   return (await imageTargets(db, run)).map((t) => ({
