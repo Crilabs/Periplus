@@ -2,10 +2,9 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { geoNames, geoObjects, places, reviewDecisions, reviewTasks, tiles, type GeoObjectType, type PlaceStatus } from "@/lib/db/schema";
+import { geoNames, geoObjects, places, reviewDecisions, reviewTasks, type GeoObjectType, type PlaceStatus } from "@/lib/db/schema";
 import { isPublicId, newId } from "@/lib/domain/ids";
-import { createReviewTask, OFFERED_REVIEW_KINDS } from "@/lib/domain/review";
-import { listOpenTasks } from "@/lib/domain/review-view";
+import { createReviewTask } from "@/lib/domain/review";
 import {
   DecisionNotAllowed,
   decideReviewTask,
@@ -14,7 +13,7 @@ import {
   TaskNotOpen,
   type ReviewDecision,
 } from "@/lib/domain/review-decisions";
-import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
+import { tileIdFor } from "@/lib/domain/tiles";
 import { testDb, withRollback } from "@/test/db";
 
 // Synthetic data in open sea outside the pilot box 23.0-23.75 E x 37.0-38.0 N (around 28.1 E, 35.1 N).
@@ -101,15 +100,6 @@ async function decisionsOf(tx: Db, taskId: string) {
   return tx.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId));
 }
 
-async function ensureTile(tx: Db, lon: number, lat: number): Promise<string> {
-  const id = tileIdFor(lon, lat);
-  const [w, s, e, n] = tileBbox(id);
-  await tx
-    .insert(tiles)
-    .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, hasCoast: true })
-    .onConflictDoNothing();
-  return id;
-}
 
 const decide = (tx: Db, taskId: string, decision: ReviewDecision, extra: { openedAt?: Date; now?: Date } = {}) =>
   decideReviewTask(tx, { taskId, decision, decidedBy: ADMIN, ...extra });
@@ -315,20 +305,6 @@ describe("pair decisions", () => {
       expect(rows.every((r) => r.mergedIntoId === null && r.validTo === null)).toBe(true);
       expect((await taskOf(tx, taskId)).status).toBe("decided");
       expect(await decisionsOf(tx, taskId)).toHaveLength(1);
-    }));
-});
-
-describe("retired coast tile tasks (spec 14)", () => {
-  it("coast_tile_without_area is not offered in review lists and cannot be decided", () =>
-    withRollback(async (tx) => {
-      const tileId = await ensureTile(tx, LON, LAT);
-      // above every other test's priorities, so it would be first in the queue if it were offered
-      const { id: taskId } = await createReviewTask(tx, { kind: "coast_tile_without_area", subjectType: "tile", subjectId: tileId, context: {}, priority: 2_100_000_000 });
-      expect(OFFERED_REVIEW_KINDS).not.toContain("coast_tile_without_area");
-      expect((await listOpenTasks(tx, { limit: 50 })).map((t) => t.id)).not.toContain(taskId);
-      expect(await nextOpenTask(tx, "coast_tile_without_area")).toBeNull();
-      await expect(tx.transaction((sp) => decide(sp, taskId, { action: "ignore" }))).rejects.toThrow(DecisionNotAllowed);
-      expect((await taskOf(tx, taskId)).status).toBe("open");
     }));
 });
 

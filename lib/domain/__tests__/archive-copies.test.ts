@@ -5,7 +5,6 @@ import { findArchiveCopies } from "@/lib/domain/documents/archive-copies";
 import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";
-import { insertTestVersion } from "@/test/text";
 
 /*
  * The 15-word copy check reads the whole archive by design (ruling M5-P20): the word sequences are salted with a fresh
@@ -18,11 +17,10 @@ function saltedWords(n: number): string[] {
   return Array.from({ length: n }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}${"qrstuvwxyz"[Math.floor(i / 26)]}`);
 }
 
-/** A chunk holding `text`, with its shingles stored as the document store does. */
+/** The archive holding `text`: its shingles under a chunk id of its own. */
 async function archived(tx: Db, text: string): Promise<void> {
-  const v = await insertTestVersion(tx, [text]);
   const hashes = shingleHashes(text, 15);
-  await tx.insert(textShingles).values(hashes.map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
+  await tx.insert(textShingles).values(hashes.map((shingleHash) => ({ shingleHash, chunkId: newId() })));
 }
 
 describe("findArchiveCopies", () => {

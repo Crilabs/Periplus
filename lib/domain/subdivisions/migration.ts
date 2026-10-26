@@ -8,7 +8,7 @@ import type { Bbox } from "@/lib/domain/tiles";
  * Moving the pilot from configured areas to subdivisions (spec 14 „Umstellung“), after `gazetteer.coarse` and
  * `subdivisions.build`. The pilot tiles are the tiles that carried an area (`tiles.area_id`, kept as legacy).
  * `snapshotPilot` records what the pilot consists of before and after; `migrateSubdivisions` backfills the subdivision
- * columns; `compareSnapshots` tells whether the pilot kept every place, fact and profile version.
+ * columns; `compareSnapshots` tells whether the pilot kept every place and fact.
  */
 
 export type PilotTileSnapshot = {
@@ -17,15 +17,13 @@ export type PilotTileSnapshot = {
   places: Array<{ id: string; publicId: string | null; status: string }>;
   /** Facts of the geo objects of those places and of the tile's linked objects, by id. */
   factIds: string[];
-  /** Newest profile version per geo object (`<geo object id>:<version>`), by id. */
-  profileVersions: string[];
 };
 
 export type PilotSnapshot = { takenAt: string; tiles: PilotTileSnapshot[] };
 
-/** Every pilot tile (a tile with an area) with its places, facts and newest profile versions, in a stable order. */
+/** Every pilot tile (a tile with an area) with its places and facts, in a stable order. */
 export async function snapshotPilot(db: Db): Promise<PilotSnapshot> {
-  const { rows } = await db.execute<{ tile_id: string; places: PilotTileSnapshot["places"] | null; fact_ids: string[] | null; profile_versions: string[] | null }>(sql`
+  const { rows } = await db.execute<{ tile_id: string; places: PilotTileSnapshot["places"] | null; fact_ids: string[] | null }>(sql`
     with pilot as (select t.id from tiles t where t.area_id is not null),
     objects as (
       select p.id as tile_id, o.geo_object_id from pilot p
@@ -38,17 +36,13 @@ export async function snapshotPilot(db: Db): Promise<PilotSnapshot> {
     select p.id as tile_id,
       (select json_agg(json_build_object('id', pl.id, 'publicId', pl.public_id, 'status', pl.status) order by pl.id)
        from places pl where pl.tile_id = p.id) as places,
-      (select array_agg(f.id::text order by f.id) from facts f where f.geo_object_id in (select o.geo_object_id from objects o where o.tile_id = p.id)) as fact_ids,
-      (select array_agg(v order by v) from (
-         select pr.geo_object_id::text || ':' || max(pr.version) as v from profiles pr
-         where pr.geo_object_id in (select o.geo_object_id from objects o where o.tile_id = p.id)
-         group by pr.geo_object_id) x) as profile_versions
+      (select array_agg(f.id::text order by f.id) from facts f where f.geo_object_id in (select o.geo_object_id from objects o where o.tile_id = p.id)) as fact_ids
     from pilot p
     order by p.id
   `);
   return {
     takenAt: new Date().toISOString(),
-    tiles: rows.map((r) => ({ tileId: r.tile_id, places: r.places ?? [], factIds: r.fact_ids ?? [], profileVersions: r.profile_versions ?? [] })),
+    tiles: rows.map((r) => ({ tileId: r.tile_id, places: r.places ?? [], factIds: r.fact_ids ?? [] })),
   };
 }
 
@@ -70,7 +64,6 @@ export function compareSnapshots(before: PilotSnapshot, after: PilotSnapshot): s
     };
     diff("Orte", b.places.map((p) => `${p.id}/${p.publicId ?? "-"}/${p.status}`), a.places.map((p) => `${p.id}/${p.publicId ?? "-"}/${p.status}`));
     diff("Facts", b.factIds, a.factIds);
-    diff("Profilversionen", b.profileVersions, a.profileVersions);
   }
   for (const a of after.tiles) if (!before.tiles.some((b) => b.tileId === a.tileId)) problems.push(`Kachel ${a.tileId} ist nachher neu Pilotkachel`);
   return problems;

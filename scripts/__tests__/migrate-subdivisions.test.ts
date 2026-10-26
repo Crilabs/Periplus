@@ -2,6 +2,7 @@ import { eq, inArray } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { comparisonSet, geoObjects, tiles } from "@/lib/db/schema";
 import { compareSnapshots, migrateSubdivisions, snapshotPilot } from "@/lib/domain/subdivisions/migration";
+import { insertComputation } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { parseArgs } from "../check-subdivision-migration";
@@ -22,6 +23,8 @@ describe("migrateSubdivisions", () => {
       await tx.update(geoObjects).set({ subdivisionId: null }).where(inArray(geoObjects.id, objectIds));
       await tx.update(geoObjects).set({ parentId: f.areaId }).where(eq(geoObjects.id, f.archipelagoId));
       await tx.insert(comparisonSet).values({ placeId: f.places.A.placeId, areaId: f.areaId, addedBy: "test" });
+
+      await insertComputation(tx, f.places.A.geoObjectId, "shelter", { "shelter.N": 0.9 });
 
       const before = await snapshotPilot(tx);
       expect(before.tiles.map((t) => t.tileId)).toEqual(f.tileIds);
@@ -47,14 +50,12 @@ describe("migrateSubdivisions", () => {
       expect(compareSnapshots(before, await snapshotPilot(tx))).toEqual([]);
     }));
 
-  it("compareSnapshots names a lost fact and a changed profile version", () => {
-    const tile = { tileId: "q025:1:1", places: [{ id: "p", publicId: "sp_1", status: "confirmed" }], factIds: ["f1", "f2"], profileVersions: ["g:1"] };
+  it("compareSnapshots names a lost fact", () => {
+    const tile = { tileId: "q025:1:1", places: [{ id: "p", publicId: "sp_1", status: "confirmed" }], factIds: ["f1", "f2"] };
     const before = { takenAt: "x", tiles: [tile] };
-    const after = { takenAt: "y", tiles: [{ ...tile, factIds: ["f1"], profileVersions: ["g:2"] }] };
+    const after = { takenAt: "y", tiles: [{ ...tile, factIds: ["f1"] }] };
     expect(compareSnapshots(before, after)).toEqual([
       "Kachel q025:1:1: Facts fehlen nachher: f2",
-      "Kachel q025:1:1: Profilversionen fehlen nachher: g:1",
-      "Kachel q025:1:1: Profilversionen neu: g:2",
     ]);
   });
 

@@ -99,7 +99,6 @@ export type PlaceDetail = {
   };
   openReviewTask: { id: string; kind: ReviewKind } | null;
   /** Status changes newest first: `status` is the status the place had until `changedAt`. */
-  statusHistory: Array<{ status: PlaceStatus; changedAt: Date }>;
   /** The place's current website (newest `place_websites` row); null for none. */
   website: { url: string; origin: PlaceWebsiteOrigin; bound: boolean } | null;
   /** The `berthable` the delivery gives the place: the derivation of spec 17; null = unknown. */
@@ -264,7 +263,7 @@ export async function geoObjectDetail(db: Db, id: string): Promise<GeoObjectDeta
   return { object, names, ancestors, children, place, tileIds: tileRows.map((r) => r.tileId) };
 }
 
-/** A place with its open review task and status history; null when unknown. */
+/** A place with its open review task; null when unknown. */
 export async function placeDetail(db: Db, id: string): Promise<PlaceDetail | null> {
   const [place] = await db
     .select({
@@ -292,21 +291,11 @@ export async function placeDetail(db: Db, id: string): Promise<PlaceDetail | nul
     .orderBy(reviewTasks.createdAt, reviewTasks.id)
     .limit(1)
     .then((rows) => rows[0] ?? null);
-  // A history row holds the row before a core-column change; keep only rows whose status differs from the next state.
-  const history = await db.execute<{ status: PlaceStatus; changed_at: Date | string }>(sql`
-    select status, changed_at from (
-      select h.history_id, h.old_row->>'status' as status, h.changed_at,
-             coalesce(lead(h.old_row->>'status') over (order by h.changed_at, h.history_id), ${place.status}) as next_status
-      from places_history h where h.row_id = ${id}
-    ) s
-    where status is distinct from next_status
-    order by changed_at desc, history_id desc`);
   const [lon, lat] = (place.position as Point).coordinates;
   const website = await currentPlaceWebsite(db, id);
   return {
     place: { ...place, position: { lon: lon!, lat: lat! } },
     openReviewTask: task,
-    statusHistory: history.rows.map((r) => ({ status: r.status, changedAt: new Date(r.changed_at) })),
     website: website ? { url: website.url, origin: website.origin, bound: website.bound } : null,
     berthable: derivedBerthable(place.kind, place.status),
   };

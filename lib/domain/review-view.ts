@@ -29,7 +29,6 @@ import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { loadImagePlaceInfo, type ImagePlaceInfo } from "@/lib/domain/images/place-info";
 import { researchView, type SignalRow } from "@/lib/domain/research/view";
 import { afterInQueue, nextOpenTask, QUEUE_ORDER } from "@/lib/domain/review-decisions";
-import { offeredKindSql } from "@/lib/domain/review";
 
 /** Places offered for "merge into a place". */
 export const NEARBY_PLACES = 5;
@@ -213,7 +212,7 @@ export async function reviewCounts(db: Db): Promise<Record<ReviewKind, number>> 
   const rows = await db
     .select({ kind: reviewTasks.kind, n: sql<number>`count(*)::int` })
     .from(reviewTasks)
-    .where(and(eq(reviewTasks.status, "open"), offeredKindSql))
+    .where(eq(reviewTasks.status, "open"))
     .groupBy(reviewTasks.kind);
   const counts = Object.fromEntries(reviewKindEnum.enumValues.map((kind) => [kind, 0])) as Record<ReviewKind, number>;
   for (const row of rows) counts[row.kind] = row.n;
@@ -256,7 +255,6 @@ export async function listOpenTasks(
 ): Promise<ReviewTaskRow[]> {
   const conditions: (SQL | undefined)[] = [
     eq(reviewTasks.status, "open"),
-    offeredKindSql,
     opts.kind ? eq(reviewTasks.kind, opts.kind) : undefined,
     opts.before ? afterInQueue(opts.before) : undefined,
   ];

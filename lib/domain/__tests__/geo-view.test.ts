@@ -180,7 +180,7 @@ describe("geo view", () => {
       expect(await tileDetail(tx, "q025:1:1")).toBeNull();
     }));
 
-  it("placeDetail returns the header, the open review task and the status history newest first", () =>
+  it("placeDetail returns the header and the open review task", () =>
     withRollback(async (tx) => {
       const c = await insertChain(tx);
       const [place] = await tx
@@ -209,7 +209,6 @@ describe("geo view", () => {
       expect(detail?.place.position.lon).toBeCloseTo(LON, 6);
       expect(detail?.place.position.lat).toBeCloseTo(LAT, 6);
       expect(detail?.openReviewTask).toEqual({ id: taskId, kind: "place_candidate" });
-      expect(detail?.statusHistory).toEqual([]);
 
       // candidate → (position change, same status) → confirmed → abandoned
       await tx.update(places).set({ position: geomFromGeoJson(point(LON + 0.001, LAT)) }).where(eq(places.id, id));
@@ -218,8 +217,6 @@ describe("geo view", () => {
 
       detail = await placeDetail(tx, id);
       expect(detail?.place).toMatchObject({ status: "abandoned", statusReason: "gone" });
-      expect(detail?.statusHistory.map((h) => h.status)).toEqual(["confirmed", "candidate"]);
-      expect(detail?.statusHistory[0]!.changedAt).toBeInstanceOf(Date);
 
       expect(await placeDetail(tx, newId())).toBeNull();
     }));

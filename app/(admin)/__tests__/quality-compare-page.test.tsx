@@ -7,7 +7,7 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { comparisonSet, places } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
+import { insertBerthState } from "@/test/berth-state";
 import { testDb, withRollback } from "@/test/db";
 import { insertNamedObject, insertTestSubdivision, insertTestTile } from "@/test/text";
 
@@ -58,7 +58,7 @@ async function setUp(tx: Db): Promise<{ placeId: string; key: string }> {
     .values({ geoObjectId: objectId, kind: "anchorage", status: "confirmed", position: geomFromGeoJson({ type: "Point", coordinates: [21.0, 35.2] }) })
     .returning({ id: places.id });
   await tx.insert(comparisonSet).values({ placeId: place!.id, subdivisionId, addedBy: "test" });
-  await insertProfile(tx, objectId, { "services.water": false, "shelter.N": 0.9 }, { "shelter.N": provenanceEntry("computed") }, { version: 1 });
+  await insertBerthState(tx, place!.id, { "services.water": false, "shelter.N": 0.9 });
   return { placeId: place!.id, key };
 }
 

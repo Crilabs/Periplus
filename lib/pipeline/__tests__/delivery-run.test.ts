@@ -18,7 +18,6 @@ import { startDeliveryRun } from "@/lib/pipeline/delivery-run";
 import { testDb, withRollback } from "@/test/db";
 import { COMMITTED_SHIFT, endCommittedDeliverySubdivision, seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { deleteTestObjects, testArchive, testObjectContentType } from "@/test/s3";
-import { insertTestVersion } from "@/test/text";
 
 /*
  * The run "Paket bauen" (plan Task 10): stage plan and starter in withRollback (no worker); the job handler on the
@@ -195,9 +194,9 @@ describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
       expect(v2.fileHashes).not.toHaveProperty("changes.json");
 
       // 4. the same content once A's fact statement turns out copied: the fact is dropped (F3), a new valid package, not unchanged
-      const archived = await insertTestVersion(db, [`Vorher ${words.join(" ")} nachher.`]);
-      chunkIds.push(...archived.chunkIds);
-      await db.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: archived.chunkIds[0]! })));
+      const archivedChunkId = newId();
+      chunkIds.push(archivedChunkId);
+      await db.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: archivedChunkId })));
       const third = jobContext(db, runId);
       await expect(deliveryBuildHandler(job, third.ctx)).resolves.toBeUndefined();
       expect(third.logs).toEqual([{ level: "info", msg: "delivery built", fields: expect.objectContaining({ status: "valid", dataVersion: 3 }) }]);

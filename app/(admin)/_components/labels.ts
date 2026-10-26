@@ -1,7 +1,6 @@
 import type {
   ComputationKind,
   DocType,
-  ExtractionStatus,
   DocumentStatus,
   ObservedAtBasis,
   GeoObjectType,
@@ -83,12 +82,8 @@ export const SCOPE_TYPE_LABELS: Record<RunScopeType, string> = {
 };
 
 export const REVIEW_KIND_LABELS: Record<ReviewKind, string> = {
-  source_approval: "Quellenfreigabe",
   place_candidate: "Ortskandidat",
-  conflict: "Konflikt",
   failed_job: "Fehlgeschlagener Job",
-  coast_tile_without_area: "Küstenkachel ohne Revier",
-  uncertain_change: "Unsichere Änderung",
   comparison_deviation: "Vergleichsabweichung",
   place_image: "Titelbild",
   research_conflict: "Recherche-Konflikt",
@@ -306,14 +301,6 @@ export function queuePauseText(pause: { reason: string | null; until: Date | nul
 }
 
 /* ---- M4: mentions, extraction runs, facts ---- */
-
-/** The extraction state of a mention (`failed`: its unit failed for good; only a reprocess extracts it again). */
-export const MENTION_EXTRACTION_STATUS_LABELS: Record<ExtractionStatus, string> = {
-  pending: "Offen",
-  done: "Ausgewertet",
-  skipped: "Übersprungen (keine Fact-Ebene)",
-  failed: "Fehlgeschlagen",
-};
 
 /** Notice of the review pages (`?notice=run_not_started`): the decision stands, a follow-up run did not start. */
 export const RUN_NOT_STARTED_NOTICE =

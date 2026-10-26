@@ -104,15 +104,11 @@ describe("ensureSubdivisionTiles", () => {
       }
     }));
 
-  it("second run changes nothing and writes no history", () =>
+  it("second run changes nothing", () =>
     withRollback(async (db) => {
       const { a } = await setup(db);
-      await ensureSubdivisionTiles(db, a);
-      await ensureSubdivisionTiles(db, a);
-      const [{ h }] = await db
-        .execute<{ h: number }>(sql`SELECT count(*)::int AS h FROM tiles_history WHERE row_id = ANY(${`{${A_ONLY},${SHARED}}`}::text[])`)
-        .then((x) => x.rows);
-      expect(h).toBe(0);
+      const first = await ensureSubdivisionTiles(db, a);
+      expect(await ensureSubdivisionTiles(db, a)).toEqual(first);
     }));
 
   it("a subdivision without land polygons has tiles but no coast", () =>

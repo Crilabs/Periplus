@@ -11,7 +11,6 @@ import { newId } from "@/lib/domain/ids";
 import { startWhileLocked, testDb, withRollback } from "@/test/db";
 import { seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { deleteTestObjects, memoryArchive, testArchive } from "@/test/s3";
-import { insertTestVersion } from "@/test/text";
 import { SubdivisionNotFound } from "../load";
 import { buildDelivery, previousPackage } from "../build";
 import { sha256Hex } from "../serialize";
@@ -266,9 +265,7 @@ describe("buildDelivery", () => {
       const first = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
       expect(first).toMatchObject({ status: "valid", dataVersion: 1 });
       // the package as a 3.0 deployment stored it: older contract version (its files are never read as the base of this one)
-      await tx.execute(sql`alter table deliveries disable trigger deliveries_append_only`);
       await tx.update(deliveries).set({ schemaVersion: "3.0" }).where(eq(deliveries.id, first.deliveryId));
-      await tx.execute(sql`alter table deliveries enable trigger deliveries_append_only`);
       const second = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date(NOW.getTime() + 86_400_000), inCallerTransaction: true });
       expect(second).toMatchObject({ status: "valid", dataVersion: 2 });
       const rows = await deliveryRows(tx, f.subdivisionId);
@@ -442,8 +439,7 @@ describe("buildDelivery", () => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       const words = saltedWords(30);
-      const v = await insertTestVersion(tx, [words.join(" ")]);
-      await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
+      await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: newId() })));
       const copied = `Die Bucht: ${words.slice(2, 18).join(" ")}.`;
       await rewriteStateA(tx, f, { facts: await factsOfA(tx, f, copied), updatedAt: new Date("2026-10-20T08:00:00Z") });
 

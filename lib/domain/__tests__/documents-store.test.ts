@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { chunks, documents, documentVersions, sources } from "@/lib/db/schema";
+import { documents, documentVersions, sources } from "@/lib/db/schema";
 import {
   archiveKey,
   ensureDocument,
@@ -72,10 +72,6 @@ async function versionsOf(tx: Db, documentId: string) {
   return tx.select().from(documentVersions).where(eq(documentVersions.documentId, documentId)).orderBy(documentVersions.fetchedAt);
 }
 
-async function chunksOf(tx: Db, versionId: string) {
-  return tx.select().from(chunks).where(eq(chunks.documentVersionId, versionId)).orderBy(chunks.ordinal);
-}
-
 async function documentRow(tx: Db, id: string) {
   const [row] = await tx.select().from(documents).where(eq(documents.id, id));
   return row!;
@@ -103,7 +99,7 @@ describe("ensureDocument", () => {
 });
 
 describe("storeFetched", () => {
-  it("the first fetch writes raw and md and a version, no chunks, shingles or embeddings", async () => {
+  it("the first fetch writes raw and md and a version", async () => {
     const archive = memoryArchive();
     await withRollback(async (tx) => {
       const { documentId } = await newDocument(tx);
@@ -120,7 +116,6 @@ describe("storeFetched", () => {
       expect(archive.keys()).toEqual([version!.mdKey, version!.rawKey].sort());
       expect(new TextDecoder().decode((await archive.get(version!.mdKey))!)).toMatch(/^# Harbour guide\n/);
 
-      expect(await chunksOf(tx, version!.id)).toEqual([]);
 
       const doc = await documentRow(tx, documentId);
       expect(doc.currentVersionId).toBe(version!.id);
@@ -159,7 +154,6 @@ describe("storeFetched", () => {
       const diff = new TextDecoder().decode((await archive.get(version!.diffKey!))!);
       expect(diff).toContain("-The east anchorage");
       expect(diff).toContain("+The changed east anchorage");
-      expect(await chunksOf(tx, second.versionId)).toEqual([]);
     });
   });
 

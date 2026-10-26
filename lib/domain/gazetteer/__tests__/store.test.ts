@@ -88,11 +88,9 @@ describe("upsertGeoObject", () => {
       expect(second).toEqual({ id: first.id, created: false, changed: false, names: 0 });
       const rows = await db.select().from(geoObjects).where(eq(geoObjects.osmId, draft.osmId!));
       expect(rows).toHaveLength(1);
-      const history = await db.execute(sql`SELECT 1 FROM geo_objects_history WHERE row_id = ${first.id}`);
-      expect(history.rows).toHaveLength(0);
     }));
 
-  it("updates a changed geometry and writes history", () =>
+  it("updates a changed geometry", () =>
     withRollback(async (db) => {
       const draft: GeoObjectDraft = {
         type: "cape",
@@ -104,8 +102,6 @@ describe("upsertGeoObject", () => {
       const first = await upsertGeoObject(db, draft);
       const second = await upsertGeoObject(db, { ...draft, geometry: { type: "Point", coordinates: [25.06, 35.35] } });
       expect(second).toMatchObject({ id: first.id, created: false, changed: true });
-      const history = await db.execute(sql`SELECT 1 FROM geo_objects_history WHERE row_id = ${first.id}`);
-      expect(history.rows).toHaveLength(1);
     }));
 
   it("matches on the first external id present", () =>

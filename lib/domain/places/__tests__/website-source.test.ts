@@ -85,12 +85,12 @@ describe("attachPlaceWebsite", () => {
       }
     }));
 
-  it("a proposed source keeps its status and its open approval task: no source_approval is decided", () =>
+  it("a proposed source keeps its status and its open approval task: no review task is decided", () =>
     withRollback(async (tx) => {
       const runId = await insertTestRun(tx);
       const domain = `proposed-${newId()}.example`;
       const id = await insertSource(tx, domain, { status: "proposed", type: "trip_report", weight: 0.6, origin: "serp" });
-      const task = await createReviewTask(tx, { kind: "source_approval", subjectType: "source", subjectId: id, context: {} });
+      const task = await createReviewTask(tx, { kind: "place_candidate", subjectType: "source", subjectId: id, context: {} });
       const place = await insertPlace(tx, { type: "harbour", name: "Gamma" });
       const result = await attachPlaceWebsite(tx, { placeId: place.placeId, geoObjectId: place.objectId, url: `https://www.${domain}/`, origin: "osm", runId }, cfg());
       expect(result).toEqual({ sourceId: id, bound: true });

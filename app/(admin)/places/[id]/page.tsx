@@ -315,23 +315,6 @@ function Overview({ detail }: { detail: Detail }) {
             ]}
           />
         </Panel>
-
-        <Panel title="Statusverlauf" flush>
-          {detail.statusHistory.length === 0 ? (
-            <EmptyState title="Keine Statusänderungen.">Der Ort hat seinen Status seit der Anlage behalten.</EmptyState>
-          ) : (
-            <ol className="divide-y divide-line text-sm">
-              {detail.statusHistory.map((h) => (
-                <li key={h.changedAt.toISOString() + h.status} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                  <Badge tone={PLACE_STATUS_TONES[h.status]}>{PLACE_STATUS_LABELS[h.status]}</Badge>
-                  <span className="text-xs text-muted" title={fmt.dateTime(h.changedAt)}>
-                    {fmt.dateTime(h.changedAt)}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </Panel>
       </div>
     </div>
   );

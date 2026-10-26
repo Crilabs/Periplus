@@ -8,10 +8,9 @@ import type { Archive } from "@/lib/adapters/s3";
 import { applyPlaceImageDecision, type RegenerateImage } from "@/lib/domain/images/approve";
 import { geoObjects, placeKindEnum, places, reviewDecisions, reviewTasks, type ReviewKind } from "@/lib/db/schema";
 import { NOT_BERTH_REASON, RESEARCH_CONFLICT_SUBJECT } from "@/lib/domain/research/gate-conflicts";
-import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/review/task-locks";
+import { dismissTasks, lockOpenPlaceTasks } from "@/lib/domain/review/task-locks";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { newPublicId } from "@/lib/domain/ids";
-import { offeredKindSql } from "@/lib/domain/review";
 import { appendReviewOutcome, comparisonTaskContextSchema } from "@/lib/domain/quality/comparison-results";
 import { QUEUES, type QueueName } from "@/lib/jobs/queues";
 
@@ -201,7 +200,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
     }
     case "merge": {
       // „Einem Ort zuordnen“ merges like „Derselbe Ort“ (GR-3): the geo objects, so the facts follow the merge chain.
-      // Lock order (as `mergePlaceInto`): the merged object's open profile tasks, both geo objects, then the places.
+      // Lock order (as `mergePlaceInto`): the open tasks on the place, both geo objects, then the places.
       if (decision.intoPlaceId === task.subjectId) throw new DecisionNotAllowed(`place ${task.subjectId} cannot merge into itself`);
       const { rows: read } = await tx.execute<{ id: string; geo_object_id: string }>(
         sql`select id, geo_object_id from places where id in (${task.subjectId}, ${decision.intoPlaceId})`,
@@ -210,7 +209,6 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       const keepObject = read.find((r) => r.id === decision.intoPlaceId)?.geo_object_id;
       if (!dropObject) throw new DecisionNotAllowed(`place ${task.subjectId} is not valid`);
       if (!keepObject || keepObject === dropObject) throw new DecisionNotAllowed(`place ${decision.intoPlaceId} is no valid merge target for ${task.subjectId}`);
-      const openTasks = [...(await lockOpenTasks(tx, dropObject)).values()];
       // the place's other open tasks, before the geo objects: `mergeGeoObjects` dismisses them (UI-5)
       await lockOpenPlaceTasks(tx, task.subjectId);
       const { rows: objects } = await tx.execute<{ id: string }>(sql`
@@ -236,8 +234,6 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       if (!target || place.geoObjectId !== dropObject || target.geoObjectId !== keepObject) {
         throw new DecisionNotAllowed(`place ${decision.intoPlaceId} is no valid merge target for ${place.id}`);
       }
-      // the merged object's profile stays history: its open profile tasks end with it (as `mergePlaceInto`)
-      await dismissTasks(tx, openTasks.map((t) => t.id), "object_ended");
       await mergeGeoObjects(tx, keepObject, dropObject);
       return keepObject;
     }
@@ -333,7 +329,7 @@ export function afterInQueue(afterId: string): SQL {
  * first one after that task in this order (the task itself may be decided by now).
  */
 export async function nextOpenTask(db: Db, kind?: ReviewKind, afterId?: string, where?: SQL): Promise<{ id: string } | null> {
-  const conditions: (SQL | undefined)[] = [eq(reviewTasks.status, "open"), offeredKindSql, kind ? eq(reviewTasks.kind, kind) : undefined, where];
+  const conditions: (SQL | undefined)[] = [eq(reviewTasks.status, "open"), kind ? eq(reviewTasks.kind, kind) : undefined, where];
   if (afterId) conditions.push(afterInQueue(afterId));
   const [row] = await db
     .select({ id: reviewTasks.id })

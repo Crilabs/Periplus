@@ -20,7 +20,6 @@ import {
   TAVERNA,
   validPackage,
 } from "@/test/fixtures/delivery/package-v4";
-import { insertTestVersion } from "@/test/text";
 import type { DeliveryPackage } from "../types";
 import { buildWarnings, CHECK_NAMES, dropCopiedTexts, failedChecksSummary, spotsInMilitaryAreas, validatePackage, type CheckName, type ValidationDeps, type ValidationReport } from "../validate";
 
@@ -319,8 +318,7 @@ describe("validatePackage", () => {
     return Array.from({ length: n }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}é`);
   }
   async function archived(tx: Db, text: string): Promise<void> {
-    const v = await insertTestVersion(tx, [text]);
-    await tx.insert(textShingles).values(shingleHashes(text, 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
+    await tx.insert(textShingles).values(shingleHashes(text, 15).map((shingleHash) => ({ shingleHash, chunkId: newId() })));
   }
   const fromArchive = (tx: Db) => async (text: string) => (await findArchiveCopies(tx, text)).longestRun;
 

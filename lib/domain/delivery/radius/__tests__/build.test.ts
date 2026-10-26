@@ -177,9 +177,6 @@ describe("getRadiusPackage", () => {
       expect(await countRows(tx, first.key)).toBe(1);
       const requests = await tx.select().from(radiusPackageRequests).where(eq(radiusPackageRequests.radiusPackageId, first.id));
       expect(requests.map((r) => r.kind).sort()).toEqual(["file", "package"]);
-      // both tables are append-only
-      await expect(tx.transaction((sp) => sp.execute(sql`update radius_packages set days = 4 where id = ${first.id}`))).rejects.toThrow();
-      await expect(tx.transaction((sp) => sp.execute(sql`delete from radius_package_requests where radius_package_id = ${first.id}`))).rejects.toThrow();
     }));
 
   it("a second request waits for the build lock of the key (radius:<key>)", { timeout: 60_000 }, async () => {

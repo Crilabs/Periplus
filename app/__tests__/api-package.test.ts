@@ -235,10 +235,8 @@ describe("GET /api/v4/subdivisions/[subdivision]/package", () => {
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
       await build(tx, archive, f);
-      // deliveries are append-only; the test transaction plays a package stored before the contract moved to 4.0
-      await tx.execute(sql`alter table deliveries disable trigger deliveries_append_only`);
+      // the test transaction plays a package stored before the contract moved to 4.0
       await tx.execute(sql`update deliveries set schema_version = '2.3'`);
-      await tx.execute(sql`alter table deliveries enable trigger deliveries_append_only`);
 
       expect((await getPackage(f.subdivisionPublicId, key)).headers.get("periplus-schema-version")).toBe("2.3");
       expect((await getFile(f.subdivisionPublicId, "spots.json", key)).headers.get("periplus-schema-version")).toBe("2.3");
