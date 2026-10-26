@@ -1,6 +1,6 @@
 import type { ApiScope } from "@/lib/domain/api-clients";
 
-export type RouteRule = { kind: "public" } | { kind: "auth" } | { kind: "admin" } | { kind: "api"; scope: ApiScope };
+export type RouteRule = { kind: "public" } | { kind: "auth" } | { kind: "admin" } | { kind: "api"; scope: ApiScope } | { kind: "mcp" };
 
 /**
  * Default-deny policy: every URL-producing route under `app/` (route groups stripped,
@@ -36,6 +36,7 @@ export const ROUTE_POLICY: Record<string, RouteRule> = {
   "/deliveries/[id]/files/images/[file]": { kind: "admin" },
   "/deliveries/radius": { kind: "admin" },
   "/images/file": { kind: "admin" },
+  "/api/mcp": { kind: "mcp" },
   "/api/v4/ping": { kind: "api", scope: "delivery:read" },
   "/api/v4/subdivisions": { kind: "api", scope: "delivery:read" },
   "/api/v4/subdivisions/[subdivision]/package": { kind: "api", scope: "delivery:read" },

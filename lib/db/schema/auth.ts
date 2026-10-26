@@ -32,3 +32,25 @@ export const apiClients = pgTable("api_clients", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Personal MCP tokens (`/api/mcp`): a token acts as its owner, read only. Only the SHA-256 hash is stored; `prefix` (not
+ * secret) finds the candidate rows. Expiry is mandatory, revocation permanent.
+ */
+export const mcpTokens = pgTable(
+  "mcp_tokens",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    name: text("name").notNull(),
+    prefix: text("prefix").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("mcp_tokens_prefix_idx").on(t.prefix), index("mcp_tokens_user_id_idx").on(t.userId)],
+);

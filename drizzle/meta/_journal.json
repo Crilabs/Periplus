@@ -568,6 +568,20 @@
       "when": 1792973844216,
       "tag": "0080_drop_old_pipeline",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1792995814111,
+      "tag": "0081_mcp",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792996005804,
+      "tag": "0082_mcp_reader_login",
+      "breakpoints": true
     }
   ]
 }
