@@ -20,7 +20,7 @@ export type ScopeSize = { unit: ScopeUnit; count: number };
 export type StartKind = "subdivisions" | "build" | "gazetteer" | "seed" | "datasets" | "geometry" | "research" | "images" | "delivery";
 
 /** What a start tool is given to scope a run: a subdivision, one tile or a list of places. */
-export type StartScope = { subdivisionKey: string } | { tileId: string } | { placeIds: string[] };
+export type StartScope = { subdivisionKey: string } | { tileId: string } | { placeIds: string[] } | Record<string, never>;
 
 /**
  * The `runs.stages` each starter stores. A geometry run for one place skips `geometry.detect_bays`; its stages then
