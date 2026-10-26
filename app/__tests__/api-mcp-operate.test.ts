@@ -3,7 +3,10 @@ import type { PgBoss } from "pg-boss";
 import { describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { places, runs, users } from "@/lib/db/schema";
+import { places, queueControls, reviewDecisions, reviewTasks, runs, users } from "@/lib/db/schema";
+import { createReviewTask } from "@/lib/domain/review";
+import { createRun } from "@/lib/domain/runs";
+import { insertPlace } from "@/test/consolidation";
 import { createMcpToken } from "@/lib/domain/mcp-tokens";
 import { newId } from "@/lib/domain/ids";
 import { tileIdFor } from "@/lib/domain/tiles";
@@ -26,6 +29,8 @@ const boss = {
     inserted.push(...jobs.map((j) => ({ queue, data: j.data })));
     return jobs.map((j) => j.id ?? newId());
   },
+  findJobs: async () => [],
+  cancel: async () => ({}),
 } as unknown as PgBoss;
 
 vi.mock("next/server", async (importOriginal) => ({
@@ -37,6 +42,11 @@ vi.mock("@/lib/db/client", async (importActual) => ({
   getDb: () => db,
 }));
 vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => boss }));
+const retried: Array<{ queue: string; jobId: string }> = [];
+vi.mock("@/lib/domain/jobs-view", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/domain/jobs-view")>()),
+  retryFailedJob: async (_db: unknown, _boss: unknown, queue: string, jobId: string) => void retried.push({ queue, jobId }),
+}));
 vi.mock("@/lib/config", async (importActual) => {
   const actual = await importActual<typeof import("@/lib/config")>();
   return {
@@ -209,6 +219,82 @@ describe("/api/mcp start tools", () => {
       const body = (await res.json()) as { result: { tools: Array<{ name: string; annotations?: Record<string, boolean> }> } };
       const starts = ["subdivisions_rebuild", "subdivision_build", "gazetteer_start", "seed_start", "datasets_start", "geometry_start", "research_start", "images_start", "delivery_start"];
       for (const name of starts) {
+        expect(body.result.tools.find((t) => t.name === name)?.annotations).toEqual({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
+      }
+    }));
+
+  it("run_end ends a running run as mcp:<email>", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token, email } = await tokenFor(tx);
+      const { id } = await createRun(tx, { kind: "system", scope: { type: "system", id: "test" }, stages: ["seed"], triggeredBy: "test" });
+      const res = await callTool(token, "run_end", { runId: id });
+      expect(res.isError).toBe(false);
+      expect(JSON.parse(res.text)).toEqual({ beendet: true, aufgeraeumt: true });
+      const [run] = await tx.select().from(runs).where(eq(runs.id, id));
+      expect(run).toMatchObject({ endedBy: `mcp:${email}`, endedAt: expect.any(Date) });
+      expect(JSON.parse((await callTool(token, "run_end", { runId: id })).text)).toEqual({ beendet: false, aufgeraeumt: false });
+    }));
+
+  it("queue_pause writes the pause as mcp:<email>, queue_resume removes it; an unknown queue is refused", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token, email } = await tokenFor(tx);
+      await callTool(token, "queue_pause", { queue: "seed.tile" });
+      const [row] = await tx.select().from(queueControls).where(eq(queueControls.queue, "seed.tile"));
+      expect(row).toMatchObject({ pausedUntil: null, reason: "manual", updatedBy: `mcp:${email}` });
+      await callTool(token, "queue_resume", { queue: "seed.tile" });
+      expect(await tx.select().from(queueControls).where(eq(queueControls.queue, "seed.tile"))).toHaveLength(0);
+      expect((await callTool(token, "queue_pause", { queue: "no.such" })).isError).toBe(true);
+    }));
+
+  it("job_retry retries the job and decides its open failed_job task with retry as mcp:<email>", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      retried.length = 0;
+      const { token, email } = await tokenFor(tx);
+      const jobId = newId();
+      const { id: taskId } = await createReviewTask(tx, { kind: "failed_job", subjectType: "job", subjectId: jobId, context: { queue: "seed.tile" } });
+      const res = await callTool(token, "job_retry", { queue: "seed.tile", jobId });
+      expect(res.isError).toBe(false);
+      expect(retried).toEqual([{ queue: "seed.tile", jobId }]);
+      const [task] = await tx.select().from(reviewTasks).where(eq(reviewTasks.id, taskId));
+      expect(task!.status).toBe("decided");
+      const [decision] = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId));
+      expect(decision).toMatchObject({ decision: { action: "retry" }, decidedBy: `mcp:${email}` });
+    }));
+
+  it("gate_sync_conflicts: foreign ids, an unknown subdivision or a threshold outside the config are refused; own ids create tasks once", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token } = await tokenFor(tx);
+      const key = `XT-${newId().slice(0, 8)}`;
+      const { placeIds } = await seedCandidates(tx, key);
+      const foreign = (await insertPlace(tx, { name: "Zzyzx Cove" })).placeId;
+      const conflicts = () => tx.select().from(reviewTasks).where(eq(reviewTasks.kind, "research_conflict"));
+      const before = (await conflicts()).length;
+
+      const refused = await callTool(token, "gate_sync_conflicts", { subdivision: key, threshold: 3, placeIds: [placeIds[0], foreign] });
+      expect(refused).toEqual({ isError: true, text: `1 Platz-IDs gehören nicht zu ${key}` });
+      expect(refused.text).not.toContain(foreign);
+      expect((await callTool(token, "gate_sync_conflicts", { subdivision: key, threshold: 7, placeIds: [placeIds[0]] })).isError).toBe(true);
+      expect(await callTool(token, "gate_sync_conflicts", { subdivision: "XT-none", threshold: 3, placeIds: [] })).toEqual({ isError: true, text: "Landesteil XT-none unbekannt" });
+      expect((await conflicts()).length).toBe(before);
+
+      const first = JSON.parse((await callTool(token, "gate_sync_conflicts", { subdivision: key, threshold: 3, placeIds })).text);
+      expect(first).toEqual({ angelegt: 2, offen: 2 });
+      const second = JSON.parse((await callTool(token, "gate_sync_conflicts", { subdivision: key, threshold: 3, placeIds })).text);
+      expect(second).toEqual({ angelegt: 0, offen: 2 });
+      expect((await conflicts()).length).toBe(before + 2);
+    }));
+
+  it("tools/list marks the control tools as writing", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token } = await tokenFor(tx);
+      const res = await rpc(token, "tools/list");
+      const body = (await res.json()) as { result: { tools: Array<{ name: string; annotations?: Record<string, boolean> }> } };
+      for (const name of ["run_end", "job_retry", "queue_pause", "queue_resume", "gate_sync_conflicts"]) {
         expect(body.result.tools.find((t) => t.name === name)?.annotations).toEqual({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
       }
     }));

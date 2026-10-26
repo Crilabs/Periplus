@@ -1,12 +1,18 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { budgetStatus, type BudgetStatus } from "@/lib/domain/costs";
+import { retryJobWithTask } from "@/lib/domain/job-retry";
 import { tileExists } from "@/lib/domain/geo-view";
 import type { McpCaller } from "@/lib/domain/mcp-tokens";
 import { estimateCost, placeIdsOnTile, recordScopeSize, scopeSize, type ScopeSize, type StartKind, type StartScope } from "@/lib/domain/mcp/estimate";
+import { syncConflictTasks } from "@/lib/domain/research/gate-conflicts";
+import { loadGateInput } from "@/lib/domain/research/gate-report";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { getBoss } from "@/lib/jobs/boss";
+import { pauseQueue, resumeQueue } from "@/lib/jobs/controls";
+import { QUEUES } from "@/lib/jobs/queues";
 import { createLogger } from "@/lib/logger";
 import { startDatasetImportRun } from "@/lib/pipeline/datasets-run";
 import { startDeliveryRun } from "@/lib/pipeline/delivery-run";
@@ -14,12 +20,16 @@ import { startGazetteerRun } from "@/lib/pipeline/gazetteer/stages";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
 import { startImageRun } from "@/lib/pipeline/images-run";
 import { startResearchRun } from "@/lib/pipeline/research-run";
+import { endRunByAdmin } from "@/lib/pipeline/runs";
 import { startSeedRun } from "@/lib/pipeline/seed";
-import { startSubdivisionBuild } from "@/lib/pipeline/subdivision-build";
+import { afterBuildRunEnded, startSubdivisionBuild } from "@/lib/pipeline/subdivision-build";
 import { startSubdivisionsBuildRun } from "@/lib/pipeline/subdivisions-run";
 import { runTool, ToolError, type LogFields } from "./result";
 
 /*
+ * The control tools (end a run, retry a job, pause or resume a queue, sync the gate's conflict tasks) call what the admin
+ * pages call, as `mcp:<email>`.
+ *
  * The start tools of the MCP server (plan 2026-10-26-periplus-mcp-steuern, design section 1): each calls the starter
  * the admin page's action calls, with `triggeredBy = "mcp:<email>"`. Two steps: without `confirm: true` a tool writes
  * nothing and answers scope, estimate and today's budgets; the starter's own checks (gate, candidates, a run already
@@ -224,5 +234,110 @@ export function registerOperateTools(server: McpServer, caller: McpCaller): void
         }
         return startTool("research", scope, args.confirm, async () => startResearchRun(getDb(), await boss(), scope, by));
       }),
+  );
+
+  const queueArg = z.enum(QUEUES).describe("Name der Queue, z. B. seed.tile");
+
+  server.registerTool(
+    "run_end",
+    {
+      title: "Lauf beenden",
+      description: "Beendet einen wartenden oder laufenden Lauf von Hand und bricht seine noch nicht begonnenen Jobs ab (wie „Lauf beenden“ auf der Laufseite). Ein beendeter Aufbau gibt den Platz in der Warteschlange frei.",
+      inputSchema: { runId: z.uuid().describe("Lauf-ID") },
+      annotations: WRITE,
+    },
+    (args) =>
+      runTool(
+        "run_end",
+        caller,
+        async () => {
+          const db = getDb();
+          const b = await boss();
+          const { ended, cleanedUp } = await endRunByAdmin(db, b, args.runId, by);
+          if (ended) await afterBuildRunEnded(db, b, args.runId);
+          return { beendet: ended, aufgeraeumt: cleanedUp };
+        },
+        () => ({ runId: args.runId }),
+      ),
+  );
+
+  server.registerTool(
+    "job_retry",
+    {
+      title: "Job erneut versuchen",
+      description: "Versucht einen fehlgeschlagenen Job erneut; eine offene Aufgabe „Fehlgeschlagener Job“ dazu wird mit „erneut versuchen“ entschieden.",
+      inputSchema: { queue: queueArg, jobId: z.uuid().describe("Job-ID") },
+      annotations: WRITE,
+    },
+    (args) =>
+      runTool("job_retry", caller, async () => {
+        await retryJobWithTask(getDb(), await boss(), { queue: args.queue, jobId: args.jobId, decidedBy: by });
+        return { erneutVersucht: true };
+      }),
+  );
+
+  server.registerTool(
+    "queue_pause",
+    {
+      title: "Queue anhalten",
+      description: "Hält eine Queue an, bis sie wieder freigegeben wird; laufende Jobs enden normal, neue beginnen nicht.",
+      inputSchema: { queue: queueArg },
+      annotations: WRITE,
+    },
+    (args) =>
+      runTool("queue_pause", caller, async () => {
+        await pauseQueue(getDb(), args.queue, null, "manual", by);
+        return { queue: args.queue, angehalten: true };
+      }),
+  );
+
+  server.registerTool(
+    "queue_resume",
+    {
+      title: "Queue freigeben",
+      description: "Hebt die Pause einer Queue auf (auch eine Budget-Pause).",
+      inputSchema: { queue: queueArg },
+      annotations: WRITE,
+    },
+    (args) =>
+      runTool("queue_resume", caller, async () => {
+        await resumeQueue(getDb(), args.queue, by);
+        return { queue: args.queue, angehalten: false };
+      }),
+  );
+
+  server.registerTool(
+    "gate_sync_conflicts",
+    {
+      title: "Konfliktaufgaben abgleichen",
+      description:
+        "Gleicht die Aufgaben „Recherche-Konflikt“ eines Landesteils mit den Plätzen ab, die die Referenz nicht kennt: je Platz höchstens eine offene Aufgabe, keine neue für einen schon entschiedenen Platz, offene Aufgaben von Plätzen, die kein Konflikt mehr sind, werden verworfen. `threshold` ist die Bestätigungsschwelle der Messung (aus der Config), `placeIds` müssen Plätze des Landesteils sein.",
+      inputSchema: {
+        subdivision: subdivisionArg,
+        threshold: z.number().int().describe("Bestätigungsschwelle der Messung, einer der Werte research.gate.thresholds"),
+        placeIds: z.array(z.uuid()).max(500).describe("Plätze, die die Referenz nicht kennt (0–500)"),
+      },
+      annotations: WRITE,
+    },
+    (args) =>
+      runTool(
+        "gate_sync_conflicts",
+        caller,
+        async () => {
+          const sub = await subdivisionByKey(getDb(), args.subdivision);
+          if (!sub) throw new ToolError(`Landesteil ${args.subdivision} unbekannt`);
+          const cfg = getConfig();
+          if (!cfg.research.gate.thresholds.includes(args.threshold)) {
+            throw new ToolError(`Schwelle ${args.threshold} unzulässig; erlaubt: ${cfg.research.gate.thresholds.join(", ")}`);
+          }
+          const scopePlaceIds = (await loadGateInput(getDb(), args.subdivision, cfg)).places.map((p) => p.placeId);
+          const own = new Set(scopePlaceIds);
+          const foreign = new Set(args.placeIds.filter((id) => !own.has(id))).size;
+          if (foreign > 0) throw new ToolError(`${foreign} Platz-IDs gehören nicht zu ${args.subdivision}`);
+          const { created, open } = await syncConflictTasks(getDb(), args.placeIds, args.threshold, scopePlaceIds);
+          return { angelegt: created, offen: open };
+        },
+        (r) => ({ taskCount: r.angelegt }),
+      ),
   );
 }
