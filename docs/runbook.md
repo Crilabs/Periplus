@@ -136,12 +136,20 @@ SQL
 ```
 Danach die Prüfung wiederholen. Betroffen sein können nur Geo-Objekte aus dem OSM-Import (ihr Typ kommt aus den Tags); die Reparatur nimmt ihnen die ID, der nächste OSM-Import des Landesteils vergibt eine der richtigen Familie, bis dahin fehlt das Objekt im Paket. Der alte Worker läuft zwischen Prüfung und Migration weiter: scheitert der Deploy trotzdem an 0048, Prüfung und Reparatur wiederholen und erneut ausrollen. Eine Zeile aus `places` kann kein Code schreiben (Orte bekommen nur `sp_`-IDs, die sich nie ändern): nicht reparieren, den Deploy zurückhalten und die Zeile untersuchen.
 
+## Umstellung auf die Neuausrichtung (N5, N6) in Produktion
+
+Einmalig, in dieser Reihenfolge (Stand 26.10.2026; Produktion war leer bis auf den Admin):
+1. PRs mergen: #31 (Navily-Tor mit Kernwerten), #32 (N5, Vertrag 4.0), dann N6 (Rückbau). Jeder Merge deployt; der Deploy von N6 wendet Migration `0080_drop_old_pipeline` an (alte Tabellen, Trigger, alte pg-boss-Queues weg).
+2. `https://<domain>/readyz` liefert `{"status":"ok"}`; im Worker-Log keine Startfehler (`dc logs --tail 100 worker`).
+3. Archiv übernehmen (Abschnitt „Archiv übernehmen“): Export lokal aus der Dev-Umgebung (während des Exports den Dev-Worker anhalten, damit der Stand in sich stimmt), Verzeichnis per `rsync` auf den Server, Import im Worker-Container; Zählung Dokumente und Versionen vorher = nachher (Prüfplan Attika 2, T0).
+4. API: `/api/v4`; `/api/v3` und `/api/v1` gibt es nicht mehr.
+
 ## Rollback
 Eine frühere Version erneut ausrollen:
 ```bash
 bash /opt/periplus/scripts/deploy/deploy.sh <previous sha>
 ```
-(oder aus Actions heraus per Re-Run). Das funktioniert jederzeit, auch lange nach dem Deploy-Job, weil der Server mit seinem eigenen Nur-Lese-Login (Abschnitt 5a) zieht; die Images müssen in ghcr.io noch vorhanden sein. Der aktuell ausgerollte Tag steht in `.deployed-tag`; ein fehlgeschlagener Deploy (pull, Migration, Start, `/readyz` oder Worker nicht bereit) überschreibt ihn nicht und rollt automatisch auf ihn zurück. Migrationen werden nicht zurückgedreht; sie müssen zur Vorversion abwärtskompatibel bleiben. Ausnahme 0048: eine Version vor f3bc00d vergibt bei einem Typwechsel über die ID-Familie hinweg (z. B. POI → Insel) keine neue ID; ihr OSM-Import des Landesteils scheitert dann am CHECK (Job schlägt fehl, nichts wird halb geschrieben). Auf einer solchen Version nur so kurz wie nötig bleiben. Falls `deploy.sh` nicht auf dem Server liegt: `ssh periplus@<host> bash -s <sha> < scripts/deploy/deploy.sh`.
+(oder aus Actions heraus per Re-Run). Das funktioniert jederzeit, auch lange nach dem Deploy-Job, weil der Server mit seinem eigenen Nur-Lese-Login (Abschnitt 5a) zieht; die Images müssen in ghcr.io noch vorhanden sein. Der aktuell ausgerollte Tag steht in `.deployed-tag`; ein fehlgeschlagener Deploy (pull, Migration, Start, `/readyz` oder Worker nicht bereit) überschreibt ihn nicht und rollt automatisch auf ihn zurück. Migrationen werden nicht zurückgedreht; sie müssen zur Vorversion abwärtskompatibel bleiben. **Ausnahme 0080 (N6):** sie entfernt die Tabellen der alten Pipeline; eine Version vor N6 startet danach nicht mehr sauber. Nach dem N6-Deploy nur auf Versionen ab N6 zurückrollen. Ausnahme 0048: eine Version vor f3bc00d vergibt bei einem Typwechsel über die ID-Familie hinweg (z. B. POI → Insel) keine neue ID; ihr OSM-Import des Landesteils scheitert dann am CHECK (Job schlägt fehl, nichts wird halb geschrieben). Auf einer solchen Version nur so kurz wie nötig bleiben. Falls `deploy.sh` nicht auf dem Server liegt: `ssh periplus@<host> bash -s <sha> < scripts/deploy/deploy.sh`.
 
 Rollback auf eine Version vor fb5278c (Worker ohne Bereitschaftsmarker): `deploy.sh` wartet auf den Marker `/tmp/periplus-worker-ready`, den ein älterer Worker nie schreibt, und meldet ihn als „nicht bereit“ (und `up --wait` wartet vergeblich auf die Healthcheck des neuen `compose.prod.yml`). Eine solche Version nicht mit `deploy.sh` ausrollen, sondern von Hand (Vorspann oben, `dc`-Alias): `export IMAGE_TAG=<sha>`, `dc pull`, `dc up -d web worker caddy` (ohne `--wait`; die Healthcheck des Workers bleibt „unhealthy“, das stoppt ihn nicht), dann `dc logs -f worker` und `/readyz` prüfen und `<sha>` in `.deployed-tag` schreiben. Solange der Server nicht live ist, betrifft das nur das Übergangsfenster (Wave-2-Review M-3, geparkt).
 
