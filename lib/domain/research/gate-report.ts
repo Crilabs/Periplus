@@ -11,6 +11,7 @@ import { distanceM, type NavilySpot } from "@/lib/domain/quality/navily-sample";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { tileBbox, tileIdFor, tileNeighbours } from "@/lib/domain/tiles";
 import { validAt } from "@/lib/db/valid-at";
+import type { Verdict } from "./confirmation";
 import { verdictsIn } from "./gate";
 import { gateDecisions } from "./gate-conflicts";
 import { evaluateGate, emptyAgreement, isExcludedSpot, GATE_CORE_ATTRIBUTES, type CoreAgreement, type GateErrorKind, type GatePlace, type GateRow, type MissReason } from "./gate-navily";
@@ -140,62 +141,129 @@ async function subdivisionPlaces(db: Db, subdivisionKey: string): Promise<Array<
   });
 }
 
-/**
- * The worked-on tiles of the subdivision (those with at least one valid place; a tile seeded with zero candidates does
- * not count, it has nothing to deliver) as two predicates on a point: `inside` one of them (the spots counted), or
- * `matchable`: inside or within `bufferM` of one (the spots matched, so a place near the edge still finds its spot just
- * outside). The buffer is checked against the neighbour tiles only (a tile is far wider than any matching radius).
- */
-async function subdivisionTileAreas(
-  db: Db,
-  subdivisionKey: string,
-  bufferM: number,
-): Promise<{ inside: (p: LonLat) => boolean; matchable: (p: LonLat) => boolean; built: number; total: number }> {
+/** The tiles of the subdivision: all of them, and the worked-on ones (with at least one valid place; a tile seeded with zero candidates does not count, it has nothing to deliver). */
+async function tileIds(db: Db, subdivisionKey: string): Promise<GateInput["tiles"]> {
   const sub = await requireSubdivision(db, subdivisionKey);
   const all = await subdivisionTileIds(db, sub.id);
   const worked = await db
     .selectDistinct({ tileId: places.tileId })
     .from(places)
     .innerJoin(geoObjects, eq(geoObjects.id, places.geoObjectId))
-    .where(and(eq(geoObjects.subdivisionId, sub.id), isNull(places.mergedIntoId), validAt(places), inArray(places.tileId, all)));
-  const ids = new Set(worked.map((r) => r.tileId!));
-  const inside = (p: LonLat) => ids.has(tileIdFor(p.lon, p.lat));
+    .where(and(eq(geoObjects.subdivisionId, sub.id), isNull(places.mergedIntoId), validAt(places), inArray(places.tileId, all)))
+    .orderBy(asc(places.tileId));
+  return { all, worked: worked.map((r) => r.tileId!) };
+}
+
+/**
+ * The worked-on tiles as two predicates on a point: `inside` one of them (the spots counted), or `matchable`: inside or
+ * within `bufferM` of one (the spots matched, so a place near the edge still finds its spot just outside). The buffer is
+ * checked against the neighbour tiles only (a tile is far wider than any matching radius).
+ */
+function tileAreas(worked: Set<string>, bufferM: number): { inside: (p: LonLat) => boolean; matchable: (p: LonLat) => boolean } {
+  const inside = (p: LonLat) => worked.has(tileIdFor(p.lon, p.lat));
   const nearTile = (p: LonLat, id: string) => {
     const [west, south, east, north] = tileBbox(id);
     return distanceM(p, { lon: Math.min(Math.max(p.lon, west), east), lat: Math.min(Math.max(p.lat, south), north) }) <= bufferM;
   };
-  return { inside, matchable: (p) => inside(p) || tileNeighbours(tileIdFor(p.lon, p.lat)).some((id) => ids.has(id) && nearTile(p, id)), built: ids.size, total: all.length };
+  return { inside, matchable: (p) => inside(p) || tileNeighbours(tileIdFor(p.lon, p.lat)).some((id) => worked.has(id) && nearTile(p, id)) };
+}
+
+/** The part of the configuration the gate evaluation reads; travels with the `GateInput`. */
+export type GateConfigSnapshot = {
+  research: Pick<AppConfig["research"], "gate" | "confirmation">;
+  quality: Pick<AppConfig["quality"], "navily">;
+  /** The name affixes the spot matching strips (`matchPlacesToSpots`). */
+  nameAffixes: AppConfig["nameAffixes"];
+};
+
+export function gateConfigOf(cfg: AppConfig): GateConfigSnapshot {
+  return {
+    research: { gate: cfg.research.gate, confirmation: cfg.research.confirmation },
+    quality: { navily: cfg.quality.navily },
+    nameAffixes: cfg.nameAffixes,
+  };
+}
+
+export type GateInputPlace = Omit<GatePlace, "verdicts">;
+
+/**
+ * The database part of the gate, JSON types only (no Map, no Date): so it can leave the server and be evaluated where
+ * the reference spots are (`evaluateGateInput`), without the spots ever reaching the server.
+ */
+export type GateInput = {
+  subdivisionKey: string;
+  tiles: { all: string[]; worked: string[] };
+  /** The matching buffer around the worked-on tiles (`quality.navily.maxRadiusM`). */
+  bufferM: number;
+  places: GateInputPlace[];
+  decisions: Array<[placeId: string, "berth" | "not_berth"]>;
+  /** Per threshold of `research.gate.thresholds`: the verdict per place. */
+  verdicts: Array<[threshold: number, Array<[placeId: string, Verdict]>]>;
+  /** What is delivered now: the verdicts at `confirmation.minIndependentSources`, no human gate decision re-decided. */
+  delivered: Array<[placeId: string, Verdict]>;
+  config: GateConfigSnapshot;
+};
+
+/**
+ * Loads the database part of the gate of the subdivision in one read-only, repeatable-read transaction (one snapshot);
+ * pass the top-level `db`, a nested transaction would not honour it. Writes nothing.
+ */
+export async function loadGateInput(db: Db, subdivisionKey: string, cfg: AppConfig): Promise<GateInput> {
+  return db.transaction((tx) => loadIn(tx, subdivisionKey, cfg), { accessMode: "read only", isolationLevel: "repeatable read" });
+}
+
+async function loadIn(tx: Db, subdivisionKey: string, cfg: AppConfig): Promise<GateInput> {
+  const thresholds = cfg.research.gate.thresholds;
+  const tiles = await tileIds(tx, subdivisionKey);
+  const base = await subdivisionPlaces(tx, subdivisionKey);
+  const decisions = await gateDecisions(tx, base.map((p) => p.placeId));
+  const verdicts = await verdictsIn(tx, subdivisionKey, thresholds, cfg, { includePlaceIds: [...decisions.keys()] });
+  const deliveredThreshold = cfg.research.confirmation.minIndependentSources;
+  const delivered = (await verdictsIn(tx, subdivisionKey, [deliveredThreshold], cfg)).get(deliveredThreshold)!;
+  return {
+    subdivisionKey,
+    tiles,
+    bufferM: cfg.quality.navily.maxRadiusM,
+    places: base,
+    decisions: [...decisions],
+    verdicts: thresholds.map((n) => [n, [...verdicts.get(n)!]]),
+    delivered: [...delivered],
+    config: gateConfigOf(cfg),
+  };
 }
 
 /**
  * Measures the gate of the subdivision against the loaded reference spots: the spots inside the subdivision's worked-on tiles
- * count, those within `quality.navily.maxRadiusM` of them are matched as well (`subdivisionTileAreas`). Everything is read
+ * count, those within `quality.navily.maxRadiusM` of them are matched as well (`tileAreas`). Everything is read
  * in one read-only, repeatable-read transaction (one snapshot); pass the top-level `db`, a nested transaction would not
  * honour it. Also counts the places delivered as confirmed now that the rule at `confirmation.minIndependentSources`
  * does not back (`unbacked`). Writes nothing.
  */
 export async function measureGate(db: Db, input: { subdivisionKey: string; spots: NavilySpot[] }, cfg: AppConfig): Promise<GateMeasurement> {
-  return db.transaction((tx) => measureIn(tx, input, cfg), { accessMode: "read only", isolationLevel: "repeatable read" });
+  return evaluateGateInput(await loadGateInput(db, input.subdivisionKey, cfg), input.spots);
 }
 
-async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilySpot[] }, cfg: AppConfig): Promise<GateMeasurement> {
-  const { subdivisionKey } = input;
+/** The gate measurement from its database part and the reference spots; pure, computes with `input.config` only. */
+export function evaluateGateInput(input: GateInput, allSpots: NavilySpot[]): GateMeasurement {
+  const { subdivisionKey, config: cfg } = input;
   const thresholds = cfg.research.gate.thresholds;
   const deliveredThreshold = cfg.research.confirmation.minIndependentSources;
-  const area = await subdivisionTileAreas(tx, subdivisionKey, cfg.quality.navily.maxRadiusM);
-  const indexes = input.spots.flatMap((s, i) => (area.matchable(s) ? [i] : []));
-  const spots = indexes.map((i) => input.spots[i]!);
+  const area = tileAreas(new Set(input.tiles.worked), input.bufferM);
+  const indexes = allSpots.flatMap((s, i) => (area.matchable(s) ? [i] : []));
+  const spots = indexes.map((i) => allSpots[i]!);
   const counted = spots.filter((s) => area.inside(s) && !isExcludedSpot(s, cfg.quality.navily)).length;
 
-  const base = await subdivisionPlaces(tx, subdivisionKey);
-  const decisions = await gateDecisions(tx, base.map((p) => p.placeId));
-  const verdicts = await verdictsIn(tx, subdivisionKey, thresholds, cfg, { includePlaceIds: [...decisions.keys()] });
-  // what is delivered now: the rule as `applyBerthVerdicts` applies it, no human gate decision re-decided
-  const delivered = (await verdictsIn(tx, subdivisionKey, [deliveredThreshold], cfg)).get(deliveredThreshold)!;
+  const base = input.places;
+  const decisions = new Map(input.decisions);
+  const verdicts = new Map(input.verdicts.map(([n, entries]) => [n, new Map(entries)]));
+  const delivered = new Map(input.delivered);
   const unbacked = base.filter((p) => p.status === "confirmed" && delivered.get(p.placeId)?.status !== "confirmed").map((p) => p.placeId);
   const gatePlaces: GatePlace[] = base.map((p) => ({
     ...p,
-    verdicts: new Map(thresholds.flatMap((n) => (verdicts.get(n)!.has(p.placeId) ? [[n, verdicts.get(n)!.get(p.placeId)!] as const] : []))),
+    verdicts: new Map(thresholds.flatMap((n) => {
+      const v = verdicts.get(n)?.get(p.placeId);
+      return v ? [[n, v] as const] : [];
+    })),
   }));
   const byId = new Map(gatePlaces.map((p) => [p.placeId, p]));
 
@@ -228,8 +296,8 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
   return {
     subdivisionKey,
     scopePlaceIds: base.map((p) => p.placeId),
-    builtTiles: area.built,
-    totalTiles: area.total,
+    builtTiles: input.tiles.worked.length,
+    totalTiles: input.tiles.all.length,
     spotCount: counted,
     rows: evaluated.rows,
     coreAgreement: evaluated.core.get(deliveredThreshold) ?? emptyAgreement(),
