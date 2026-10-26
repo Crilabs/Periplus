@@ -172,6 +172,22 @@ describe("loadConfig", () => {
     ).toThrow(/expireInSeconds/);
   });
 
+  it("Overpass queues expire no sooner than two parts' worst case (a 24-minute land job was fetched twice at the 15-minute default)", () => {
+    const { retries, timeoutSeconds, retryDelaySeconds } = repoConfig.gazetteer.overpass;
+    const worstCase = 2 * ((retries + 1) * (timeoutSeconds + 30) + retryDelaySeconds * (2 ** retries - 1));
+    expect(worstCase).toBe(3900);
+    for (const queue of ["gazetteer.build", "gazetteer.coarse"]) {
+      expect(repoConfig.queues[queue]!.expireInSeconds, queue).toBeGreaterThanOrEqual(worstCase);
+    }
+    const queues = structuredClone(repoConfig.queues) as Record<string, Record<string, unknown>>;
+    queues["gazetteer.build"] = { ...queues["gazetteer.build"], expireInSeconds: worstCase - 1 };
+    expect(() => loadConfig(fixtureDir({ queues }))).toThrow(/queues\.json: gazetteer\.build\.expireInSeconds 3899 is below two Overpass parts' worst case, 3900 s/);
+    // without a value pg-boss's default of 900 s applies and is refused
+    const bare = structuredClone(repoConfig.queues) as Record<string, Record<string, unknown>>;
+    delete bare["gazetteer.coarse"]!.expireInSeconds;
+    expect(() => loadConfig(fixtureDir({ queues: bare }))).toThrow(/gazetteer\.coarse\.expireInSeconds 900 is below/);
+  });
+
   it("rejects an unknown budget service", () => {
     expect(() =>
       loadConfig(fixtureDir({ budgets: { ...repoConfig.budgets, bogus: { dailyEur: 1 } } })),

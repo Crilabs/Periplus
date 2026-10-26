@@ -162,6 +162,33 @@ function checkImageJobExpiry(dir: string, config: Pick<AppConfig, "queues" | "im
   }
 }
 
+/** Client-side margin of an Overpass call over its server-side timeout (`overpassQuery`). */
+const OVERPASS_CLIENT_MARGIN_SECONDS = 30;
+/** Queues whose jobs repeat Overpass parts with the configured retries and backoff (`overpassQueryRetrying`). */
+const OVERPASS_QUEUES = ["gazetteer.build", "gazetteer.coarse"] as const;
+
+/**
+ * pg-boss must not expire a job that asks Overpass (and hand it out again beside the one still running) before even
+ * two of its parts could fail completely: a part is tried `retries + 1` times at `timeoutSeconds` plus the client
+ * margin, with `retryDelaySeconds` doubling between the attempts. A real job asks many parts (the things on land of
+ * the Cyclades: 12 boxes in two rings, 24 minutes), so this is a floor; the queues set hours. Without a value pg-boss
+ * expires after 15 minutes, and in the N7 check the land job of GR-CYC was fetched a second time while still running.
+ */
+function checkOverpassJobExpiry(dir: string, config: Pick<AppConfig, "queues" | "gazetteer">): void {
+  const { retries, timeoutSeconds, retryDelaySeconds } = config.gazetteer.overpass;
+  const part = (retries + 1) * (timeoutSeconds + OVERPASS_CLIENT_MARGIN_SECONDS) + retryDelaySeconds * (2 ** retries - 1);
+  const needed = 2 * part;
+  for (const queue of OVERPASS_QUEUES) {
+    const expire = config.queues[queue]?.expireInSeconds ?? PG_BOSS_DEFAULT_EXPIRE_SECONDS;
+    if (expire < needed) {
+      throw new Error(
+        `Invalid config ${join(dir, "queues.json")}: ${queue}.expireInSeconds ${expire} is below two Overpass parts' worst case, ` +
+          `${needed} s (2 × (${retries + 1} attempts × (${timeoutSeconds} + ${OVERPASS_CLIENT_MARGIN_SECONDS}) + waits ${retryDelaySeconds * (2 ** retries - 1)}))`,
+      );
+    }
+  }
+}
+
 /** Loads and validates all config files; throws on any invalid or missing file. */
 export function loadConfig(dir = "config"): AppConfig {
   const config: AppConfig = {
@@ -191,6 +218,7 @@ export function loadConfig(dir = "config"): AppConfig {
     research: readJson(dir, "research", researchSchema),
   };
   checkImageJobExpiry(dir, config);
+  checkOverpassJobExpiry(dir, config);
   return config;
 }
 
