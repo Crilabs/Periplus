@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
-import { COSTLESS, estimateCost, recordScopeSize, scopeSize, STAGES_OF, type ScopeSize } from "@/lib/domain/mcp/estimate";
+import { getConfig, type AppConfig } from "@/lib/config";
+import { COSTLESS, estimateCost, measureScope, recordScopeSize, scopeSize, STAGES_OF, type ScopeSize } from "@/lib/domain/mcp/estimate";
 import { recordExternalCall } from "@/lib/domain/costs";
 import { withRollback } from "@/test/db";
+import { IMAGE_LAT, IMAGE_LON, insertImageSubdivision, insertSpot } from "@/test/images";
 import { insertTestSubdivision } from "@/test/text";
 import { eq } from "drizzle-orm";
 
@@ -96,5 +98,19 @@ describe("scopeSize", () => {
       const key = `XT-${newId()}`;
       await insertTestSubdivision(tx, key, [20.9, 35.0, 21.5, 35.5]);
       expect(await scopeSize(tx, "images", { subdivisionKey: key })).toEqual({ unit: "places", count: 0 });
+    }));
+
+  it("caps the images of a run at images.pipeline.maxGenerationsPerRun and reports the whole backlog apart", () =>
+    withRollback(async (tx) => {
+      const cfg = getConfig();
+      const capped: AppConfig = { ...cfg, images: { ...cfg.images, pipeline: { ...cfg.images.pipeline, maxGenerationsPerRun: 2 } } };
+      const sd = await insertImageSubdivision(tx);
+      await insertSpot(tx, sd.id, { kind: "marina" });
+      await insertSpot(tx, sd.id, { lon: IMAGE_LON + 0.05, kind: "port" });
+      await insertSpot(tx, sd.id, { lat: IMAGE_LAT + 0.05, kind: "mooring_field" });
+      expect(await measureScope(tx, "images", { subdivisionKey: sd.key }, capped)).toEqual({ size: { unit: "places", count: 2 }, backlog: 3 });
+      expect(await scopeSize(tx, "images", { subdivisionKey: sd.key }, capped)).toEqual({ unit: "places", count: 2 });
+      expect(await measureScope(tx, "images", { subdivisionKey: sd.key })).toEqual({ size: { unit: "places", count: 3 }, backlog: 3 });
+      expect((await measureScope(tx, "delivery", { subdivisionKey: sd.key })).backlog).toBeNull();
     }));
 });

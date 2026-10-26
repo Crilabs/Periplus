@@ -55,7 +55,7 @@ Schätzungen. Läufe aus der Oberfläche haben keinen → Schätzung „keine Gr
 | `seed_start` | `subdivision` oder `tileId`, `confirm` | Seed |
 | `geometry_start` | `subdivision` oder `tileId`, `confirm` | Geometrie |
 | `research_start` | `subdivision`, `placeIds` (1–500) oder `tileId`, `confirm` | Recherche (Kachel wird Plätze-Lauf) |
-| `images_start` | `subdivision`, `confirm` | Titelbilder |
+| `images_start` | `subdivision`, `confirm` | Titelbilder; `umfang` sind die Bilder dieses Laufs (höchstens `images.pipeline.maxGenerationsPerRun`), `rueckstand` alle Plätze ohne aktuelles Bild |
 | `delivery_start` | `subdivision`, `confirm` | Paket bauen |
 | `run_end` | `runId` | Lauf beenden, offene Jobs abbrechen |
 | `job_retry` | `queue`, `jobId` | fehlgeschlagenen Job wiederholen; schließt eine offene Aufgabe „Fehlgeschlagener Job“ (einzige Entscheidung über MCP) |

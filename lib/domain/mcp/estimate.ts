@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
@@ -6,6 +7,7 @@ import { DATASETS_STAGE } from "@/lib/pipeline/datasets";
 import { DELIVERY_STAGE } from "@/lib/pipeline/delivery";
 import { GAZETTEER_STAGES } from "@/lib/pipeline/gazetteer/stages";
 import { GEOMETRY_RUN_STAGES } from "@/lib/pipeline/geometry-run";
+import type { ImageStageConfig } from "@/lib/pipeline/images/generate";
 import { pendingImageSpotCount } from "@/lib/pipeline/images/stage";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
 import { researchCandidates } from "@/lib/domain/research/candidates";
@@ -41,17 +43,36 @@ export const STAGES_OF: Record<StartKind, readonly string[]> = {
 /** Kinds whose runs call no paid service. */
 export const COSTLESS: ReadonlySet<StartKind> = new Set<StartKind>(["subdivisions", "gazetteer", "seed", "geometry"]);
 
-/** The size of the run `kind` would start for `scope`, in the unit its cost scales with. */
-export async function scopeSize(db: Db, kind: StartKind, scope: StartScope): Promise<ScopeSize> {
+/**
+ * The size of the run `kind` would start for `scope`, in the unit its cost scales with, and for an image run the whole
+ * backlog: the spots without a current title image, of which one run makes at most `images.pipeline.maxGenerationsPerRun`
+ * (`imageTargets`); the size is the capped number. `backlog` is null for every other kind.
+ */
+export async function measureScope(
+  db: Db,
+  kind: StartKind,
+  scope: StartScope,
+  cfg: ImageStageConfig = getConfig(),
+): Promise<{ size: ScopeSize; backlog: number | null }> {
+  if (kind === "images") {
+    if (!("subdivisionKey" in scope)) throw new Error("An image run takes a subdivision");
+    const backlog = await pendingImageSpotCount(db, scope.subdivisionKey, cfg);
+    return { size: { unit: "places", count: Math.min(backlog, cfg.images.pipeline.maxGenerationsPerRun) }, backlog };
+  }
+  return { size: await sizeOf(db, kind, scope), backlog: null };
+}
+
+/** The size of the run `kind` would start for `scope` (`measureScope` without the backlog). */
+export async function scopeSize(db: Db, kind: StartKind, scope: StartScope, cfg: ImageStageConfig = getConfig()): Promise<ScopeSize> {
+  return (await measureScope(db, kind, scope, cfg)).size;
+}
+
+async function sizeOf(db: Db, kind: Exclude<StartKind, "images">, scope: StartScope): Promise<ScopeSize> {
   if (kind === "subdivisions") return { unit: "subdivision", count: 0 };
   if (kind === "delivery") return { unit: "subdivision", count: 1 };
   if (kind === "research") {
     if (!("subdivisionKey" in scope) && !("placeIds" in scope)) throw new Error("A research run takes a subdivision or places");
     return { unit: "places", count: (await researchCandidates(db, scope as { subdivisionKey: string } | { placeIds: string[] })).length };
-  }
-  if (kind === "images") {
-    if (!("subdivisionKey" in scope)) throw new Error("An image run takes a subdivision");
-    return { unit: "places", count: await pendingImageSpotCount(db, scope.subdivisionKey) };
   }
   if ("tileId" in scope) return { unit: "tiles", count: 1 };
   if ("placeIds" in scope) {

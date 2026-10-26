@@ -6,7 +6,7 @@ import { budgetStatus, type BudgetStatus } from "@/lib/domain/costs";
 import { retryJobWithTask } from "@/lib/domain/job-retry";
 import { tileExists } from "@/lib/domain/geo-view";
 import type { McpCaller } from "@/lib/domain/mcp-tokens";
-import { estimateCost, placeIdsOnTile, recordScopeSize, scopeSize, type ScopeSize, type StartKind, type StartScope } from "@/lib/domain/mcp/estimate";
+import { estimateCost, measureScope, placeIdsOnTile, recordScopeSize, type ScopeSize, type StartKind, type StartScope } from "@/lib/domain/mcp/estimate";
 import { syncConflictTasks } from "@/lib/domain/research/gate-conflicts";
 import { loadGateInput } from "@/lib/domain/research/gate-report";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
@@ -45,7 +45,8 @@ const confirmArg = z.boolean().optional().describe("Ohne: nur Umfang, Schätzung
 
 type Started = { id: string } | { alreadyRunning: string };
 type Estimate = { eur: number | null; text: string; basisLauf: string | null };
-type Preview = { gestartet: false; umfang: ScopeSize; schaetzung: Estimate; budgets: BudgetStatus[]; hinweis: string };
+/** `rueckstand` only for images: all spots without a current title image, of which one run makes `umfang.count`. */
+type Preview = { gestartet: false; umfang: ScopeSize; rueckstand?: number; schaetzung: Estimate; budgets: BudgetStatus[]; hinweis: string };
 type StartAnswer =
   | Preview
   | { gestartet: true; runId: string; pfad: string; umfang: ScopeSize; schaetzung: Estimate; hinweis?: string }
@@ -64,10 +65,12 @@ const runIdOf = (answer: StartAnswer): LogFields => ({
  */
 async function startTool(kind: StartKind, scope: StartScope, confirm: boolean | undefined, start: () => Promise<Started>): Promise<StartAnswer> {
   const db = getDb();
-  const umfang = await scopeSize(db, kind, scope);
+  const { size: umfang, backlog } = await measureScope(db, kind, scope);
   const estimate = await estimateCost(db, kind, umfang);
   const schaetzung: Estimate = { eur: estimate.eur, text: estimate.text, basisLauf: estimate.basis?.runId ?? null };
-  if (confirm !== true) return { gestartet: false, umfang, schaetzung, budgets: await budgetStatus(db), hinweis: CONFIRM_NOTE };
+  if (confirm !== true) {
+    return { gestartet: false, umfang, ...(backlog === null ? {} : { rueckstand: backlog }), schaetzung, budgets: await budgetStatus(db), hinweis: CONFIRM_NOTE };
+  }
 
   const started = await start();
   if ("alreadyRunning" in started) return { gestartet: false, laeuftSchon: started.alreadyRunning, pfad: runPath(started.alreadyRunning) };
@@ -161,7 +164,7 @@ export function registerOperateTools(server: McpServer, caller: McpCaller): void
   subdivisionTool(
     "images_start",
     "Titelbilder erzeugen",
-    "Startet einen Bilderlauf für die Titelbilder eines Landesteils. Ohne `confirm` nur Umfang (Plätze ohne aktuelles Bild), Schätzung und Budgetstand.",
+    "Startet einen Bilderlauf für die Titelbilder eines Landesteils. Ohne `confirm` nur Umfang (Bilder dieses Laufs, höchstens images.pipeline.maxGenerationsPerRun), `rueckstand` (alle Plätze ohne aktuelles Bild), Schätzung und Budgetstand.",
     "images",
     async (key) => startImageRun(getDb(), await boss(), { subdivisionKey: key }, by),
   );

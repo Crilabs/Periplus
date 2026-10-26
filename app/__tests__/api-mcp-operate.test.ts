@@ -12,6 +12,7 @@ import { newId } from "@/lib/domain/ids";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { RUN_SCOPE_LABELS } from "@/lib/pipeline/run-scope-labels";
 import { testDb, withRollback } from "@/test/db";
+import { IMAGE_LAT, IMAGE_LON, insertSpot } from "@/test/images";
 import { insertNamedObject, insertTestSubdivision, insertTestTile } from "@/test/text";
 
 /*
@@ -21,6 +22,8 @@ import { insertNamedObject, insertTestSubdivision, insertTestTile } from "@/test
  */
 
 const GATE_KEY = "XT-GATE5";
+/** `images.pipeline.maxGenerationsPerRun` in these tests. */
+const IMAGE_CAP = 1;
 
 let db: Db = testDb();
 const inserted: Array<{ queue: string; data: Record<string, unknown> }> = [];
@@ -53,7 +56,11 @@ vi.mock("@/lib/config", async (importActual) => {
     ...actual,
     getConfig: () => {
       const cfg = actual.getConfig();
-      return { ...cfg, research: { ...cfg.research, gate: { ...cfg.research.gate, subdivision: GATE_KEY, released: false } } };
+      return {
+        ...cfg,
+        research: { ...cfg.research, gate: { ...cfg.research.gate, subdivision: GATE_KEY, released: false } },
+        images: { ...cfg.images, pipeline: { ...cfg.images.pipeline, maxGenerationsPerRun: IMAGE_CAP } },
+      };
     },
   };
 });
@@ -185,6 +192,20 @@ describe("/api/mcp start tools", () => {
       const body = JSON.parse((await callTool(token, "geometry_start", { subdivision: GATE_KEY })).text);
       expect(body).toMatchObject({ gestartet: false, umfang: { unit: "tiles", count: 1 }, schaetzung: { eur: 0, text: "ohne externe Kosten", basisLauf: null } });
       expect(await runCount(tx)).toBe(before);
+    }));
+
+  it("images_start without confirm: the run's images capped at maxGenerationsPerRun, the whole backlog apart", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      const { token } = await tokenFor(tx);
+      const key = `XT-${newId().slice(0, 8)}`;
+      const sd = { key, ...(await insertTestSubdivision(tx, key, [IMAGE_LON - 0.3, IMAGE_LAT - 0.3, IMAGE_LON + 0.3, IMAGE_LAT + 0.3], { country: "GR" })) };
+      await insertSpot(tx, sd.id, { kind: "marina" });
+      await insertSpot(tx, sd.id, { lon: IMAGE_LON + 0.05, kind: "port" });
+      const body = JSON.parse((await callTool(token, "images_start", { subdivision: sd.key })).text);
+      expect(body).toMatchObject({ gestartet: false, umfang: { unit: "places", count: IMAGE_CAP }, rueckstand: 2 });
+      const delivery = JSON.parse((await callTool(token, "delivery_start", { subdivision: sd.key })).text);
+      expect(delivery).not.toHaveProperty("rueckstand");
     }));
 
   it("not exactly one scope field, an unknown subdivision or tile: tool errors", () =>
