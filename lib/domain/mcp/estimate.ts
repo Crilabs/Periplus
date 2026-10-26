@@ -99,6 +99,16 @@ export async function estimateCost(db: Db, kind: StartKind, size: ScopeSize): Pr
   };
 }
 
+/**
+ * The valid, unmerged places on tile `tileId`, sorted by id: the places a research start for one tile covers (the run
+ * then is a places run; `startResearchRun` keeps only the candidates among them).
+ */
+export async function placeIdsOnTile(db: Db, tileId: string): Promise<string[]> {
+  const { rows } = await db.execute<{ id: string }>(sql`
+    select id from places where tile_id = ${tileId} and valid_to is null and merged_into_id is null order by id`);
+  return rows.map((r) => r.id);
+}
+
 /** Stores the size of the run next to its params, so a later estimate can scale from it. */
 export async function recordScopeSize(db: Db, runId: string, size: ScopeSize): Promise<void> {
   await db.execute(sql`update runs set params = params || ${JSON.stringify({ scopeSize: size })}::jsonb where id = ${runId}`);

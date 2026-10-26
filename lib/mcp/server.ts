@@ -17,11 +17,13 @@ import { listOpenTasks, reviewCounts, reviewTaskDetail } from "@/lib/domain/revi
 import { berthStateView, researchView } from "@/lib/domain/research/view";
 import { getRun, listRuns } from "@/lib/domain/runs";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
+import { registerOperateTools } from "./operate";
 import { runTool, ToolError, untrusted } from "./result";
 
 /*
- * The Periplus MCP server (plan 2026-10-26-periplus-mcp): read only, acting as the token's owner. One server per
- * request (stateless); every tool reads through the domain layer, the tool `sql` through the reader role.
+ * The Periplus MCP server (plan 2026-10-26-periplus-mcp): acting as the token's owner. One server per request
+ * (stateless); every read tool reads through the domain layer, the tool `sql` through the reader role; the start tools
+ * (`./operate`, plan 2026-10-26-periplus-mcp-steuern) call the admin page's starters.
  */
 
 export const MCP_INSTRUCTIONS = [
@@ -246,5 +248,6 @@ export function createPeriplusMcpServer(caller: McpCaller): McpServer {
     () => runTool("worker", caller, () => workerStatus(getDb())),
   );
 
+  registerOperateTools(server, caller);
   return server;
 }

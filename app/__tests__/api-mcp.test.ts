@@ -76,14 +76,16 @@ describe("/api/mcp", () => {
       expect(body.result.instructions).toContain("nicht_vertrauenswuerdig");
     }));
 
-  it("lists the read tools, each read only", () =>
+  it("lists the read tools, each read only; every other tool writes", () =>
     withRollback(async (tx) => {
       db = tx;
       const { token } = await tokenFor(tx);
       const res = await rpc(token, "tools/list");
-      const body = (await res.json()) as { result: { tools: Array<{ name: string; annotations?: { readOnlyHint?: boolean } }> } };
-      expect(body.result.tools.map((t) => t.name).sort()).toEqual(["checks", "costs", "deliveries", "gate_input", "overview", "place", "review_tasks", "runs", "sql", "version", "worker"]);
-      expect(body.result.tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
+      const body = (await res.json()) as { result: { tools: Array<{ name: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }> } };
+      const read = body.result.tools.filter((t) => t.annotations?.readOnlyHint === true);
+      expect(read.map((t) => t.name).sort()).toEqual(["checks", "costs", "deliveries", "gate_input", "overview", "place", "review_tasks", "runs", "sql", "version", "worker"]);
+      const others = body.result.tools.filter((t) => t.annotations?.readOnlyHint !== true);
+      expect(others.every((t) => t.annotations?.readOnlyHint === false && t.annotations?.destructiveHint === true)).toBe(true);
     }));
 
   it("tools answer: overview, an unknown place as tool error, sql through the reader role", () =>
