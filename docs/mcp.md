@@ -30,7 +30,7 @@ anlegen, alten Eintrag mit `claude mcp remove periplus --scope user` entfernen u
 | `costs` | Kosten je Dienst, je Stufe/Lauf/Monat, Budgetstand |
 | `deliveries` | Pakete je Landesteil; mit `id` der Prüfbericht und die Dateien |
 | `sql` | eine lesende SQL-Abfrage, höchstens 500 Zeilen und 15 s |
-| `version` | Deploy-Stand (Git-SHA, letzte Migration, Config-Hashes) |
+| `version` | Deploy-Stand (Git-SHA, letzte Migration, Config-Hashes); kennt das Image die letzte angewandte Migration nicht (Datenbank weiter als das Image), heißt sie `unbekannt` |
 | `gate_input` | Eingabe der Abnahme eines Landesteils samt Deploy-Stand |
 | `checks` | Ortsverzeichnis und Geometrie eines Landesteils |
 | `review_tasks` | offene Prüfaufgaben; mit `id` im Detail |

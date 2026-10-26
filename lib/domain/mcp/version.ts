@@ -27,7 +27,10 @@ export type DeployVersion = {
   config: Pick<AppConfig, "research" | "quality" | "budgets" | "models">;
 };
 
-/** What runs: the image's git sha, the newest applied migration and the effective config (no secrets, those are env). */
+/**
+ * What runs: the image's git sha, the newest applied migration and the effective config (no secrets, those are env).
+ * A newest migration the bundled journal does not know is tagged `unbekannt`: the database is ahead of the image.
+ */
 export async function deployVersion(db: Db, cfg: AppConfig, env: { GIT_SHA?: string }): Promise<DeployVersion> {
   const res = await db.execute(sql`select created_at from drizzle.__drizzle_migrations order by created_at desc limit 1`);
   const createdAt = res.rows[0]?.created_at;
@@ -36,7 +39,7 @@ export async function deployVersion(db: Db, cfg: AppConfig, env: { GIT_SHA?: str
   const config = { research: cfg.research, quality: cfg.quality, budgets: cfg.budgets, models: cfg.models };
   return {
     gitSha: env.GIT_SHA ?? null,
-    lastMigration: entry && when !== undefined ? { tag: entry.tag, appliedAt: new Date(when).toISOString() } : null,
+    lastMigration: when === undefined ? null : { tag: entry?.tag ?? "unbekannt", appliedAt: new Date(when).toISOString() },
     configHash: configHash(config),
     gateConfigHash: configHash(gateConfigOf(cfg)),
     config,
