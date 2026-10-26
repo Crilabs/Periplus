@@ -144,7 +144,7 @@ Einmalig, in dieser Reihenfolge (Stand 26.10.2026; Produktion war leer bis auf d
 3. Archiv übernehmen (Abschnitt „Archiv übernehmen“): Export lokal aus der Dev-Umgebung (während des Exports den Dev-Worker anhalten, damit der Stand in sich stimmt), Verzeichnis per `rsync` auf den Server, Import im Worker-Container; Zählung Dokumente und Versionen vorher = nachher (Prüfplan Attika 2, T0).
 4. API: `/api/v4`; `/api/v3` und `/api/v1` gibt es nicht mehr.
 
-## MCP (Claude Code liest Produktionsdaten)
+## MCP (Claude Code liest und steuert Produktionsdaten)
 
 Server unter `https://periplus.marvoy.app/api/mcp`; Einrichtung je Person über Einstellungen → Claude Code (MCP), Anleitung `docs/mcp.md`.
 Einmalig nach dem Deploy mit Migration 0082: Passwort der Leserolle setzen, damit das Werkzeug `sql` arbeitet (Vorspann oben, `dc`-Alias):
@@ -155,6 +155,13 @@ echo "MCP_READER_PASSWORD=$PW" >> /opt/periplus/.env
 dc up -d web
 ```
 Ohne den Eintrag antwortet `sql` „nicht eingerichtet“; alle anderen Werkzeuge laufen. Rolle sperren: `alter role periplus_mcp_reader nologin`.
+
+Steuern: jedes Admin-Token darf Läufe starten und beenden, Jobs wiederholen und Queues anhalten (Werkzeuge in `docs/mcp.md`).
+Über MCP gestartete Läufe erkennt man an `triggered_by = 'mcp:<E-Mail>'`:
+```sql
+select id, kind, triggered_by, params->'scopeSize' as scope_size, started_at from runs where triggered_by like 'mcp:%' order by started_at desc nulls first limit 20;
+```
+Ein Token sofort sperren: in Einstellungen widerrufen. Läuft etwas Ungewolltes, `run_end` (oder „Lauf beenden“ auf der Laufseite) und `queue_pause`.
 
 ## Rollback
 Eine frühere Version erneut ausrollen:
