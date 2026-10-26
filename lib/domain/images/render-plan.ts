@@ -294,6 +294,25 @@ async function firstOverWater(db: Db, origins: LonLat[], azimuths: number[], dis
 }
 
 /**
+ * Index of the first camera whose ground point (`cameraDetails(c).position`) lies outside `land_polygons`; `null` if
+ * none does. One query for all cameras (they may stand at different distances, unlike `firstOverWater`).
+ */
+export async function firstCameraOverWater(db: Db, cameras: RenderCamera[]): Promise<number | null> {
+  if (cameras.length === 0) return null;
+  const ground = cameras.map((c) => cameraDetails(c).position);
+  const { rows } = await db.execute<{ i: number | string }>(sql`
+    select t.i
+    from unnest(${`{${ground.map((p) => p[0]).join(",")}}`}::float8[], ${`{${ground.map((p) => p[1]).join(",")}}`}::float8[]) with ordinality as t(lon, lat, i)
+    where not exists (
+      select 1 from land_polygons l
+      where l.geom && ST_SetSRID(ST_MakePoint(t.lon, t.lat), 4326) and ST_Intersects(l.geom, ST_SetSRID(ST_MakePoint(t.lon, t.lat), 4326))
+    )
+    order by t.i
+    limit 1`);
+  return rows[0] ? Number(rows[0].i) - 1 : null;
+}
+
+/**
  * For each bearing, the distance (metres) from `origin` to the first land along it between `fromM` and `maxM` out
  * (`land_polygons` cut by that segment), `null` where there is none. One query over all bearings.
  */

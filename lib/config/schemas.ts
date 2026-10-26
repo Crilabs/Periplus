@@ -1177,6 +1177,18 @@ export const imagesSchema = z.strictObject({
       maxIterations: z.number().int().positive(),
       floorZoom: z.enum(["z1", "z2", "z3"]),
     }),
+    /**
+     * Marina and port (spec 19): the focus is the basin (the water area of a polygon place), else the convex hull of
+     * the harbour structures within `pierRadiusM`, each widened by `pierBufferM`; fitted at `tiltDeg` and `fill` with
+     * the focus centre at NDC `centreY`.
+     */
+    harbour: z.strictObject({
+      tiltDeg: z.number().positive().max(89),
+      fill: z.number().positive().max(1),
+      centreY: z.number().min(-1).max(1),
+      pierRadiusM: z.number().positive(),
+      pierBufferM: z.number().nonnegative(),
+    }),
     /** Water share before the render (spec 19, part B): a `gridX` × `gridY` grid of view rays cut at sea level; a ray above the horizon or beyond `maxRayM` is sky. */
     prediction: z.strictObject({ gridX: z.number().int().positive(), gridY: z.number().int().positive(), maxRayM: z.number().positive() }),
     /**
