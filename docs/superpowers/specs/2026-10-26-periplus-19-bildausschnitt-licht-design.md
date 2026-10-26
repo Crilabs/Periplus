@@ -1,6 +1,6 @@
 # Periplus 19 – Bildausschnitt und Licht der Ortsbilder
 
-Stand 26.10.2026. Ergänzt Teil-Spec 13 (Ortsbilder) und ersetzt dort die Kameraregeln des Titelbilds (Teil B,
+Stand 26.10.2026, umgesetzt mit Plan `docs/superpowers/plans/2026-10-26-periplus-19-bildausschnitt-licht.md`. Ergänzt Teil-Spec 13 (Ortsbilder) und ersetzt dort die Kameraregeln des Titelbilds (Teil B,
 `camera-3`), die Komposition „Ankerplatz bei einer Stadt“, die Lichtregel „bei einer Stadt“ (Teil C) und die Boots-Blöcke
 des Prompts. Alles Übrige aus Spec 13 gilt weiter (Quellen, Rendering-Aufbau, Prüfung, Freigabe, Vertrag).
 
@@ -75,9 +75,9 @@ projiziert, mit der gerendert wird.
   Bildmaße sitzt.
 - **Bodenpunkt:** liegt der Bodenpunkt der Kamera über Land, wird wie bisher der Azimut in 10°-Schritten gedreht.
 
-Die feste Zoomstufe des Titelbilds (`composition.openWater.zoom`) entfällt. Die Untergrenze aus der Luftbildauflösung
-bleibt: ein Luftbild-Pixel darf im Vordergrund höchstens `render.maxSourcePixelOnScreen` Bildpunkte groß werden. Eine
-Kamera unterhalb dieser Höhe wird angehoben.
+Die Kamerahöhe ergibt sich aus dem Umriss. Untergrenze ist die Höhe der Titel-Zoomstufe, die das Luftbild erlaubt
+(`titleZoomFor`): mit Kataster z2 (160 m), nur mit Sentinel-2 z1 (260 m). Die Zoomstufe bleibt damit Teil des
+Erzeugungsschlüssels wie in Spec 13.
 
 Weitere Ansichten (Slots `view-<n>`, von einem Admin angelegt) behalten ihre Zoomstufen z1–z3 und die Regeln aus Spec 13.
 
@@ -152,15 +152,11 @@ Für jede Kandidatenkamera wird der Wasseranteil vorhergesagt, bevor gerendert w
 
 ## Teil C: Detailfenster
 
-Das Kernfenster des Luftbilds (bisher fest 1,5 × 1,5 km um das Blickziel) richtet sich nach dem Bodenabdruck der Kamera.
-
-- **Grund:** mit Höhen bis etwa 400 m und 40° Neigung reicht der Bildausschnitt über das feste Fenster hinaus. Im Render
-  wurde der Rand als dunkles Sentinel-Wasser mit sichtbarer Kante sichtbar. Das Bildmodell übermalt die Kante zwar, zeichnet
-  dort aber nach 10-m-Daten statt nach 0,5-m-Daten.
-- **Regel (Annahme, im Labor noch nicht geprüft):** Das Kernfenster umschließt den Bodenabdruck des unteren Bilddrittels
-  und den ganzen Fokus mit 200 m Rand. Es ist mindestens `window.coreSizeM` (1,5 km) und höchstens 3 km groß.
-- **Kosten:** Bei Kauf-Luftbild steigen sie mit der Fläche, also bis zum Vierfachen je Ort. Die Kostenschätzung in Spec 13
-  wird bei der Umsetzung nachgezogen.
+Das Kernfenster des Luftbilds (bisher fest 1,5 × 1,5 km um das Blickziel) richtet sich nach dem Bodenabdruck der Kamera:
+es umschließt den Boden der unteren zwei Drittel des Bildes mit `window.coreMarginM` (200 m) Rand, mindestens
+`window.coreSizeM` (1,5 km), höchstens `window.coreMaxSizeM` (3 km). Das obere Drittel ist ferner Hintergrund, dort reicht
+Sentinel-2. Bei 365 m und 40° Neigung bleibt es bei 1,5 km; erst höhere Kameras (etwa 600 m) bekommen ein größeres
+Fenster. Die Regel ist eine Annahme aus der Umsetzung (26.10.2026) und wird an den ersten Bildern geprüft.
 
 ## Teil D: Licht
 
@@ -207,11 +203,11 @@ Szene: `near_town` entfällt aus `scene` in `config/images.json`. Der Alt-Text r
 
 - `camera.rulesVersion`: `camera-4`. Geht in den Erzeugungsschlüssel ein, alle Titelbilder werden neu erzeugt.
 - `composition.fit`:
-  `{ "margin": 0.1, "minHeightM": 100, "maxHeightM": 900, "heightStep": 1.04, "centreTolerance": 0.02 }`
+  `{ "margin": 0.1, "minHeightM": 100, "maxHeightM": 900, "heightStep": 1.04, "centreTolerance": 0.02, "maxIterations": 15 }`
 - `composition.harbour`:
   `{ "tiltDeg": 40, "fill": 0.6, "centreY": -0.1, "pierRadiusM": 300, "pierBufferM": 25 }`; die OSM-Arten der Molen stehen beim Datensatz (`config/datasets.json`, `harbourStructures.manMade`: `["pier", "breakwater", "groyne"]`)
 - `composition.anchorWindow`:
-  `{ "fill": 0.6, "rayMaxM": 1500, "rayStepDeg": 10, "minRayM": 50, "radiiM": [100, 150], "shoreRadiusM": 60, "tilts": [40, 45], "centres": [-0.1, -0.3, -0.45], "spanDeg": 30, "targetWater": 0.45, "maxHeightM": 350, "highlightReachM": 800, "highlightNearM": 500, "highlightWeights": { "food": 3, "beach": 2, "supply": 2, "culture": 1, "active": 1 } }`
+  `{ "fill": 0.6, "rayMaxM": 1500, "rayStepDeg": 10, "minRayM": 50, "radiiM": [100, 150], "shoreRadiusM": 60, "tilts": [40, 45], "centres": [-0.1, -0.3, -0.45], "spanDeg": 30, "targetWater": 0.45, "maxHeightM": 350, "highlightReachM": 800, "highlightNearM": 500, "highlightWeights": { "food": 3, "beach": 2, "supply": 2, "culture": 1, "active": 1 }, "score": { "water": 20, "offDegPerPoint": 10, "heightMPerPoint": 50, "highlightFactor": 0.5 } }`
 - `composition.prediction`: `{ "gridX": 32, "gridY": 21, "maxRayM": 20000 }`
 - `window.coreMarginM`: 200; `window.coreMaxSizeM`: 3000.
 - `light`:

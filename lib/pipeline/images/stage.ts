@@ -53,6 +53,11 @@ async function eligibleSpots(db: Db, scope: SQL, cfg: ImageStageConfig): Promise
   return rows.map((r) => r.id);
 }
 
+/** The spots of subdivision `key` a run would give a title image (`eligibleSpots`); for the preview script. */
+export async function subdivisionSpots(db: Db, key: string, cfg: ImageStageConfig = getConfig()): Promise<string[]> {
+  return eligibleSpots(db, sql`s.key = ${key}`, cfg);
+}
+
 const inIds = (ids: string[]) => sql`p.geo_object_id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))`;
 
 /**

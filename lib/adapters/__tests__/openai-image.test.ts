@@ -51,7 +51,7 @@ describe("createOpenAiImageModel", () => {
     await withRollback(async (tx) => {
       const result = await createOpenAiImageModel(fixtureTransport(dir)).edit(req, { db: tx });
       expect(Buffer.from(result.image).equals(output)).toBe(true);
-      expect(result).toMatchObject({ model: "gpt-image-2.5-sunburst", promptVersion: 1, costEur: 0.25 });
+      expect(result).toMatchObject({ model: "gpt-image-2.5-sunburst", promptVersion: 2, costEur: 0.25 });
     });
 
     expect(sent).toMatchObject({ url: OPENAI_IMAGE_EDITS_URL, method: "POST", service: "openai", budget: "openai" });
