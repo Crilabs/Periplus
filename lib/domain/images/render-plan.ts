@@ -4,7 +4,7 @@ import type { Db } from "@/lib/db/client";
 import { compositionFor } from "./light";
 import type { PlaceImageInput } from "./place-input";
 
-type LonLat = [lon: number, lat: number];
+export type LonLat = [lon: number, lat: number];
 
 /**
  * Camera of a terrain render (spec 13). The camera stands `distanceM` from `target` along `azimuthDeg` (the bearing
