@@ -24,6 +24,9 @@ COPY --from=build --chown=app:app /app/.next/standalone ./
 COPY --from=build --chown=app:app /app/.next/static ./.next/static
 COPY --from=build --chown=app:app /app/public ./public
 COPY --chown=app:app config ./config
+# Late, so a new sha does not bust the layers above.
+ARG GIT_SHA
+ENV GIT_SHA=$GIT_SHA
 USER app
 EXPOSE 3000
 CMD ["node", "server.js"]

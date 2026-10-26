@@ -4,7 +4,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { places, reviewDecisions, reviewTasks } from "@/lib/db/schema";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 import type { LonLat } from "./water";
 
 const pointSql = (p: LonLat) => sql`ST_SetSRID(ST_MakePoint(${p.lon}::float8, ${p.lat}::float8), 4326)`;

@@ -9,6 +9,8 @@ import { subdivisionTileIds } from "./tiles-ensure";
 /** Types whose parent is the island or coast section around them, else their subdivision (Spec 03, step 6; spec 14). */
 const LOCAL_TYPES: GeoObjectType[] = ["bay", "harbour", "settlement", "poi", "cape", "strait", "channel"];
 const ISLANDS: GeoObjectType[] = ["island", "islet"];
+/** Local types that take the nearest island within `islandParentNearestM` when none is within the buffer (B10). */
+const NEAREST_ISLAND_TYPES: GeoObjectType[] = ["bay", "cape"];
 /** Types that belong to a subdivision and lie in a sea (`subdivision_id`, `sea_id`). */
 const PLACED_TYPES: GeoObjectType[] = [...LOCAL_TYPES, ...ISLANDS, "archipelago", "gulf", "coast_section"];
 /** Large water bodies whose centroid may lie far offshore: they take the nearest land without the radius limit. */
@@ -34,21 +36,47 @@ function smallestCovering(types: GeoObjectType[], extra: SQL = sql``): SQL {
 }
 
 /**
- * The smallest island or islet whose polygon lies within `bufferM` of the child's centroid, or coast
- * section covering it. A coast section without `config_key` (an OSM peninsula) counts only up to
- * `maxSectionKm2`: the Peloponnese or the Balkans are no useful parent; objects there fall through to the
- * subdivision rule. The bbox prefilter (`bufferM / 50 km` per degree over-covers longitude up to ~60°) keeps
- * the GiST index in play.
+ * The smallest island or islet whose polygon lies within `bufferM` of the child's centroid, or configured coast
+ * section (`config_key`) covering it. A coast section without `config_key` is no parent (N7 4.3, B6): OSM
+ * peninsulas are no longer imported, and an older one such as the Peloponnese is no useful parent. The bbox prefilter
+ * (`bufferM / 50 km` per degree over-covers longitude up to ~60°) keeps the GiST index in play.
  */
-function smallestIslandOrSection(bufferM: number, maxSectionKm2: number): SQL {
+function smallestIslandOrSection(bufferM: number): SQL {
   return sql`(select p.id from geo_objects p
     where ${CANDIDATE} and (
       (p.type in ${ISLANDS} and p.geom && ST_Expand(c.centroid, ${bufferM / 50_000})
         and ST_DWithin(p.geom::geography, c.centroid::geography, ${bufferM}))
-      or (p.type = 'coast_section' and ST_Covers(p.geom, c.centroid)
-        and (p.config_key is not null or ST_Area(p.geom::geography) <= ${maxSectionKm2 * 1e6}))
+      or (p.type = 'coast_section' and p.config_key is not null and ST_Covers(p.geom, c.centroid))
     )
     order by ST_Area(p.geom::geography), p.id limit 1)`;
+}
+
+/**
+ * The nearest polygon `p` of `islandTypes` within `maxM` of the child's centroid (B10), an `island` before any
+ * `islet` (a rock between a bay and its island is no parent), unless mainland lies as near as that polygon or
+ * nearer: a land polygon whose point on surface no island or islet polygon covers (an island's own land is covered
+ * by its polygon; the land under a point islet, its rock without polygon, is its own and no mainland either). An
+ * object between an island and the nearer mainland stays with the mainland; without land polygons nothing is
+ * mainland. With `mainlandCheck` false the nearest island alone. Bbox prefilters (`maxM / 50 km` per degree, as
+ * above) keep the GiST indexes in play; the point on surface is computed once per land polygon and looked up in the
+ * islands' index.
+ */
+function nearestIsland(islandTypes: GeoObjectType[], maxM: number, mainlandCheck = true): SQL {
+  const near = (g: SQL) => sql`${g} && ST_Expand(c.centroid, ${maxM / 50_000})`;
+  const noMainlandNearer = sql`not exists (
+    select 1 from land_polygons l cross join lateral (select ST_PointOnSurface(l.geom) as pt) s
+    where ${near(sql`l.geom`)} and ST_DWithin(l.geom::geography, c.centroid::geography, i.distance_m)
+      and not (c.type in ${ISLANDS} and ST_Covers(l.geom, c.centroid))
+      and not exists (
+        select 1 from geo_objects q
+        where q.type in ${ISLANDS} and q.valid_to is null and q.merged_into_id is null and ST_Dimension(q.geom) = 2
+          and q.geom && s.pt and ST_Covers(q.geom, s.pt)))`;
+  return sql`(select i.id from (
+      select p.id, ST_Distance(p.geom::geography, c.centroid::geography) as distance_m from geo_objects p
+      where ${CANDIDATE} and p.type in ${islandTypes} and ${near(sql`p.geom`)}
+        and ST_DWithin(p.geom::geography, c.centroid::geography, ${maxM})
+      order by p.type = 'islet', distance_m, p.id limit 1) i
+    ${mainlandCheck ? sql`where ${noMainlandNearer}` : sql``})`;
 }
 
 /** Sets `parent_id = <parent>` for the valid objects `c` of `types` that pass `filter`; only changed rows. */
@@ -102,10 +130,13 @@ function isUnitRegion(a: string): SQL {
  *    else the country.
  * 3. `coast_section` → the geo object of its subdivision (from `config_key`, else from `subdivision_id`).
  * 4. `archipelago`, `gulf` → the geo object of its subdivision.
- * 5. `island`, `islet` → smallest containing `archipelago`, else the geo object of its subdivision.
+ * 5. `island` → smallest containing `archipelago`, else the geo object of its subdivision. `islet` → the nearest
+ *    island polygon within `islandParentBufferM`, else the nearest within `islandParentNearestM` with no nearer
+ *    mainland (`nearestIsland`, B10), else as an island.
  * 6. bay, harbour, settlement, poi, cape, strait, channel → smallest island/islet polygon within
- *    `islandParentBufferM` or coast section containing the centroid (without `config_key` only up to
- *    `coastSectionMaxAreaKm2`); else the geo object of its subdivision.
+ *    `islandParentBufferM` or configured coast section (`config_key`) containing the centroid; a bay or cape else
+ *    the nearest island polygon, else islet polygon, within `islandParentNearestM` with no nearer mainland (B10);
+ *    else the geo object of its subdivision.
  * The sea is no parent; `assignSeas` sets `sea_id` beside it.
  */
 function parentRules(): { types: GeoObjectType[]; parent: SQL; filter?: SQL }[] {
@@ -130,10 +161,25 @@ function parentRules(): { types: GeoObjectType[]; parent: SQL; filter?: SQL }[] 
         ${SUBDIVISION_OBJECT})`,
     },
     { types: ["archipelago", "gulf"], parent: SUBDIVISION_OBJECT },
-    { types: ISLANDS, parent: sql`coalesce(${smallestCovering(["archipelago"])}, ${SUBDIVISION_OBJECT})` },
+    { types: ["island"], parent: sql`coalesce(${smallestCovering(["archipelago"])}, ${SUBDIVISION_OBJECT})` },
     {
-      types: LOCAL_TYPES,
-      parent: sql`coalesce(${smallestIslandOrSection(gazetteer.islandParentBufferM, gazetteer.coastSectionMaxAreaKm2)}, ${SUBDIVISION_OBJECT})`,
+      types: ["islet"],
+      parent: sql`coalesce(
+        ${nearestIsland(["island"], gazetteer.islandParentBufferM, false)},
+        ${nearestIsland(["island"], gazetteer.islandParentNearestM)},
+        ${smallestCovering(["archipelago"])},
+        ${SUBDIVISION_OBJECT})`,
+    },
+    {
+      types: NEAREST_ISLAND_TYPES,
+      parent: sql`coalesce(
+        ${smallestIslandOrSection(gazetteer.islandParentBufferM)},
+        ${nearestIsland(ISLANDS, gazetteer.islandParentNearestM)},
+        ${SUBDIVISION_OBJECT})`,
+    },
+    {
+      types: LOCAL_TYPES.filter((t) => !NEAREST_ISLAND_TYPES.includes(t)),
+      parent: sql`coalesce(${smallestIslandOrSection(gazetteer.islandParentBufferM)}, ${SUBDIVISION_OBJECT})`,
     },
   ];
 }
@@ -217,6 +263,37 @@ export async function assignParents(db: Db, bbox: Bbox): Promise<{ updated: numb
     updated += await setParents(db, rule.types, sql`c.centroid && ${box} and ${rule.filter ?? sql`true`}`, rule.parent);
   }
   return { updated };
+}
+
+/**
+ * The hierarchy for exactly the objects `ids` (the stage `gazetteer.land`, N7 4.4): subdivision, sea and parent of each
+ * by the same rules as `assignSubdivisions`, `assignSeas` and `assignParents`, then tile links into every valid tile
+ * the object intersects (added, never removed: other tiles' links stay as they are). No other object is touched.
+ * Returns the updates of each step and the new links.
+ */
+export async function assignObjects(
+  db: Db,
+  ids: string[],
+): Promise<{ subdivisions: number; seas: number; updated: number; links: number }> {
+  if (ids.length === 0) return { subdivisions: 0, seas: 0, updated: 0, links: 0 };
+  // one array parameter: a list of ids would bind one parameter each (Postgres allows 65,535 per statement)
+  const idArray = sql`${sql.param(ids)}::uuid[]`;
+  const only = sql`c.id = any(${idArray})`;
+  const subdivisions = await setSubdivisions(db, only);
+  const seas = await setSeas(db, only);
+  let updated = 0;
+  for (const rule of parentRules()) {
+    updated += await setParents(db, rule.types, sql`${only} and ${rule.filter ?? sql`true`}`, rule.parent);
+  }
+  const res = await db.execute(sql`
+    insert into tile_geo_objects (tile_id, geo_object_id)
+    select t.id, o.id
+    from geo_objects o
+    join tiles t on t.bbox && o.geom and ST_Intersects(t.bbox, o.geom)
+    where o.id = any(${idArray}) and t.valid_to is null and o.valid_to is null and o.merged_into_id is null
+      and o.type not in ${UNTILED_TYPES}
+    on conflict do nothing`);
+  return { subdivisions, seas, updated, links: res.rowCount ?? 0 };
 }
 
 /**

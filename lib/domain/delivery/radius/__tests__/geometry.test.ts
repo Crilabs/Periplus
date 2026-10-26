@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Region } from "@/contract";
+import type { Region } from "@/contract/v3_0";
 import { getConfig } from "@/lib/config";
 import { distanceNm, round5 } from "../../geo";
 import { circleBbox, circlePolygon, destination, radiusNm, regionTouchesCircle, tileTouchesCircle } from "../geometry";

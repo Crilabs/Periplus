@@ -16,7 +16,7 @@ import type { QueueName } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import type { BatchDeps, BatchHandlerEntry, BatchItemInput } from "@/lib/pipeline/batches";
-import { submitStageJobBatch } from "@/lib/pipeline/text/stage-batch";
+import { submitStageJobBatch } from "@/lib/pipeline/stage-batch";
 import { researchScope } from "./search";
 
 // No import of ../runs here: the job handlers import this module (import cycle through the stage registry).

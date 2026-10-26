@@ -1,23 +1,22 @@
 import { sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
-import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { AREA_IMPORT_STAGE } from "@/lib/pipeline/areas-import";
 import { DATASETS_STAGE } from "@/lib/pipeline/datasets";
-import { SUBDIVISION_DISCOVERY_STAGES } from "@/lib/pipeline/discovery-run";
+import { LAND_STAGE } from "@/lib/pipeline/gazetteer/land";
 import { GAZETTEER_STAGES } from "@/lib/pipeline/gazetteer/stages";
 import { GEOMETRY_RUN_STAGES } from "@/lib/pipeline/geometry-run";
 import { startRun } from "@/lib/pipeline/runs";
 import { PLACE_WEBSITE_STAGE } from "@/lib/pipeline/places/stage-name";
-import { REREAD_STAGE } from "@/lib/pipeline/text/reread";
 import { SEED_STAGE } from "@/lib/pipeline/tile-scope";
 
 /*
  * „Aufbauen“ of a subdivision (spec 14 „Landesteil-Lauf“, „Admin-UI“): one run of kind `full` with the stages of the
- * gazetteer, dataset, seed, marina website (`places.website`, spec 15 C), geometry and discovery runs, with the Revier import and then the mentions re-read between
- * geometry and discovery, in that order. Fetch, text, consolidation of texts and the
- * package stay separate runs: they wait on source approval. Each stage plans when it is reached, so the run needs no
+ * gazetteer, dataset, seed, marina website (`places.website`, spec 15 C), geometry runs, things on land
+ * (`gazetteer.land`, N7 4.4) and the Revier import, in that order. The research of the subdivision is a separate run the operator
+ * starts per subdivision (N6: the build neither re-reads mentions nor discovers sources). Each stage plans when it is
+ * reached, so the run needs no
  * tiles to start (the gazetteer creates them). A queue per country („Alle offenen aufbauen“) builds one subdivision
  * after the other: `queued_at` marks the waiting ones, and the end of a build (finished, failed or ended by an admin,
  * `afterBuildRunEnded`) starts the oldest waiting one of the same country.
@@ -31,10 +30,11 @@ export const SUBDIVISION_BUILD_STAGES = [
   // the websites of the seeded marinas and ports become approved sources (spec 15 C); their crawl stays a separate run
   PLACE_WEBSITE_STAGE,
   ...GEOMETRY_RUN_STAGES,
+  // the things on land around the candidates (N7 4.4), after geometry: `geometry.detect_bays` creates candidates
+  // (computed bays) and `geometry.place` their computed anchor positions, the ring centers; neither reads POIs.
+  // It assigns what it loads itself.
+  LAND_STAGE,
   AREA_IMPORT_STAGE,
-  // after the Revier import, so Reviere this build created count in the re-read's prepass; the build does not wait
-  REREAD_STAGE,
-  ...SUBDIVISION_DISCOVERY_STAGES,
 ] as const;
 
 /** Run params that mark a run as a subdivision build. */
@@ -72,8 +72,7 @@ export async function startSubdivisionBuild(
       kind: "full",
       scope: { type: "subdivision", id: sub.key },
       stages: [...SUBDIVISION_BUILD_STAGES],
-      // the geometry and consolidation stages keep the rules active now (ruling M7-E-R1)
-      params: { subdivisionKey: sub.key, rulesVersion: await activeRulesVersion(tx), [BUILD_MARK]: true },
+      params: { subdivisionKey: sub.key, [BUILD_MARK]: true },
       triggeredBy,
     });
   });

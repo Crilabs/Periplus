@@ -1,14 +1,15 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { createConverters } from "@/lib/adapters/fetch";
+import { createConverters, type RenderPage } from "@/lib/adapters/fetch";
+import { getRenderer } from "@/lib/adapters/fetch/browser";
 import { getCrawlTransport } from "@/lib/adapters/fetch/guarded";
 import { getTransport } from "@/lib/adapters/http";
 import { runPdftotext } from "@/lib/adapters/pdf";
 import { getArchive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
 import { runs } from "@/lib/db/schema";
-import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
-import { getEnv } from "@/lib/env";
+import { consolidationConfigFor } from "@/lib/domain/rules/active";
+import { getEnv, type Env } from "@/lib/env";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { assessPages, planResearchAssess, RESEARCH_ASSESS_QUEUE, RESEARCH_ASSESS_STAGE } from "@/lib/pipeline/research/assess";
@@ -44,7 +45,11 @@ import {
 } from "@/lib/pipeline/research/landside-extract";
 import { planResearchSearch, RESEARCH_SEARCH_STAGE, searchCandidate } from "@/lib/pipeline/research/search";
 import { modelClientFor } from "./ai-batch";
-import { crawlRenderPage } from "./fetch";
+
+/** The page renderer of this process: Playwright unless `PERIPLUS_RENDERER=off` (then `render: auto` never renders). */
+function crawlRenderPage(env: Pick<Env, "PERIPLUS_RENDERER"> = getEnv()): RenderPage | undefined {
+  return env.PERIPLUS_RENDERER === "off" ? undefined : getRenderer().render;
+}
 
 /** Stage `research.search`: one job per candidate of the run (`run.params.subdivisionKey` or `placeIds`). */
 export const researchSearchStage: StageDefinition = {
@@ -141,7 +146,6 @@ export const researchFetchHandler: JobHandler<JobData> = async (data, ctx) => {
   const { url } = fetchJobSchema.parse(data);
   const runId = runIdOf(data);
   const cfg = getConfig().fetch;
-  // No simulation branch: a research fetch always goes to the real web (`fetchResearchPage` does not read `deps.simulated`).
   const deps = {
     transport: getCrawlTransport(),
     converters: createConverters({ transport: getTransport(), renderPage: crawlRenderPage(), cfg }),
@@ -233,7 +237,7 @@ export const researchStateHandler: JobHandler<JobData> = async (data, ctx) => {
   const { runId, placeId } = stateBuildSchema.parse(data);
   const [run] = await ctx.db.select({ params: runs.params }).from(runs).where(eq(runs.id, runId));
   if (!run) throw new Error(`run ${runId} does not exist`);
-  const rules = await consolidationConfigFor(ctx.db, (run.params as Record<string, unknown>).rulesVersion);
+  const rules = consolidationConfigFor((run.params as Record<string, unknown>).rulesVersion);
   const result = await buildBerthState(ctx.db, placeId, { runId, rules });
   ctx.log.info({ placeId, ...result }, "berth state");
 };

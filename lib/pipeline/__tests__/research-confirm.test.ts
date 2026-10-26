@@ -14,7 +14,7 @@ import {
 import { newId, newPublicId } from "@/lib/domain/ids";
 import { setPlaceStatusByAdmin } from "@/lib/domain/place-status";
 import { createReviewTask } from "@/lib/domain/review";
-import { recordDecision } from "@/lib/domain/places/auto-status";
+import { recordDecision } from "@/lib/domain/review/system-decisions";
 import { applyBerthVerdicts, loadEvidence } from "@/lib/domain/research/confirmation";
 import { createRun } from "@/lib/domain/runs";
 import { confirmBerths, planResearchConfirm, RESEARCH_CONFIRM_STAGE, researchChanges } from "@/lib/pipeline/research/confirm";
@@ -42,7 +42,8 @@ async function statusDecisions(tx: Db, placeId: string) {
     .from(reviewTasks)
     .innerJoin(reviewDecisions, eq(reviewDecisions.taskId, reviewTasks.id))
     .where(and(eq(reviewTasks.subjectId, placeId), eq(reviewTasks.subjectType, "place_status")))
-    .orderBy(reviewDecisions.decidedAt);
+    // decisions of one test share `NOW`: the time-ordered id (UUIDv7) keeps them in the order they were made
+    .orderBy(reviewDecisions.decidedAt, reviewDecisions.id);
 }
 
 describe("applyBerthVerdicts", () => {

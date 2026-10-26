@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import type { PgInsertValue } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { chunks, documents, documentVersions, restrictedAreas, sources } from "@/lib/db/schema";
+import { documents, documentVersions, restrictedAreas, sources } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import type { Db } from "@/lib/db/client";
 import { withRollback } from "@/test/db";
@@ -76,37 +76,14 @@ async function insertVersion(tx: Db): Promise<string> {
   return row!.id;
 }
 
-async function insertChunk(tx: Db): Promise<string> {
-  const documentVersionId = await insertVersion(tx);
-  const [row] = await tx
-    .insert(chunks)
-    .values({
-      documentVersionId,
-      ordinal: 0,
-      text: "Good holding in sand.",
-      textNormalized: "good holding in sand",
-      textHash: "t1",
-      charStart: 0,
-      charEnd: 21,
-      wordCount: 4,
-    })
-    .returning({ id: chunks.id });
-  return row!.id;
-}
-
-const embedding = () => Array.from({ length: 1024 }, (_, i) => (i % 7) / 7);
-
 describe("archive schema", () => {
-  it.each([
-    ["document_versions", insertVersion],
-    ["chunks", insertChunk],
-  ] as const)("%s rejects DELETE", async (table, insert) => {
+  it("document_versions rejects DELETE", async () => {
     await withRollback(async (tx) => {
-      const id = await insert(tx);
+      const id = await insertVersion(tx);
       const message = await rejectionMessage(tx, (sp) =>
-        sp.execute(sql`delete from ${sql.identifier(table)} where id = ${id}`),
+        sp.execute(sql`delete from document_versions where id = ${id}`),
       );
-      expect(message).toMatch(new RegExp(`${table} is append-only`));
+      expect(message).toMatch(/document_versions is append-only/);
     });
   });
 
@@ -131,56 +108,42 @@ describe("archive schema", () => {
     });
   });
 
-  it("chunks allow setting the embedding but not changing the text", async () => {
-    await withRollback(async (tx) => {
-      const id = await insertChunk(tx);
-      await tx.update(chunks).set({ embedding: embedding(), embeddingModel: "voyage-3.5" }).where(eq(chunks.id, id));
-      const [row] = await tx.select({ model: chunks.embeddingModel }).from(chunks).where(eq(chunks.id, id));
-      expect(row!.model).toBe("voyage-3.5");
-
-      const message = await rejectionMessage(tx, (sp) =>
-        sp.update(chunks).set({ text: "Changed." }).where(eq(chunks.id, id)),
-      );
-      expect(message).toMatch(/chunks is append-only/);
-    });
-  });
-
   it.each([
     ["sources", insertSource],
     ["documents", insertDocument],
-  ] as const)("%s cannot be deleted", async (table, insert) => {
+  ] as const)("%s can be deleted again (no delete guard since N6, design 7.2)", async (table, insert) => {
     await withRollback(async (tx) => {
       const id = await insert(tx);
-      const message = await rejectionMessage(tx, (sp) =>
-        sp.execute(sql`delete from ${sql.identifier(table)} where id = ${id}`),
-      );
-      expect(message).toMatch(new RegExp(`${table} rows are never deleted`));
+      await tx.execute(sql`delete from ${sql.identifier(table)} where id = ${id}`);
     });
   });
 
-  it("changing a source's weight writes sources_history", async () => {
+  it("no history tables and no history or delete-guard functions remain", async () => {
     await withRollback(async (tx) => {
-      const id = await insertSource(tx, { weight: 0.5 });
-      await tx.update(sources).set({ name: "Renamed" }).where(eq(sources.id, id));
-      await tx.update(sources).set({ weight: 0.7 }).where(eq(sources.id, id));
-
-      const rows = await tx.execute<{ weight: number }>(
-        sql`select (old_row ->> 'weight')::real as weight from sources_history where row_id = ${id}`,
-      );
-      expect(rows.rows).toEqual([{ weight: 0.5 }]);
+      const tables = await tx.execute<{ n: string }>(sql`
+        select tablename as n from pg_tables where schemaname = current_schema() and tablename like '%\_history'`);
+      expect(tables.rows).toEqual([]);
+      const fns = await tx.execute<{ n: string }>(sql`
+        select proname as n from pg_proc where pronamespace = current_schema()::regnamespace
+          and proname in ('record_history', 'forbid_delete')`);
+      expect(fns.rows).toEqual([]);
     });
   });
 
-  it("changing a document's status writes documents_history", async () => {
+  it("document_versions is the only table with an append-only trigger (UPDATE/DELETE and TRUNCATE)", async () => {
     await withRollback(async (tx) => {
-      const id = await insertDocument(tx);
-      await tx.update(documents).set({ consecutiveGone: 1 }).where(eq(documents.id, id));
-      await tx.update(documents).set({ status: "gone" }).where(eq(documents.id, id));
-
-      const rows = await tx.execute<{ status: string }>(
-        sql`select old_row ->> 'status' as status from documents_history where row_id = ${id}`,
-      );
-      expect(rows.rows).toEqual([{ status: "active" }]);
+      const { rows } = await tx.execute<{ table: string; kind: string }>(sql`
+        select c.relname as table, (case when (t.tgtype & 32) <> 0 then 'truncate' else 'row' end) as kind
+        from pg_trigger t
+        join pg_class c on c.oid = t.tgrelid
+        join pg_proc p on p.oid = t.tgfoid
+        where c.relnamespace = current_schema()::regnamespace and not t.tgisinternal
+          and p.proname in ('forbid_mutation', 'forbid_delete', 'record_history')
+        order by 1, 2`);
+      expect(rows).toEqual([
+        { table: "document_versions", kind: "row" },
+        { table: "document_versions", kind: "truncate" },
+      ]);
     });
   });
 
@@ -255,23 +218,6 @@ describe("archive schema", () => {
         sp.insert(restrictedAreas).values({ kind: "military", geom, sourceId: newId() }),
       );
       expect(message).toMatch(/restricted_areas_source_id_sources_id_fk/);
-    });
-  });
-
-  it("chunks.embedding is vector(1024) with an hnsw index", async () => {
-    await withRollback(async (tx) => {
-      const type = await tx.execute<{ type: string }>(sql`
-        select format_type(atttypid, atttypmod) as type from pg_attribute
-        where attrelid = 'chunks'::regclass and attname = 'embedding'`);
-      expect(type.rows[0]?.type).toBe("vector(1024)");
-
-      const index = await tx.execute<{ indexdef: string }>(sql`
-        select indexdef from pg_indexes where tablename = 'chunks' and indexname = 'chunks_embedding_hnsw'`);
-      expect(index.rows[0]?.indexdef).toMatch(/hnsw.*vector_cosine_ops/);
-
-      const trgm = await tx.execute<{ indexdef: string }>(sql`
-        select indexdef from pg_indexes where tablename = 'chunks' and indexdef like '%gin_trgm_ops%'`);
-      expect(trgm.rows[0]?.indexdef).toMatch(/text_normalized gin_trgm_ops/);
     });
   });
 });

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { areal, latLon, publicId, textDe, unit, versionFields } from "./common";
+import { areal, latLon, publicId, textDe, unit } from "./common";
 
 /** Region (Teil B "Region"): the gazetteer levels the planner needs. */
 export const regionType = z.enum(["island", "coast", "gulf", "channel", "archipelago"]);
@@ -25,8 +25,7 @@ export const regionSchema = z.strictObject({
       supplyPort: z.boolean().nullable(),
     })
     .optional(),
-  ...versionFields,
 });
 
 export type Region = z.infer<typeof regionSchema>;
-export type RegionBody = Omit<Region, "profileVersion" | "validFrom">;
+export type RegionBody = Region;

@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { coastCollectionSchema, type CoastCollection, type CoastFeature } from "@/contract/v2";
+import { coastCollectionSchema, type CoastCollection, type CoastFeature } from "@/contract/v3_0";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";

@@ -1,8 +1,16 @@
 import type { Metadata } from "next";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
-import { countrySummaryText, SUBDIVISION_STATUSES, subdivisionTree, type SubdivisionRow, type SubdivisionStatus } from "@/lib/domain/subdivisions/view";
+import {
+  countrySummaryText,
+  isQueueable,
+  SUBDIVISION_STATUSES,
+  subdivisionTree,
+  type SubdivisionRow,
+  type SubdivisionStatus,
+} from "@/lib/domain/subdivisions/view";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { runScopeError, STAGE_LABELS } from "../_components/labels";
 import {
   Badge,
   Button,
@@ -10,6 +18,7 @@ import {
   EmptyState,
   FilterChips,
   fmt,
+  inputClass,
   Mono,
   Notice,
   numClass,
@@ -60,20 +69,25 @@ function SubdivisionRows({ rows, country }: { rows: SubdivisionRow[]; country: s
               </Badge>
               {s.queued && <span className="ml-2 text-xs text-muted">wartet</span>}
               {s.status === "ausgeschlossen" && s.statusReason && <p className="mt-1 text-xs text-muted">{s.statusReason}</p>}
+              {s.status === "teilweise" && (
+                <p className="mt-1 text-xs text-muted" title="Beendete Stufen des Aufbaus, auch aus Einzelläufen">
+                  Beendet: {s.partialStages.map((stage) => STAGE_LABELS[stage] ?? stage).join(", ")}
+                </p>
+              )}
             </td>
             <td className={cx(tdClass, numClass)}>{fmt.int(s.coastTiles)}</td>
             <td className={cx(tdClass, numClass)}>{fmt.int(s.processedTiles)}</td>
             <td className={cx(tdClass, "whitespace-nowrap")}>{fmt.dateTime(s.lastRunAt ? new Date(s.lastRunAt) : null)}</td>
             <td className={cx(tdClass, numClass)}>{fmt.eur(s.costEur)}</td>
             <td className={cx(tdClass, "text-right")}>
-              {s.status !== "ausgeschlossen" && s.status !== "läuft" && (
+              {s.status !== "ausgeschlossen" && !s.buildActive && (
                 <form action={buildSubdivisionAction}>
                   <input type="hidden" name="subdivisionKey" value={s.key} />
                   <Button
                     size="sm"
                     variant={s.status === "aufgebaut" ? "secondary" : "primary"}
                     aria-label={`Aufbauen: ${s.name}`}
-                    title={`Startet den Aufbau von ${s.name} (${country}): Gazetteer, Datensätze, Seed, Geometrie, Discovery.`}
+                    title={`Startet den Aufbau von ${s.name} (${country}): Gazetteer, Datensätze, Seed, Orts-Websites, Geometrie, Dinge an Land, Reviere.`}
                   >
                     Aufbauen
                   </Button>
@@ -92,6 +106,7 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
   const sp = await searchParams;
   const status = statusParam.parse(sp.status);
   const queued = queuedParam.parse(sp.queued);
+  const error = runScopeError(sp.error);
   const tree = await subdivisionTree(getDb());
   const filtered = tree
     .map((c) => ({ ...c, subdivisions: status ? c.subdivisions.filter((s) => s.status === status) : c.subdivisions }))
@@ -103,15 +118,27 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
     <>
       <PageHeader
         title="Länder und Landesteile"
-        description="Je Land seine Landesteile mit Mittelmeerküste. „Aufbauen“ startet Gazetteer, Datensätze, Seed, Geometrie und Discovery für einen Landesteil; „Alle offenen aufbauen“ stellt die nicht begonnenen Landesteile eines Landes nacheinander in die Warteschlange. Abruf, Texte und Paket bleiben eigene Läufe."
+        description="Je Land seine Landesteile mit Mittelmeerküste. „Aufbauen“ startet Gazetteer, Datensätze, Seed, Orts-Websites, Geometrie, Dinge an Land und Revier-Import für einen Landesteil; „Alle offenen aufbauen“ stellt die noch nie aufgebauten Landesteile eines Landes – nicht begonnene, teilweise aufgebaute und fehlgeschlagene – nacheinander in die Warteschlange. Recherche, Abruf, Texte und Paket bleiben eigene Läufe. „teilweise“: einzelne Stufen des Aufbaus sind beendet (Einzelläufe), der Aufbau als Ganzes nicht; „läuft“ gilt für jeden Lauf mit dem Landesteil als Umfang. Länder mit einem begonnenen Landesteil sind aufgeklappt."
         actions={
-          <form action={rebuildSubdivisionsAction}>
-            <Button title="Lädt Meere, Länder und Verwaltungseinheiten neu und bildet daraus die Landesteile. Aufgebaute Landesteile bleiben, wie sie sind.">
+          <form action={rebuildSubdivisionsAction} className="flex items-center gap-2">
+            <input
+              name="countries"
+              aria-label="nur Länder"
+              placeholder="nur Länder, z. B. PS LY"
+              title="Leer: alle Länder. Sonst nur diese Länder neu laden (Ländercodes), etwa nach einem gescheiterten Land; die Landesteile werden trotzdem aus allen Ländern gebildet."
+              className={cx(inputClass, "w-48")}
+            />
+            <Button title="Lädt Meere, Länder, Verwaltungseinheiten und Grob-Merkmale neu, bildet daraus die Landesteile und ordnet die Grob-Objekte Meeren, Landesteilen und Eltern zu. Aufgebaute Landesteile bleiben, wie sie sind. Braucht die Landpolygone.">
               Landesteile neu bilden
             </Button>
           </form>
         }
       />
+      {error && (
+        <Notice tone="danger" title="Lauf nicht gestartet" className="mb-6">
+          {error}.
+        </Notice>
+      )}
       {queued !== undefined && (
         <Notice tone="ok" className="mb-6">
           {queued === 0 ? "Nichts Neues in die Warteschlange gestellt." : `${queued} Landesteile in die Warteschlange gestellt.`}
@@ -129,7 +156,7 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
       {tree.length === 0 ? (
         <Panel>
           <EmptyState title="Noch keine Landesteile">
-            „Landesteile neu bilden“ lädt Meere, Länder und Verwaltungseinheiten (Grob-Gazetteer) und bildet daraus die Landesteile.
+            Zuerst die Landpolygone importieren (Runbook „Erstinstallation Raumgliederung“). Dann lädt „Landesteile neu bilden“ Meere, Länder und Verwaltungseinheiten (Grob-Gazetteer) und bildet daraus die Landesteile.
           </EmptyState>
         </Panel>
       ) : filtered.length === 0 ? (
@@ -140,7 +167,7 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
         <ul className="space-y-3" aria-label="Länder">
           {filtered.map((c) => (
             <li key={c.country}>
-              <details className="group rounded-lg border border-line bg-surface" open={c.whole || status !== undefined}>
+              <details className="group rounded-lg border border-line bg-surface" open={c.whole || c.expanded || status !== undefined}>
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3">
                   <span className="min-w-0">
                     <span className="font-medium">{c.name}</span>
@@ -150,7 +177,7 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
                     </span>
                     <span className="mt-0.5 block text-sm text-muted">{countrySummaryText(c.summary)}</span>
                   </span>
-                  {!c.whole && c.subdivisions.some((s) => s.status === "nicht begonnen" && !s.queued) && (
+                  {!c.whole && c.subdivisions.some(isQueueable) && (
                     <form action={queueCountryAction}>
                       <input type="hidden" name="country" value={c.country} />
                       <Button size="sm" aria-label={`Alle offenen aufbauen: ${c.name}`}>

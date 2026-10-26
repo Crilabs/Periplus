@@ -2,7 +2,7 @@ import { and, eq, getTableName, inArray, is, isNull, SQL, sql, type AnyColumn } 
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "@/lib/db/client";
 import { geoNames, type NameOrigin, type NameScript } from "@/lib/db/schema";
-import { validAt, validAtAlias } from "@/lib/domain/timeline";
+import { validAt, validAtAlias } from "@/lib/db/valid-at";
 
 /**
  * A name as delivered by an import; `language` is ISO 639-1 or `"und"`.
@@ -220,7 +220,8 @@ export async function addNames(db: Db, geoObjectId: string, names: NameDraft[]):
  */
 export async function ensureFallbackNames(db: Db, geoObjectIds?: string[]): Promise<number> {
   if (geoObjectIds?.length === 0) return 0;
-  const scope = geoObjectIds ? sql`and en.geo_object_id in ${geoObjectIds}` : sql``;
+  // one array parameter: a list of ids would bind one parameter each (Postgres allows 65,535 per statement)
+  const scope = geoObjectIds ? sql`and en.geo_object_id = any(${sql.param(geoObjectIds)}::uuid[])` : sql``;
   const { rows: sources } = await db.execute<{
     geo_object_id: string;
     name: string;
@@ -237,7 +238,20 @@ export async function ensureFallbackNames(db: Db, geoObjectIds?: string[]): Prom
       )
     order by en.geo_object_id, en.is_preferred desc, en.created_at, en.id
   `);
-  if (sources.length === 0) return 0;
+  let written = 0;
+  // in chunks: seven parameters per row stay below the 65,535 parameters of one statement
+  for (let i = 0; i < sources.length; i += FALLBACK_INSERT_CHUNK) {
+    written += await insertFallbackNames(db, sources.slice(i, i + FALLBACK_INSERT_CHUNK));
+  }
+  return written;
+}
+
+const FALLBACK_INSERT_CHUNK = 5000;
+
+async function insertFallbackNames(
+  db: Db,
+  sources: Array<{ geo_object_id: string; name: string; name_normalized: string; script: NameScript }>,
+): Promise<number> {
   const inserted = await db
     .insert(geoNames)
     .values(

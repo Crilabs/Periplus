@@ -3,21 +3,20 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { matchRoute, normalizePath, ROUTE_POLICY } from "../route-policy";
 
-/** The delivery API routes (spec 08, spec 14: contract 3.0 under `/api/v3`; the 1.0 schemas stay under `/api/v1`). */
+/** The delivery API routes (spec 08, spec 14: contract 4.0 under `/api/v4`). */
 const DELIVERY_ROUTES = [
-  "/api/v1/schema/[version]/[file]",
-  "/api/v3/ping",
-  "/api/v3/subdivisions",
-  "/api/v3/subdivisions/[subdivision]/package",
-  "/api/v3/subdivisions/[subdivision]/package/[file]",
-  "/api/v3/schema/[version]/[file]",
-  "/api/v3/subdivisions/[subdivision]/changes",
-  "/api/v3/spots/[id]",
-  "/api/v3/radius/package",
-  "/api/v3/radius/package/[file]",
-  "/api/v3/radius/package/images/[file]",
-  "/api/v3/radius/changes",
-  "/api/v3/home-marinas",
+  "/api/v4/ping",
+  "/api/v4/subdivisions",
+  "/api/v4/subdivisions/[subdivision]/package",
+  "/api/v4/subdivisions/[subdivision]/package/[file]",
+  "/api/v4/schema/[version]/[file]",
+  "/api/v4/subdivisions/[subdivision]/changes",
+  "/api/v4/spots/[id]",
+  "/api/v4/radius/package",
+  "/api/v4/radius/package/[file]",
+  "/api/v4/radius/package/images/[file]",
+  "/api/v4/radius/changes",
+  "/api/v4/home-marinas",
 ];
 
 const ROUTE_FILES = /^(page|route)\.(tsx?|jsx?)$/;
@@ -47,13 +46,16 @@ describe("ROUTE_POLICY", () => {
     expect(matchRoute("/deliveries/0199f0a0-0000-7000-8000-000000000001/files/spots.json")?.pattern).toBe("/deliveries/[id]/files/[file]");
   });
 
-  it("gives /api/v1/ping the delivery:read scope", () => {
-    expect(ROUTE_POLICY["/api/v1/ping"]).toEqual({ kind: "api", scope: "delivery:read" });
+  it("gives /api/v4/ping the delivery:read scope and /api/v1 is gone (N6)", () => {
+    expect(ROUTE_POLICY["/api/v4/ping"]).toEqual({ kind: "api", scope: "delivery:read" });
+    expect(Object.keys(ROUTE_POLICY).some((r) => r.startsWith("/api/v1/"))).toBe(false);
   });
 
-  it("moved the delivery API from /api/v2 to /api/v3", () => {
-    expect(Object.keys(ROUTE_POLICY).some((r) => r.startsWith("/api/v2/"))).toBe(false);
-    expect(ROUTE_POLICY["/api/v3/subdivisions"]).toEqual({ kind: "api", scope: "delivery:read" });
+  it("moved the delivery API from /api/v3 to /api/v4 (v3 is gone)", () => {
+    expect(Object.keys(ROUTE_POLICY).some((r) => r.startsWith("/api/v2/") || r.startsWith("/api/v3/"))).toBe(false);
+    expect(matchRoute("/api/v3/subdivisions")).toBeNull();
+    expect(matchRoute("/api/v3/radius/package")).toBeNull();
+    expect(ROUTE_POLICY["/api/v4/subdivisions"]).toEqual({ kind: "api", scope: "delivery:read" });
   });
 
   it("every new api route is in the route policy with the delivery:read scope", () => {
@@ -61,13 +63,12 @@ describe("ROUTE_POLICY", () => {
       expect(ROUTE_POLICY[route], route).toEqual({ kind: "api", scope: "delivery:read" });
     }
     for (const [path, pattern] of [
-      ["/api/v3/subdivisions", "/api/v3/subdivisions"],
-      ["/api/v3/subdivisions/sd_X/package", "/api/v3/subdivisions/[subdivision]/package"],
-      ["/api/v3/subdivisions/GR-I/package/spots.json", "/api/v3/subdivisions/[subdivision]/package/[file]"],
-      ["/api/v1/schema/1.0/spots.schema.json", "/api/v1/schema/[version]/[file]"],
-      ["/api/v3/schema/2.0/spots.schema.json", "/api/v3/schema/[version]/[file]"],
-      ["/api/v3/subdivisions/GR-I/changes", "/api/v3/subdivisions/[subdivision]/changes"],
-      ["/api/v3/spots/sp_X", "/api/v3/spots/[id]"],
+      ["/api/v4/subdivisions", "/api/v4/subdivisions"],
+      ["/api/v4/subdivisions/sd_X/package", "/api/v4/subdivisions/[subdivision]/package"],
+      ["/api/v4/subdivisions/GR-I/package/spots.json", "/api/v4/subdivisions/[subdivision]/package/[file]"],
+      ["/api/v4/schema/2.0/spots.schema.json", "/api/v4/schema/[version]/[file]"],
+      ["/api/v4/subdivisions/GR-I/changes", "/api/v4/subdivisions/[subdivision]/changes"],
+      ["/api/v4/spots/sp_X", "/api/v4/spots/[id]"],
     ] as const) {
       expect(matchRoute(path)?.pattern, path).toBe(pattern);
     }

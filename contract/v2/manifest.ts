@@ -58,7 +58,7 @@ export const manifestScope = z.discriminatedUnion("type", [
 
 /** `manifest.json`: what the package is (`scope`), which subdivisions it covers, with which files and licences. */
 export const manifestSchema = z.strictObject({
-  schemaVersion: z.literal("3.0"),
+  schemaVersion: z.literal("4.0"),
   scope: manifestScope,
   coverage: z.array(coverageEntry).min(1),
   /** The sailing areas (Reviere) that touch the subdivision's tiles; for information only. */
@@ -76,16 +76,14 @@ export const manifestSchema = z.strictObject({
     z.strictObject({
       id: z.string().regex(/^q025:\d+:\d+$/),
       lastRunAt: isoDateTime.nullable(),
-      profilesAsOf: isoDate.nullable(),
+      statesAsOf: isoDate.nullable(),
     }),
   ),
   objectCounts: z.strictObject({
     spots: count,
-    highlights: count,
     regions: count,
     weatherPoints: count,
     coastFeatures: count,
-    changes: count,
   }),
   licenses: z.array(
     z.strictObject({

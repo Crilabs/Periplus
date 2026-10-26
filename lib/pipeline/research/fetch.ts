@@ -11,7 +11,7 @@ import { ForbiddenSourceDomain } from "@/lib/domain/sources/forbidden-domains";
 import { normalizeUrl, registrableDomain } from "@/lib/domain/sources/urls";
 import type { JobData } from "@/lib/jobs/worker";
 import { convertAndStore } from "@/lib/pipeline/fetch/store-page";
-import { fetchFollowing, urlJobKey, type FetchUrlDeps } from "@/lib/pipeline/fetch/url";
+import { fetchFollowing, urlJobKey, type FetchUrlDeps } from "@/lib/pipeline/fetch/page";
 import { researchScope } from "./search";
 
 // No import of ../runs here: the job handlers import this module (import cycle through the stage registry).

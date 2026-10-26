@@ -2,10 +2,8 @@ import { eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
 import { places } from "@/lib/db/schema";
-import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
 import { tileExists } from "@/lib/domain/geo-view";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
-import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { checkGeometryTiles, DETECT_BAYS_STAGE, GEOMETRY_STAGE, geometryPlaceIds } from "@/lib/pipeline/geometry";
 import { startRun } from "@/lib/pipeline/runs";
 import { RunScopeNotReady, seedTileIds } from "@/lib/pipeline/tile-scope";
@@ -14,14 +12,13 @@ import { RunScopeNotReady, seedTileIds } from "@/lib/pipeline/tile-scope";
 // through ./runs, which would close an import cycle through the handler.
 
 /** The stages of a geometry run for a tile or a subdivision, in order (a place skips `geometry.detect_bays`). */
-export const GEOMETRY_RUN_STAGES = [DETECT_BAYS_STAGE, GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES] as const;
+export const GEOMETRY_RUN_STAGES = [DETECT_BAYS_STAGE, GEOMETRY_STAGE] as const;
 
 /**
  * Starts the run "Geometrie" for one tile (scope `tile`), the coast tiles of a subdivision (scope `subdivision`) or one place
  * (scope `place`, e.g. after an anchor correction): for a tile or a subdivision first `geometry.detect_bays` (unnamed bays
- * become place candidates, ruling M7-P13), then stage `geometry.place`, then profile and summary for its
- * places (`GEOMETRY_CONSOLIDATION_STAGES`, no paid source discovery; final review I-2: a new exclusion or computed shelter reaches the profile and the
- * change feed in the same run; `consolidationTargets` maps the run's params). Checked before the run exists: the tile
+ * become place candidates, ruling M7-P13), then stage `geometry.place`, then the run is done (the berth state picks the
+ * computed values up in the berth follow-up chain). Checked before the run exists: the tile
  * exists, or the subdivision exists (an area key fails with the replacement hint) and has coast tiles, or the place is one the stage computes
  * and lies on a tile; every scoped tile has bathymetry and land polygons within the ray length. A scope lacking
  * one of these inputs throws `RunScopeNotReady`.
@@ -60,8 +57,6 @@ export async function startGeometryRun(
     run = { scope: { type: "place", id: scope.placeId }, params: { placeIds: [scope.placeId] } };
   }
   await checkGeometryTiles(db, tileIds);
-  // its consolidation and summaries keep the rules active now, across a later activation (ruling M7-E-R1)
-  run.params.rulesVersion = await activeRulesVersion(db);
   const stages = run.scope.type === "place" ? GEOMETRY_RUN_STAGES.filter((s) => s !== DETECT_BAYS_STAGE) : [...GEOMETRY_RUN_STAGES];
   return startRun(db, boss, { kind: "stage", ...run, stages, triggeredBy });
 }

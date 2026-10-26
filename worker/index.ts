@@ -8,8 +8,6 @@ import { getArchive } from "@/lib/adapters/s3";
 import { createAnthropicClient } from "@/lib/ai/anthropic";
 import { getTransport } from "@/lib/adapters/http";
 import { createOpenAiImageModel } from "@/lib/adapters/openai-image";
-import { assertEmbeddingDimension } from "@/lib/pipeline/embed";
-import { assertSimulationEnv } from "@/lib/domain/revisit/guard";
 import { getEnv } from "@/lib/env";
 import { createBoss } from "@/lib/jobs/boss";
 import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
@@ -27,14 +25,8 @@ const log = createLogger("worker-main");
 async function main(): Promise<void> {
   // Not ready until every start check below has passed (a restarted container keeps the marker of its last start).
   clearReadyMarker();
-  // A simulation runs only against periplus_sim or *_test and with its own archive prefix: checked before anything
-  // touches the database, the bucket or the queues.
-  const simulation = assertSimulationEnv(getEnv());
-  if (simulation) log.info(simulation, "simulation active");
   const config = getConfig();
   const db = getDb();
-  // A model with another dimension needs a migration of chunks.embedding first: refuse to start without it.
-  await assertEmbeddingDimension(db, config.embeddings);
   await getArchive().ensureBucket();
   log.info("archive bucket ready");
   const boss = createBoss(getEnv().DATABASE_URL);

@@ -1,10 +1,10 @@
 import { sql, type SQL } from "drizzle-orm";
-import type { CoastCollection, CoastFeature } from "@/contract";
+import type { CoastCollection, CoastFeature } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { restrictedAreas, type RestrictedKind } from "@/lib/db/schema/geo";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 import { RESTRICTED_REASON } from "./vocab";
 
 /*

@@ -132,6 +132,7 @@ jobs:
           file: docker/web.Dockerfile
           push: true
           tags: ghcr.io/crilabs/periplus-web:${{ github.sha }}
+          build-args: GIT_SHA=${{ github.sha }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
       - name: Build and push worker
@@ -141,6 +142,7 @@ jobs:
           file: docker/worker.Dockerfile
           push: true
           tags: ghcr.io/crilabs/periplus-worker:${{ github.sha }}
+          build-args: GIT_SHA=${{ github.sha }}
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=max,scope=worker
       - name: Build and push postgres

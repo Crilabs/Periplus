@@ -1,30 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { textShingles } from "@/lib/db/schema";
 import { imageAttributionTexts } from "@/lib/domain/images/delivery-gate";
-import { findArchiveCopies } from "@/lib/domain/documents/archive-copies";
-import { shingleHashes } from "@/lib/domain/documents/shingles";
+import { copyIndex } from "@/lib/domain/documents/archive-copies";
 import { newId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";
 import {
   breakPackage,
-  HIGHLIGHT,
-  HIGHLIGHT_SELECTORS,
+  FACT_LANDSIDE,
   INLAND_2NM,
   offsetSouth,
-  OTHER_HL,
   OTHER_SP,
   PREVIOUS,
   SPOT_A,
   SPOT_M,
-  SPOT_X,
   SUBDIVISION_ID,
+  TAVERNA,
   validPackage,
-} from "@/test/fixtures/delivery/package";
-import { insertTestVersion } from "@/test/text";
+} from "@/test/fixtures/delivery/package-v4";
 import type { DeliveryPackage } from "../types";
-import { buildWarnings, CHECK_NAMES, failedChecksSummary, spotsInMilitaryAreas, validatePackage, type CheckName, type ValidationDeps, type ValidationReport } from "../validate";
+import { buildWarnings, CHECK_NAMES, dropCopiedTexts, failedChecksSummary, spotsInMilitaryAreas, validatePackage, type CheckName, type ValidationDeps, type ValidationReport } from "../validate";
 
 const config = loadConfig("config");
 const cfg = config.delivery;
@@ -41,9 +36,7 @@ function validate(pkg: DeliveryPackage, deps: Partial<ValidationDeps> = {}): Pro
   return validatePackage(pkg, {
     previous: PREVIOUS,
     findCopies: async () => 0,
-    forbiddenSources: [],
     cfg,
-    highlightSelectors: HIGHLIGHT_SELECTORS,
     ...deps,
   });
 }
@@ -52,11 +45,8 @@ const findings = (report: ValidationReport, name: CheckName) => report.checks.fi
 
 type Patch = (p: DeliveryPackage) => void;
 const spots = (p: DeliveryPackage) => p.files["spots.json"].spots;
-const highlights = (p: DeliveryPackage) => p.files["highlights.json"].highlights;
-/** A new object in the package is a `created` change (else `changes_complete` fails as well). */
-const created = (p: DeliveryPackage, objectType: "spot" | "highlight", objectId: string) =>
-  p.files["changes.json"]!.changes.push({ objectType, objectId, event: "created", fields: [], severity: "info", summary: { de: "Neu im Paket." }, profileVersion: 1 });
-
+/** The landside fact of A and its text. */
+const landsideFact = (p: DeliveryPackage) => spots(p)[0]!.facts.find((f) => f.id === FACT_LANDSIDE)!;
 describe("validatePackage", () => {
   it("the valid fixture passes every check", async () => {
     const report = await validate(validPackage());
@@ -75,48 +65,38 @@ describe("validatePackage", () => {
     expect(failed(await validate(pkg))).toEqual([]);
   });
 
-  it("a highlight naming a spot that is not in the package (a candidate is never delivered) fails references (spec 17)", async () => {
-    const candidate = "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z9";
-    const pkg = validPackage();
-    highlights(pkg)[0]!.spotIds = [...highlights(pkg)[0]!.spotIds, candidate];
+  it("a landside fact pointing at an entry that is not in the nearby of the same spot fails references (review focus)", async () => {
+    // the taverna is in A's nearby, not in M's: the same id in a fact of M is a dangling reference
+    const pkg = breakPackage(validPackage(), (p) => void spots(p)[1]!.facts.push({ ...landsideFact(p) }));
     const report = await validate(pkg);
-    expect(failed(report)).toContain("references");
-    expect(JSON.stringify(findings(report, "references"))).toContain(candidate);
+    expect(failed(report)).toEqual(["references"]);
+    expect(findings(report, "references")).toEqual([
+      { file: "spots.json", objectId: SPOT_M, path: "/spots/1/facts/0/subject/id", message: `Fakt verweist auf ${TAVERNA}, das nicht in nearby desselben Spots steht` },
+    ]);
+    // a fact that names its object only by name needs no nearby entry
+    const named = breakPackage(validPackage(), (p) => void (spots(p)[1]!.facts = [{ ...landsideFact(p), subject: { kind: "landside", id: null, name: "Taverna Vathi" } }]));
+    expect(failed(await validate(named))).toEqual([]);
   });
 
   const cases: Array<[CheckName, Patch, Partial<ValidationDeps>?]> = [
     // six decimals: only zod knows the five-decimal rule (ruling M6-P23)
     ["json_schema", (p) => void (spots(p)[0]!.position.lat = 35.195001)],
-    // a second marina under M's id (renaming M itself would also drop M from the package: changes_complete)
+    // a second marina under M's id
     ["ids", (p) => void spots(p).push({ ...spots(p)[1]!, position: { lat: 35.35, lon: 21.2 } })],
-    ["references", (p) => void (spots(p)[0]!.highlightIds = ["hl_01J9X4KQ3P2N1M0Z9K8J7H6G5Z"])],
+    ["references", (p) => void (spots(p)[0]!.regionId = "rg_01J9X4KZ0A1B2C3D4E5F6G7H8Z")],
     ["spot_location", (p) => void (spots(p)[0]!.position = INLAND_2NM)],
     // marina, provenance computed
     ["shelter", (p) => void (spots(p)[1]!.shelter.sectors.S = 0.5)],
     ["limits", (p) => void (spots(p)[0]!.limits.maxDraft = 12)],
-    // the marina: excluding A would leave the highlight without a counting spot
     ["exclude_reason", (p) => void (spots(p)[1]!.exclude = { excluded: true, reason: null, detail: null })],
     ["berth_months", (p) => void (spots(p)[1]!.berth = { status: "seasonFull", months: [], sourcesCount: 1, bookable: null })],
-    ["low_confidence_note", (p) => void (spots(p)[0]!.score.confidence = 0.2)],
-    // the marina is delivered but does not select the highlight (spec 16)
-    ["highlight_selected", (p) => void (highlights(p)[0]!.spotIds = [SPOT_M])],
     [
       "spot_duplicates",
       (p) => {
-        spots(p).push({ ...spots(p)[0]!, id: OTHER_SP, position: offsetSouth(spots(p)[0]!.position, 100), profileVersion: 1 });
-        created(p, "spot", OTHER_SP);
+        spots(p).push({ ...spots(p)[0]!, id: OTHER_SP, position: offsetSouth(spots(p)[0]!.position, 100) });
       },
     ],
-    // same normalized name (case and accents), 300 m apart
-    [
-      "highlight_duplicates",
-      (p) => {
-        highlights(p).push({ ...highlights(p)[0]!, id: OTHER_HL, name: "TAVERNA VATHI", position: offsetSouth(highlights(p)[0]!.position, 300) });
-        created(p, "highlight", OTHER_HL);
-      },
-      { highlightSelectors: new Map([...HIGHLIGHT_SELECTORS, [OTHER_HL, [SPOT_A]]]) },
-    ],
-    ["verbatim_text", () => {}, { findCopies: async (text: string) => (text.startsWith("Tiefe Bucht") ? 16 : 0) }],
+    ["verbatim_text", () => {}, { findCopies: async (text: string) => (text.startsWith("Die Taverne") ? 16 : 0) }],
     [
       "image_attribution",
       (p) =>
@@ -132,16 +112,13 @@ describe("validatePackage", () => {
             observedAt: null,
             license: "periplus",
             attribution: `${imagesCfg.sources.sentinel2.attribution} · Illustration: Periplus`,
-            sourceUrl: null,
             camera: null,
           },
         ]),
       { imageAttribution: imageAttributionTexts(imagesCfg) },
     ],
-    // the spot's values draw on a navily document the mapper kept out of `sources` (ruling M6-D-R2)
-    ["foreign_content", () => {}, { forbiddenSources: [{ file: "spots.json", objectId: SPOT_A, urls: ["https://www.navily.com/port/vathi"] }] }],
+    ["foreign_content", (p) => void (landsideFact(p).text = "Die Karte steht auf https://example.org/vathi.")],
     ["data_version", (p) => void (p.files["spots.json"].scope = { type: "subdivision", id: SUBDIVISION_ID, dataVersion: 3 })],
-    ["changes_complete", (p) => void p.files["changes.json"]!.changes.pop()],
   ];
 
   it("has one case per check", () => {
@@ -199,23 +176,6 @@ describe("validatePackage", () => {
     expect(failed(await validate(textSource))).toEqual([]);
   });
 
-  it("highlight_selected counts no excluded or merged spot (ruling M6-P5)", async () => {
-    const excluded = breakPackage(validPackage(), (p) => void (spots(p)[0]!.exclude = { excluded: true, reason: "military", detail: null }));
-    expect(failed(await validate(excluded))).toEqual(["highlight_selected"]);
-  });
-
-  it("highlight_selected: every spotId selects the highlight, and there is one (spec 16)", async () => {
-    const report = await validate(validPackage(), { highlightSelectors: new Map() });
-    expect(failed(report)).toEqual(["highlight_selected"]);
-    expect(findings(report, "highlight_selected")).toEqual([
-      expect.objectContaining({ objectId: HIGHLIGHT, path: "/highlights/0/spotIds/0", message: `${SPOT_A} wählt das Highlight nicht aus` }),
-    ]);
-    const empty = breakPackage(validPackage(), (p) => void (highlights(p)[0]!.spotIds = []));
-    expect(findings(await validate(empty), "highlight_selected")).toEqual([
-      expect.objectContaining({ objectId: HIGHLIGHT, path: "/highlights/0/spotIds", message: "Kein gelieferter Spot wählt das Highlight aus" }),
-    ]);
-  });
-
   it("an excluded spot is no duplicate of a usable one of the same kind (validation review M-8)", async () => {
     const excluded = breakPackage(validPackage(), (p) => {
       spots(p).push({
@@ -223,33 +183,22 @@ describe("validatePackage", () => {
         id: OTHER_SP,
         position: offsetSouth(spots(p)[0]!.position, 100),
         exclude: { excluded: true, reason: "anchoringProhibited", detail: null },
-        highlightIds: [],
-        profileVersion: 1,
       });
-      created(p, "spot", OTHER_SP);
     });
     expect(failed(await validate(excluded))).toEqual([]);
   });
 
   it("a merged spot is no duplicate of its target", async () => {
     const merged = breakPackage(validPackage(), (p) => {
-      spots(p).push({ ...spots(p)[0]!, id: OTHER_SP, position: offsetSouth(spots(p)[0]!.position, 100), mergedInto: SPOT_A, highlightIds: [], profileVersion: 1 });
-      created(p, "spot", OTHER_SP);
+      spots(p).push({ ...spots(p)[0]!, id: OTHER_SP, position: offsetSouth(spots(p)[0]!.position, 100), mergedInto: SPOT_A });
     });
     expect(failed(await validate(merged))).toEqual([]);
-  });
-
-  it("references: a removed entry's id must fit its object type (validation review M-5)", async () => {
-    const report = await validate(
-      breakPackage(validPackage(), (p) => void (p.files["changes.json"]!.changes.find((c) => c.objectId === SPOT_X)!.objectType = "highlight")),
-    );
-    expect(findings(report, "references")).toEqual([expect.objectContaining({ objectId: SPOT_X, message: "Kennung passt nicht zur Objektart highlight" })]);
   });
 
   it("data_version: the previous version plus 1, not just greater (validation review M-4)", async () => {
     const skip = breakPackage(validPackage(), (p) => {
       p.manifest.scope = { ...subdivisionScope(p), dataVersion: 3 };
-      for (const f of [p.files["spots.json"], p.files["highlights.json"], p.files["regions.json"], p.files["weather-points.json"], p.files["changes.json"]!]) {
+      for (const f of [p.files["spots.json"], p.files["regions.json"], p.files["weather-points.json"]]) {
         f.scope = { type: "subdivision", id: SUBDIVISION_ID, dataVersion: 3 };
       }
     });
@@ -267,74 +216,93 @@ describe("validatePackage", () => {
     expect(findings(type, "data_version")).toEqual([expect.objectContaining({ file: "spots.json", path: "/scope/type" })]);
   });
 
-  it("references: a removed object needs not be in the package, any other change entry does", async () => {
-    const report = await validate(
-      breakPackage(validPackage(), (p) => void (p.files["changes.json"]!.changes.find((c) => c.objectId === SPOT_X)!.event = "updated")),
-    );
-    expect(failed(report)).toEqual(["references", "changes_complete"]);
-  });
-
-  it("changes_complete: an unchanged object listed, a wrong version and a missing changes.json fail", async () => {
-    const unchanged = breakPackage(validPackage(), (p) =>
-      void p.files["changes.json"]!.changes.push({
-        objectType: "highlight",
-        objectId: HIGHLIGHT,
-        event: "updated",
-        fields: ["name"],
-        severity: "info",
-        summary: { de: "Geändert: Name." },
-        profileVersion: 1,
-      }),
-    );
-    expect(findings(await validate(unchanged), "changes_complete")).toEqual([expect.objectContaining({ objectId: HIGHLIGHT, message: "Eintrag ohne gestiegene Version" })]);
-    const version = breakPackage(validPackage(), (p) => void (p.files["changes.json"]!.changes[0]!.profileVersion = 3));
-    expect(failed(await validate(version))).toEqual(["changes_complete"]);
-    const missing = breakPackage(validPackage(), (p) => void delete p.files["changes.json"]);
-    expect(findings(await validate(missing), "changes_complete")).toEqual([expect.objectContaining({ message: "changes.json fehlt, obwohl es eine vorige Lieferung gibt" })]);
-  });
-
-  it("the first delivery: data version ≥ 1 without a predecessor and no changes.json", async () => {
+  it("the first delivery: data version 1 without a predecessor", async () => {
     const first = breakPackage(validPackage(), (p) => {
-      delete p.files["changes.json"];
       p.manifest.scope = { ...subdivisionScope(p), dataVersion: 1, previousDataVersion: null };
       p.manifest.coverage = p.manifest.coverage.map((c) => ({ ...c, status: "delivered" as const, dataVersion: 1 }));
-      for (const f of [p.files["spots.json"], p.files["highlights.json"], p.files["regions.json"], p.files["weather-points.json"]]) {
+      for (const f of [p.files["spots.json"], p.files["regions.json"], p.files["weather-points.json"]]) {
         f.scope = { type: "subdivision", id: SUBDIVISION_ID, dataVersion: 1 };
       }
     });
     expect(failed(await validate(first, { previous: null }))).toEqual([]);
-    expect(failed(await validate(validPackage(), { previous: null }))).toEqual(["data_version", "changes_complete"]);
+    expect(failed(await validate(validPackage(), { previous: null }))).toEqual(["data_version"]);
   });
 
-  it("a navily source url is foreign content", async () => {
-    const report = await validate(
-      breakPackage(validPackage(), (p) => void spots(p)[0]!.sources!.push({ url: "https://www.navily.com/port/vathi", kind: "other", observedAt: "2025-01-01" })),
-    );
-    expect(failed(report)).toEqual(["foreign_content"]);
-    expect(findings(report, "foreign_content")).toEqual([
-      { file: "spots.json", objectId: SPOT_A, path: "/spots/0/sources/2/url", message: "Quelle von einer gesperrten Domain" },
-    ]);
+  const anImage = {
+    kind: "photo" as const,
+    slot: "title",
+    file: `images/${SPOT_A}-title.jpg`,
+    width: 1536,
+    height: 1024,
+    alt: { de: "Bucht" },
+    light: "midday" as const,
+    observedAt: null,
+    license: "x",
+    attribution: "x",
+    camera: null,
+  };
+
+  /** Foreign content in each text the package carries: fact statements, landing descriptions and names. */
+  const textFields: Array<[string, (p: DeliveryPackage, text: string) => void, string]> = [
+    ["a fact statement", (p, t) => void (landsideFact(p).text = t), "/spots/0/facts/1/text"],
+    ["a landing description", (p, t) => void (spots(p)[0]!.landingPoints[1] = { kind: "text", description: t }), "/spots/0/landingPoints/1/description"],
+    ["a spot name", (p, t) => void (spots(p)[0]!.name = t), "/spots/0/name"],
+    ["a nearby name", (p, t) => void (spots(p)[0]!.nearby[0]!.name = t), "/spots/0/nearby/0/name"],
+    ["a region name", (p, t) => void (p.files["regions.json"].regions[0]!.name = t), "/regions/0/name"],
+    ["a hazard text", (p, t) => void (spots(p)[0]!.hazards = [{ kind: "rock", text: t }]), "/spots/0/hazards/0/text"],
+    ["a season note", (p, t) => void (spots(p)[0]!.seasonNote = [{ months: [7], text: t }]), "/spots/0/seasonNote/0/text"],
+    ["an exclude detail", (p, t) => void (spots(p)[1]!.exclude = { excluded: true, reason: "military", detail: t }), "/spots/1/exclude/detail"],
+    ["an image alt", (p, t) => void (spots(p)[0]!.images = [{ ...anImage, alt: { de: t } }]), "/spots/0/images/0/alt/de"],
+    ["a region character", (p, t) => void (p.files["regions.json"].regions[0]!.character = { de: t }), "/regions/0/character/de"],
+    ["a weather point name", (p, t) => void (p.files["weather-points.json"].points[0]!.name = t), "/points/0/name"],
+    ["a contact phone", (p, t) => void (spots(p)[1]!.contact = { vhf: null, phone: t, url: null }), "/spots/1/contact/phone"],
+    ["a contact vhf", (p, t) => void (spots(p)[1]!.contact = { vhf: t, phone: null, url: null }), "/spots/1/contact/vhf"],
+  ];
+
+  it.each(textFields)("%s with a URL is foreign content", async (_label, set, path) => {
+    const report = await validate(breakPackage(validPackage(), (p) => set(p, "Mehr unter www.example.org/bucht nachlesen.")));
+    expect(findings(report, "foreign_content")).toEqual([expect.objectContaining({ path, message: "Text enthält einen Link" })]);
   });
 
-  it("forbidden sources block only a delivered object; a trailing-dot host is still forbidden (ruling M6-D-R2, M-1)", async () => {
-    const report = await validate(validPackage(), {
-      forbiddenSources: [
-        { file: "highlights.json", objectId: HIGHLIGHT, urls: ["https://maps.google.com/?q=vathi"] },
-        { file: "spots.json", objectId: OTHER_SP, urls: ["https://www.navily.com/x"] },
-      ],
-    });
-    expect(findings(report, "foreign_content")).toEqual([
-      { file: "highlights.json", objectId: HIGHLIGHT, path: "/highlights/0", message: "Werte aus einer Quelle einer gesperrten Domain (https://maps.google.com/?q=vathi)" },
-    ]);
-    const dot = await validate(
-      breakPackage(validPackage(), (p) => void spots(p)[0]!.sources!.push({ url: "https://navily.com./port/vathi", kind: "other", observedAt: "2025-01-01" })),
-    );
-    expect(findings(dot, "foreign_content")).toEqual([expect.objectContaining({ path: "/spots/0/sources/2/url" })]);
+  it.each(textFields)("%s with a bare domain name is foreign content, not only a forbidden one", async (_label, set, path) => {
+    for (const text of ["Siehe sailing-guide.gr für Details", "Tipp von bucht-blog.com", "Kontakt: skipper@marina-info.eu"]) {
+      const report = await validate(breakPackage(validPackage(), (p) => set(p, text)));
+      expect(findings(report, "foreign_content"), text).toEqual([expect.objectContaining({ path, message: expect.stringMatching(/^Text enthält einen Domainnamen \(.+\)$/) })]);
+    }
   });
 
   it("a bare forbidden domain in a text is foreign content (validation review M-1)", async () => {
-    const report = await validate(breakPackage(validPackage(), (p) => void (spots(p)[0]!.summary = { de: "Laut navily.com/port/vathi gut." })));
-    expect(findings(report, "foreign_content")).toEqual([expect.objectContaining({ path: "/spots/0/summary/de", message: "Text nennt eine gesperrte Domain" })]);
+    const report = await validate(breakPackage(validPackage(), (p) => void (landsideFact(p).text = "Laut navily.com/port/vathi gut.")));
+    expect(findings(report, "foreign_content")).toEqual([expect.objectContaining({ path: "/spots/0/facts/1/text", message: "Text nennt eine gesperrte Domain" })]);
+    const dot = await validate(breakPackage(validPackage(), (p) => void (landsideFact(p).text = "Laut Navily.COM. gut.")));
+    expect(findings(dot, "foreign_content")).toEqual([expect.objectContaining({ message: "Text nennt eine gesperrte Domain" })]);
+  });
+
+  it("the finding names the matched domain; a missing space after a full stop is no domain", async () => {
+    const hit = await validate(breakPackage(validPackage(), (p) => void (landsideFact(p).text = "Mehr dazu: sailing-guide.gr")));
+    expect(findings(hit, "foreign_content")[0]!.message).toBe("Text enthält einen Domainnamen (sailing-guide.gr)");
+    const see = await validate(breakPackage(validPackage(), (p) => void (landsideFact(p).text = "see navily.com")));
+    expect(failed(see)).toEqual(["foreign_content"]);
+    const typo = await validate(breakPackage(validPackage(), (p) => void (landsideFact(p).text = "Der Anker hält gut, die Bucht ist geschützt.Es ist ruhig. Hafen.No problem.")));
+    expect(failed(typo)).toEqual([]);
+  });
+
+  it("contact.url is allowed unless it is of a forbidden domain; the domain TLDs are configured", async () => {
+    const withUrl = (url: string) => breakPackage(validPackage(), (p) => void (spots(p)[1]!.contact = { vhf: "71", phone: "+30 22980 12345", url }));
+    expect(failed(await validate(withUrl("https://www.marina-nisida.gr/")))).toEqual([]);
+    const bad = await validate(withUrl("https://www.navily.com/port/vathi"));
+    expect(findings(bad, "foreign_content")).toEqual([expect.objectContaining({ objectId: SPOT_M, path: "/spots/1/contact/url", message: "Kontaktadresse von einer gesperrten Domain" })]);
+    expect(cfg.validation.domainTlds).toEqual(expect.arrayContaining(["com", "gr", "de"]));
+  });
+
+  it("names and sentences that merely contain dots are no foreign content", async () => {
+    const report = await validate(
+      breakPackage(validPackage(), (p) => {
+        spots(p)[0]!.name = "Ag.Nikolaos Bay";
+        landsideFact(p).text = "Die Mole ist ca. 3.5 m tief, Wassertiefe 2.4 m, z. B. bei Südwind.";
+      }),
+    );
+    expect(failed(report)).toEqual([]);
   });
 
   it("a Google place id that is no plain id fails the contract schema too (validation review M-7)", async () => {
@@ -342,43 +310,71 @@ describe("validatePackage", () => {
     expect(failed(report)).toEqual(["json_schema", "foreign_content"]);
   });
 
-  it("a link in a text field is foreign content", async () => {
-    const report = await validate(breakPackage(validPackage(), (p) => void (spots(p)[0]!.summary = { de: "Mehr unter www.navily.com nachlesen." })));
-    expect(findings(report, "foreign_content")).toEqual([expect.objectContaining({ path: "/spots/0/summary/de", message: "Text enthält einen Link" })]);
-  });
-
   /** `n` words no other text has, each with an accent: a uuid salt in letters plus a running suffix. */
   function saltedWords(n: number): string[] {
     const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
     return Array.from({ length: n }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}é`);
   }
+  /** The source documents of the package per test transaction (the build loads them with `loadCopyIndex`). */
+  const sourcesOf = new WeakMap<Db, string[]>();
   async function archived(tx: Db, text: string): Promise<void> {
-    const v = await insertTestVersion(tx, [text]);
-    await tx.insert(textShingles).values(shingleHashes(text, 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
+    sourcesOf.set(tx, [...(sourcesOf.get(tx) ?? []), text]);
   }
-  const fromArchive = (tx: Db) => async (text: string) => (await findArchiveCopies(tx, text)).longestRun;
+  const fromArchive = (tx: Db) => async (text: string) => copyIndex(sourcesOf.get(tx) ?? []).longestRun(text);
 
-  it("a summary copying 16 words of a chunk with different accents is a violation", async () => {
+  it("a fact statement copying 16 words of an archived document, with different accents, is a violation (review focus)", async () => {
     await withRollback(async (tx) => {
       const words = saltedWords(30);
       await archived(tx, words.join(" "));
       const copied = words.slice(4, 20).join(" ").toUpperCase().normalize("NFD").replace(/\p{M}/gu, "");
       const report = await validate(
-        breakPackage(validPackage(), (p) => void (spots(p)[0]!.summary = { de: `Die Bucht: ${copied}.` })),
+        breakPackage(validPackage(), (p) => void (landsideFact(p).text = `Die Bucht: ${copied}.`)),
         { findCopies: fromArchive(tx) },
       );
       expect(failed(report)).toEqual(["verbatim_text"]);
       expect(findings(report, "verbatim_text")).toEqual([
-        expect.objectContaining({ file: "spots.json", objectId: SPOT_A, path: "/spots/0/summary/de" }),
+        expect.objectContaining({ file: "spots.json", objectId: SPOT_A, path: "/spots/0/facts/1/text" }),
       ]);
     });
+  });
+
+  it("a landing description copying 16 words of an archived document is a violation", async () => {
+    await withRollback(async (tx) => {
+      const words = saltedWords(30);
+      await archived(tx, words.join(" "));
+      const report = await validate(
+        breakPackage(validPackage(), (p) => void (spots(p)[0]!.landingPoints[1] = { kind: "text", description: words.slice(2, 18).join(" ") })),
+        { findCopies: fromArchive(tx) },
+      );
+      expect(failed(report)).toEqual(["verbatim_text"]);
+      expect(findings(report, "verbatim_text")).toEqual([expect.objectContaining({ path: "/spots/0/landingPoints/1/description" })]);
+    });
+  });
+
+  it("dropCopiedTexts removes a copied or foreign fact and landing description with a warning, nothing else (F3)", async () => {
+    const pkg = validPackage();
+    const a = spots(pkg)[0]!;
+    a.landingPoints = [...a.landingPoints, { kind: "text", description: "COPIED landing text" }, { kind: "text", description: "Visit www.example.org for the landing" }];
+    a.facts = a.facts.map((f) => (f.id === FACT_LANDSIDE ? { ...f, text: "COPIED fact text" } : f));
+    const before = { facts: a.facts.length, landing: a.landingPoints.length, name: a.name };
+    const draft = { body: a, warnings: [] as Array<{ code: string }> };
+    await dropCopiedTexts([draft as never], { findCopies: async (text) => (text.startsWith("COPIED") ? 16 : 0), cfg });
+    expect(draft.body.facts.map((f) => f.id)).not.toContain(FACT_LANDSIDE);
+    expect(draft.body.facts).toHaveLength(before.facts - 1);
+    expect(draft.body.landingPoints).toHaveLength(before.landing - 2);
+    expect(draft.body.name).toBe(before.name);
+    expect(draft.warnings.map((w) => w.code).sort()).toEqual(["fact_dropped", "landing_description_dropped", "landing_description_dropped"]);
+    // an 15-word run stays (the limit is more than 15 words)
+    const kept = { body: validPackage().files["spots.json"].spots[0]!, warnings: [] as never[] };
+    await dropCopiedTexts([kept], { findCopies: async () => 15, cfg });
+    expect(kept.warnings).toEqual([]);
   });
 
   it("an exact 15-word copy is no violation: Teil B forbids more than 15 words (validation review M-3)", async () => {
     await withRollback(async (tx) => {
       const words = saltedWords(30);
       await archived(tx, words.join(" "));
-      const fifteen = (p: DeliveryPackage) => void (spots(p)[0]!.summary = { de: `Die Bucht: ${words.slice(3, 18).join(" ")}.` });
+      const fifteen = (p: DeliveryPackage) => void (landsideFact(p).text = `Die Bucht: ${words.slice(3, 18).join(" ")}.`);
       expect(failed(await validate(breakPackage(validPackage(), fifteen), { findCopies: fromArchive(tx) }))).toEqual([]);
     });
   });
@@ -415,8 +411,8 @@ describe("validatePackage", () => {
       expect(sentence.split(" ")).toHaveLength(15);
       const report = await validate(
         breakPackage(validPackage(), (p) => {
-          spots(p)[0]!.summary = { de: sentence };
-          highlights(p)[0]!.summary = { de: own };
+          landsideFact(p).text = sentence;
+          spots(p)[0]!.facts[0]!.text = own;
         }),
         { findCopies: fromArchive(tx) },
       );
@@ -425,7 +421,7 @@ describe("validatePackage", () => {
   });
 
   it("a check the package is too broken for is a finding; a failing copy check is rethrown", async () => {
-    const broken = breakPackage(validPackage(), (p) => void ((p.files["highlights.json"] as unknown as Record<string, unknown>).highlights = null));
+    const broken = breakPackage(validPackage(), (p) => void ((p.files["spots.json"].spots[0] as unknown as Record<string, unknown>).facts = null));
     const report = await validate(broken);
     expect(report.ok).toBe(false);
     expect(report.checks.map((c) => c.name)).toEqual([...CHECK_NAMES]);
@@ -434,14 +430,11 @@ describe("validatePackage", () => {
     await expect(validate(validPackage(), { findCopies: async () => Promise.reject(down) })).rejects.toBe(down);
   });
 
-  it("passes the build warnings through and warns about a missing summary (ruling M6-P9)", async () => {
-    const warnings = buildWarnings({ omittedSpots: [{ id: OTHER_SP, reason: "no_profile" }] });
-    const report = await validate(breakPackage(validPackage(), (p) => void delete spots(p)[1]!.summary), { warnings });
+  it("passes the build warnings through", async () => {
+    const warnings = buildWarnings({ omittedSpots: [{ id: OTHER_SP, reason: "no_state" }] });
+    const report = await validate(validPackage(), { warnings });
     expect(report.ok).toBe(true);
-    expect(report.warnings).toEqual([
-      { file: "spots.json", objectId: OTHER_SP, path: null, message: "Nicht geliefert: kein Profil" },
-      { file: "spots.json", objectId: spots(validPackage())[1]!.id, path: "/spots/1/summary", message: "Zusammenfassung fehlt" },
-    ]);
+    expect(report.warnings).toEqual([{ file: "spots.json", objectId: OTHER_SP, path: null, message: "Nicht geliefert: kein Stand" }]);
   });
 });
 
@@ -450,40 +443,33 @@ describe("buildWarnings", () => {
     const geoObjectId = "01a15602-0000-7000-8000-000000000001";
     const out = buildWarnings({
       spots: [
-        { id: SPOT_A, warnings: [{ code: "missing_provenance", field: "depth" }, { code: "missing_provenance", field: "shelter" }] },
+        { id: SPOT_A, warnings: [{ code: "nearby_without_id", geoObjectId: "g1" }, { code: "fact_without_subject", factId: "f1" }, { code: "safety_fact_without_subject", factId: "f2" }] },
         { id: OTHER_SP, warnings: [{ code: "fallback_name" }] },
       ],
       omittedSpots: [
-        { id: SPOT_X, reason: "no_name" },
-        { id: SPOT_X, reason: "shelter_incomplete" },
-      ],
-      droppedHighlights: [
-        { id: OTHER_HL, reason: "duplicate", into: HIGHLIGHT },
-        { id: OTHER_HL, reason: "not_existing" },
+        { id: OTHER_SP, reason: "no_name" },
+        { id: OTHER_SP, reason: "incomplete_core" },
       ],
       droppedRegions: [{ id: "rg_01J9ZD00000000000000000002", reason: "no_name" }],
       droppedWeatherPoints: [{ geoObjectId, kind: "cape", reason: "no_water" }],
     });
     expect(out.map((f) => [f.file, f.objectId, f.message])).toEqual([
-      ["spots.json", SPOT_A, "Tiefe ohne Herkunft, nicht geliefert"],
-      ["spots.json", SPOT_A, "Schutzwerte ohne Herkunft geliefert (ausgeschlossener Spot)"],
+      ["spots.json", SPOT_A, "Ding an Land ohne öffentliche ID, nicht geliefert"],
+      ["spots.json", SPOT_A, "Landfakt ohne Bezugsnamen, nicht geliefert"],
+      ["spots.json", SPOT_A, "Sicherheitsfakt ohne Bezugsnamen, nicht geliefert: Sicherheitshinweis geht verloren"],
       ["spots.json", OTHER_SP, "Ausgeschlossener Spot ohne gültigen Namen, mit Ersatznamen geliefert"],
-      ["spots.json", SPOT_X, "Nicht geliefert: kein gültiger Name"],
-      ["spots.json", SPOT_X, "Nicht geliefert: Schutzwerte unvollständig oder ohne Herkunft"],
-      ["highlights.json", OTHER_HL, `Nicht geliefert: Dublette von ${HIGHLIGHT}`],
-      ["highlights.json", OTHER_HL, "Nicht geliefert: existiert laut Profil nicht mehr"],
+      ["spots.json", OTHER_SP, "Nicht geliefert: kein gültiger Name"],
+      ["spots.json", OTHER_SP, "Nicht geliefert: Schutz oder Ankerposition fehlt im Stand"],
       ["regions.json", "rg_01J9ZD00000000000000000002", "Nicht geliefert: kein gültiger Name"],
       ["weather-points.json", expect.stringMatching(/^wp_/), "Nicht geliefert: kein offenes Wasser in der Region"],
     ]);
   });
 
-  it("text-only safety values and spots in a military area of the package become warnings (final review I-3, M-7)", () => {
+  it("spots in a military area of the package become warnings (M-7)", () => {
     const out = buildWarnings({
-      undeliveredSafety: [{ file: "regions.json", id: "rg_01J9ZD00000000000000000002", message: "Sperrgebiet laut Text nicht geliefert: Schießgebiet" }],
       militaryAreaSpots: [SPOT_A],
     });
     expect(out.map((f) => [f.file, f.objectId, f.message])).toEqual([
-      ["regions.json", "rg_01J9ZD00000000000000000002", "Sperrgebiet laut Text nicht geliefert: Schießgebiet"],
       ["spots.json", SPOT_A, "Liegt in einem militärischen Sperrgebiet des Pakets (coast.geojson), ist aber nicht ausgeschlossen: Profil oder Status prüfen"],
     ]);
   });

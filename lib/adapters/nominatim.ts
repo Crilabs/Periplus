@@ -2,7 +2,6 @@ import { z } from "zod";
 import type { ExtractionConfig } from "@/lib/config";
 import { tileBbox } from "@/lib/domain/tiles";
 import { httpCall, RetryableHttpError, type CallContext, type HttpCallDeps, type Transport } from "./http";
-import { assertNotSimulated } from "./simulation";
 
 /*
  * Nominatim (OSM geocoder), used only as a radius search around a tile (spec 06, new names). Usage policy: at most one
@@ -84,7 +83,6 @@ export async function searchNominatim(
   cfg: ExtractionConfig["geocode"],
   deps: HttpCallDeps = {},
 ): Promise<NominatimHit[]> {
-  assertNotSimulated("nominatim", "search");
   const url = nominatimUrl(q, cfg.endpoint);
   const res = await httpCall(
     transport,

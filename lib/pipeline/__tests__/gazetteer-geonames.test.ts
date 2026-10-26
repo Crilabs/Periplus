@@ -239,12 +239,6 @@ describe("importGeonames", () => {
       const scope = or(inArray(geoObjects.geonamesId, gids), inArray(geoObjects.id, Object.values(ids)));
       const objects = await db.select({ id: geoObjects.id }).from(geoObjects).where(scope);
       const objectIds = objects.map((o) => o.id);
-      const historyCount = async (table: "geo_objects_history" | "geo_names_history") => {
-        const { rows } = await db.execute<{ n: number }>(
-          sql`select count(*)::int as n from ${sql.identifier(table)} where row_id in ${objectIds}`,
-        );
-        return rows[0]!.n;
-      };
       const snapshot = async () => ({
         objects: await db
           .select({ id: geoObjects.id, geonamesId: geoObjects.geonamesId })
@@ -252,7 +246,6 @@ describe("importGeonames", () => {
           .where(scope)
           .orderBy(geoObjects.id),
         tasks: (await pairTasksOf(db, objectIds)).length,
-        objectHistory: await historyCount("geo_objects_history"),
         names: await db
           .select({ id: geoNames.id, validTo: geoNames.validTo, isPreferred: geoNames.isPreferred })
           .from(geoNames)

@@ -34,9 +34,8 @@ async function area(db: Db, key: string): Promise<AreaRow | undefined> {
 /** Counts that must not move on an idempotent re-import. */
 async function counts(db: Db, ids: string[]) {
   const list = sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `);
-  const { rows } = await db.execute<{ history: number; names: number; evidence: number; members: number; links: number }>(sql`
-    select (select count(*)::int from geo_objects_history where row_id in (${list})) as history,
-           (select count(*)::int from geo_names where geo_object_id in (${list})) as names,
+  const { rows } = await db.execute<{ names: number; evidence: number; members: number; links: number }>(sql`
+    select (select count(*)::int from geo_names where geo_object_id in (${list})) as names,
            (select count(*)::int from area_evidence where area_id in (${list})) as evidence,
            (select count(*)::int from area_members where area_id in (${list})) as members,
            (select count(*)::int from tile_geo_objects where geo_object_id in (${list})) as links`);
@@ -145,8 +144,6 @@ describe("importAreaFile", () => {
       expect(after.names).toBe(before.names + 1);
       expect(after.evidence).toBe(before.evidence + 1);
       expect(after.members).toBe(before.members - 1);
-      // Only the velani polygon changed (one member less); the gulf polygon stays.
-      expect(after.history).toBe(before.history + 1);
       expect((await members(db, velani.id)).map((m) => m.geo_object_id)).not.toContain(scene.objects.myrtidi);
 
       const ended = (await area(db, "vrachos"))!;
@@ -268,7 +265,6 @@ describe("importAreaFile", () => {
       await importAreaFile(db, sceneFile(), cfg, day);
       const velani = (await area(db, "velani-coast"))!;
       const membersBefore = await members(db, velani.id);
-      const before = await counts(db, [velani.id]);
       const file = sceneFile();
       const v = file.areas.find((a) => a.key === "velani-coast")!;
       v.members = [{ name: "Velani", type: "harbour" }];
@@ -277,7 +273,6 @@ describe("importAreaFile", () => {
       expect(report.updated).toEqual(["velani-coast"]);
       expect(report.waiting).toEqual([]);
       expect(await members(db, velani.id)).toEqual(membersBefore);
-      expect((await counts(db, [velani.id])).history).toBe(before.history);
       const after = (await area(db, "velani-coast"))!;
       expect(after.tags).toMatchObject({
         polygonOrigin: "computed",

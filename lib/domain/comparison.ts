@@ -3,7 +3,7 @@ import type { Db } from "@/lib/db/client";
 import { comparisonSet, geoObjects, places, type PlaceKind } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { requireSubdivision, subdivisionByKey } from "@/lib/domain/subdivisions/store";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 
 export type ComparisonCandidate = {
   placeId: string;

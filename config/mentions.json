@@ -3,12 +3,8 @@
   "fuzzyMinChars": 5,
   "sureSimilarity": 0.75,
   "uncertainSimilarity": 0.6,
-  "maxNgramWords": 4,
   "maxCandidates": 6,
-  "disambiguationContextChars": 4000,
   "neighbourRing": 1,
-  "versionsPerJob": 50,
-  "prepassTypes": ["area", "gulf", "archipelago", "island", "country", "admin_region", "sea"],
   "stopNames": ["agios", "agia", "agioi", "ag", "port", "porto", "marina", "kap", "cape", "bay", "nisos", "nisi", "limani"],
   "commonWords": {
     "el": [
@@ -17,13 +13,5 @@
     ],
     "de": ["strand", "hafen", "bucht", "insel", "kap", "felsen"],
     "en": ["bay", "beach", "harbour", "harbor", "cape", "rock", "island"]
-  },
-  "nameHintStopWords": [
-    "in", "im", "am", "an", "auf", "bei", "vor", "nach", "von", "vom", "zur", "zum", "aus", "die", "der", "das", "den", "dem",
-    "ein", "eine", "einer", "wir", "dann", "danach", "hier", "dort", "unsere", "unser",
-    "the", "a", "at", "on", "to", "from", "near", "off", "of", "we", "our", "then", "this", "that", "next",
-    "norden", "suden", "osten", "westen", "nordosten", "nordwesten", "sudosten", "sudwesten",
-    "north", "south", "east", "west", "northern", "southern", "eastern", "western",
-    "ostseite", "westseite", "nordseite", "sudseite", "kuste", "strand", "dorf", "ort", "stadt", "insel", "tag", "abend", "morgen", "nacht"
-  ]
+  }
 }

@@ -7,7 +7,7 @@ import { importLandPolygons, mediterraneanBbox } from "../lib/domain/gazetteer/l
 
 const USAGE = "usage: import-land-polygons.ts --shp <path/land_polygons.shp> --mediterranean [--version <YYYY-MM-DD>]";
 
-/** `--mediterranean` is a flag without value: land for the box around all configured Mediterranean seas. */
+/** `--mediterranean` is a flag without value: land for the configured Mediterranean box (`subdivisions.mediterranean.bbox`). */
 export function parseArgs(argv: string[]): { shp: string; mediterranean: true; version: string } {
   const values = new Map<string, string>();
   let mediterranean = false;
@@ -52,7 +52,7 @@ async function main(): Promise<void> {
   if (!url) throw new Error("DATABASE_URL is not set");
   const { db, close } = createDb(url);
   try {
-    const bbox = await mediterraneanBbox(db, getConfig().gazetteer.landBufferKm);
+    const bbox = mediterraneanBbox(getConfig().gazetteer.landBufferKm);
     const r = await importLandPolygons(db, readShapefile(shp), bbox, version);
     process.stdout.write(`inserted ${r.inserted}, replaced ${r.replaced} (version ${version})\n`);
   } finally {

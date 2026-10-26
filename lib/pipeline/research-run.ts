@@ -3,7 +3,7 @@ import type { PgBoss } from "pg-boss";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, places, subdivisions } from "@/lib/db/schema";
-import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
+import { activeRulesVersion } from "@/lib/domain/rules/active";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { RESEARCH_ASSESS_STAGE } from "./research/assess";
@@ -97,7 +97,7 @@ export async function startResearchRun(
     kind: "stage",
     scope: "subdivisionKey" in input ? { type: "subdivision", id: input.subdivisionKey } : { type: "system", id: RESEARCH_RUN_SCOPE },
     // the rules version of the berth states, frozen so every berth of the run is decided by one version
-    params: { ...input, rulesVersion: await activeRulesVersion(db) },
+    params: { ...input, rulesVersion: activeRulesVersion() },
     stages: [...RESEARCH_STAGES],
     triggeredBy,
   });

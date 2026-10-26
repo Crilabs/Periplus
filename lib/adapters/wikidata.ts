@@ -18,11 +18,16 @@ const LANGUAGE = /^[a-z]{2,3}(-[a-z0-9]+)*$/i;
 
 /**
  * SPARQL for items with a coordinate in the box whose class is (a subclass of) one of `classes`,
- * with labels and aliases in `languages` (one row per name) and the OSM relation id (P402).
+ * with labels and aliases in `languages` (one row per name) and the OSM relation id (P402). `minSitelinks` keeps only
+ * items with at least that many sitelinks (`wikibase:sitelinks`; the far ring of `gazetteer.land`).
  */
-export function buildWikidataQuery(bbox: Bbox, classes: string[], languages: string[]): string {
+export function buildWikidataQuery(bbox: Bbox, classes: string[], languages: string[], minSitelinks?: number): string {
   for (const c of classes) if (!QID.test(c)) throw new Error(`invalid Wikidata class ${c}`);
   for (const l of languages) if (!LANGUAGE.test(l)) throw new Error(`invalid language ${l}`);
+  if (minSitelinks !== undefined && !(Number.isInteger(minSitelinks) && minSitelinks >= 0)) {
+    throw new Error(`invalid minSitelinks ${minSitelinks}`);
+  }
+  const sitelinks = minSitelinks === undefined ? "" : `\n  ?item wikibase:sitelinks ?sitelinks .\n  FILTER(?sitelinks >= ${minSitelinks})`;
   const [west, south, east, north] = bbox;
   const langs = languages.map((l) => `"${l}"`).join(", ");
   return `SELECT ?item ?class ?coord ?name ?lang ?isAlias ?osmRel ?website WHERE {
@@ -32,7 +37,7 @@ export function buildWikidataQuery(bbox: Bbox, classes: string[], languages: str
     bd:serviceParam wikibase:cornerNorthEast "Point(${east} ${north})"^^geo:wktLiteral .
   }
   VALUES ?class { ${classes.map((c) => `wd:${c}`).join(" ")} }
-  ?item wdt:P31/wdt:P279* ?class .
+  ?item wdt:P31/wdt:P279* ?class .${sitelinks}
   OPTIONAL {
     { ?item rdfs:label ?name . BIND(false AS ?isAlias) }
     UNION

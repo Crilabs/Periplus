@@ -112,8 +112,8 @@ function Legend() {
 export type PositionNotice = { status: "moved" | "moved_no_run" | "too_far"; runId?: string };
 
 const POSITION_NOTICES = {
-  moved: { tone: "ok", text: "Position korrigiert. Geometrie und Profil werden neu berechnet." },
-  moved_no_run: { tone: "warn", text: "Position korrigiert, aber kein Lauf gestartet: „Profil neu berechnen“ in der Übersicht." },
+  moved: { tone: "ok", text: "Position korrigiert. Die Geometrie wird neu berechnet." },
+  moved_no_run: { tone: "warn", text: "Position korrigiert, aber der Geometrie-Lauf konnte nicht gestartet werden. Bitte im Reiter „Geometrie“ erneut starten." },
   too_far: { tone: "danger", text: "Nicht übernommen: Die neue Position liegt zu weit vom bisherigen Ort entfernt." },
 } as const;
 
@@ -178,7 +178,7 @@ export function GeometryTab({
                   trigger="Position korrigieren …"
                   triggerSize="sm"
                   title="Position korrigieren"
-                  description="Setzt den Punkt des Orts, etwa wenn er an Land liegt. Danach werden Geometrie und Profil neu berechnet."
+                  description="Setzt den Punkt des Orts, etwa wenn er an Land liegt. Danach wird die Geometrie neu berechnet."
                 >
                   <form action={setPlacePositionAction} className="grid gap-4">
                     <input type="hidden" name="placeId" value={placeId} />

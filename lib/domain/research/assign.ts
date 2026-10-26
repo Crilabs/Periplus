@@ -5,7 +5,7 @@ import { getConfig, type AppConfig, type NameAffixesConfig } from "@/lib/config"
 import type { Db } from "@/lib/db/client";
 import { documents, documentVersions, geoNames, geoObjects, pageAssessments, placeWebsites, places, researchHits, researchRouteStops, researchUnits } from "@/lib/db/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
-import { stripAffix } from "@/lib/domain/mentions/affixes";
+import { stripAffix } from "@/lib/domain/research/util/affixes";
 import { activeAssessor } from "./assessment";
 import { provisionalNameIds } from "./provisional-names";
 import { namesOccur } from "./unit-text";

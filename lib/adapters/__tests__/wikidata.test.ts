@@ -42,6 +42,14 @@ describe("buildWikidataQuery", () => {
   it("rejects a malformed class id", () => {
     expect(() => buildWikidataQuery([23, 37, 24, 38], ["Q1 } DELETE"], ["de"])).toThrow();
   });
+
+  it("filters by sitelinks only when minSitelinks is given", () => {
+    const q = buildWikidataQuery([23, 37, 24, 38], ["Q44613"], ["en"], 5);
+    expect(q).toContain("?item wikibase:sitelinks ?sitelinks .");
+    expect(q).toContain("FILTER(?sitelinks >= 5)");
+    expect(buildWikidataQuery([23, 37, 24, 38], ["Q44613"], ["en"])).not.toContain("wikibase:sitelinks");
+    expect(() => buildWikidataQuery([23, 37, 24, 38], ["Q44613"], ["en"], 1.5)).toThrow();
+  });
 });
 
 describe("wikidataQuery", () => {

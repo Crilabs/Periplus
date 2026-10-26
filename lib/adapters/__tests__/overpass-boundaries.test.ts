@@ -3,7 +3,7 @@ import { testDb } from "@/test/db";
 import { loadConfig } from "@/lib/config";
 import { RetryableHttpError, makeResponse, type Transport } from "@/lib/adapters/http";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
-import { buildBoundaryQuery, buildRelationQuery, overpassQuery } from "@/lib/adapters/overpass";
+import { buildBoundaryQueries, buildBoundaryQuery, buildRelationQuery, overpassQuery } from "@/lib/adapters/overpass";
 
 const db = testDb();
 const config = loadConfig();
@@ -38,15 +38,34 @@ describe("buildRelationQuery", () => {
   });
 });
 
+describe("buildBoundaryQueries", () => {
+  it("the country relation and one query per level, each a part of its own (B15)", () => {
+    const parts = buildBoundaryQueries("GR", [5, 6], 180);
+    expect(parts.map((p) => p.part)).toEqual(["country", "level-5", "level-6"]);
+    expect(parts[0]!.ql).toBe(buildBoundaryQuery("GR", [], 180));
+    expect(parts[1]!.ql).toContain('area["ISO3166-1"="GR"][admin_level=2]->.c;');
+    expect(parts[1]!.ql).toContain("relation[boundary=administrative][admin_level=5](area.c);");
+    expect(parts[1]!.ql).not.toContain("admin_level=6");
+    expect(parts[2]!.ql).toContain("relation[boundary=administrative][admin_level=6](area.c);");
+    expect(parts.every((p) => p.ql.startsWith("[out:json][timeout:180];") && p.ql.trimEnd().endsWith("out geom;"))).toBe(true);
+  });
+
+  it("without levels only the country relation", () => {
+    expect(buildBoundaryQueries("MT", [], 180)).toEqual([{ part: "country", ql: buildBoundaryQuery("MT", [], 180) }]);
+  });
+});
+
 describe("recorded boundary fixtures", () => {
-  it("HR: 21 level-4 counties with ISO3166-2 tags plus the country relation", async () => {
-    const ql = buildBoundaryQuery("HR", [4], config.gazetteer.overpass.timeoutSeconds);
-    const { elements } = await overpassQuery(fixtureTransport(), ql, ctx, cfg);
+  it("HR: 21 level-4 counties with ISO3166-2 tags, and the country relation as its own part", async () => {
+    const [country, level4] = buildBoundaryQueries("HR", [4], config.gazetteer.overpass.timeoutSeconds);
+    const { elements } = await overpassQuery(fixtureTransport(), level4!.ql, ctx, cfg);
     const counties = elements.filter((e) => e.type === "relation" && e.tags?.admin_level === "4" && e.tags["ISO3166-2"]?.startsWith("HR-"));
     expect(counties).toHaveLength(21);
     expect(counties.map((e) => e.tags!["ISO3166-2"])).toContain("HR-17");
-    expect(elements.find((e) => e.tags?.admin_level === "2")?.tags?.name).toBe("Hrvatska");
     expect(counties.every((e) => e.members?.some((m) => m.geometry?.length))).toBe(true);
+    const own = await overpassQuery(fixtureTransport(), country!.ql, ctx, cfg);
+    expect(own.elements).toHaveLength(1);
+    expect(own.elements[0]!.tags?.name).toBe("Hrvatska");
   });
 
   it("MT: the country relation", async () => {

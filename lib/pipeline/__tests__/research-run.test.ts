@@ -22,7 +22,7 @@ import { HANDLERS } from "@/lib/jobs/registry";
 import { QUEUES } from "@/lib/jobs/queues";
 import { STAGES } from "@/lib/jobs/stages";
 import { pollBatch } from "@/lib/pipeline/batches";
-import type { FetchUrlDeps } from "@/lib/pipeline/fetch/url";
+import type { FetchUrlDeps } from "@/lib/pipeline/fetch/page";
 import { RESEARCH_ASSESS_STAGE, assessPages } from "@/lib/pipeline/research/assess";
 import { RESEARCH_CONFIRM_STAGE } from "@/lib/pipeline/research/confirm";
 import { RESEARCH_EXTRACT_STAGE } from "@/lib/pipeline/research/extract";

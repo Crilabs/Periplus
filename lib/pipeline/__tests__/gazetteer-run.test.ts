@@ -33,20 +33,22 @@ const PERDIKA = "node/1854238899";
  * becomes its own settlement with a pair task in run 1 (instead of only in run 2).
  */
 // Valid objects; Wikidata and GeoNames objects merged into their OSM counterpart by the system (autoPairDecision) count once.
+// The skeleton only (N7 Task 4): no OSM sea (was 1), no OSM peninsula as coast section (was 3) and no POI (was 396; the
+// stage around the candidates loads them). The Overpass and Wikidata fixtures were cut offline to what the skeleton
+// queries return (same recording, elements and rows of the dropped tags and classes removed, new query hash); every
+// other count is unchanged.
 const EXPECTED_BY_TYPE = {
-  sea: 1,
   gulf: 1,
   island: 11,
   islet: 14,
-  coast_section: 3,
   cape: 38,
   strait: 5,
-  bay: 37,
+  // B9: 3 Wikidata items that are a harbour and a bay are harbours without OSM counterpart, no longer bays (37 → 34);
+  // the GeoNames entries "Ormos Valariou" and "Ormos Taktikoupoleos" link to the Wikidata bays "Valariou Bay" and
+  // "Taktikoupoleos Bay" once bay names compare without generic words (34 → 32).
+  bay: 32,
   harbour: 14,
   settlement: 79,
-  // The Overpass fixture was re-keyed offline for the N4a categories (same response, new query hash); a future
-  // `fixtures:record` will change this POI count.
-  poi: 396, // 387 before plan N4a added bakery, transport and landing; 424 before spec 15 A dropped fuel, pharmacy, atm, drinking water, bakery, butcher and scuba shops
 };
 
 type LandFeature = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
@@ -60,7 +62,7 @@ async function* landFixture(): AsyncGenerator<LandFeature> {
 async function importLand(db: Db): Promise<void> {
   const box = bufferBbox(AEGINA_WEST_BOX, getConfig().gazetteer.landBufferKm);
   await importLandPolygons(db, landFixture(), box, "fixture");
-  // IHO sea over the whole box: the POI sea-distance filter keeps every recorded POI.
+  // IHO sea over the whole box, as the gazetteer.seas stage leaves it: the hierarchy stage assigns it as sea_id.
   const [w, s, e, n] = bufferBbox(AEGINA_WEST_BOX, 1);
   await db.insert(geoObjects).values({
     type: "sea",

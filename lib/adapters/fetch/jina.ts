@@ -1,7 +1,6 @@
 import type { FetchConfig } from "@/lib/config";
 import { getEnv } from "@/lib/env";
 import { httpCall, RetryableHttpError, type HttpResponse, type Transport } from "../http";
-import { assertNotSimulated } from "../simulation";
 import { BlockedUrlError, isPublicUrlLiteral } from "./ssrf";
 import { serviceCall, TargetHttpError, type Converter } from "./types";
 
@@ -39,7 +38,6 @@ export function createJinaConverter(transport: Transport, cfg: FetchConfig["jina
   return {
     name: "jina",
     async convert(input, ctx) {
-      assertNotSimulated("jina", "convert");
       const started = performance.now();
       if (!isPublicUrlLiteral(input.url)) throw new BlockedUrlError(input.url);
       const key = getEnv().JINA_API_KEY;

@@ -24,7 +24,7 @@ export function invalidDaysMessage(): string {
 /** File name → API URL, pinned to the package `key`. */
 export function radiusLinks(row: RadiusPackageRow): Record<string, string> {
   const query = `marina=${encodeURIComponent(row.homeMarinaPublicId)}&days=${row.days}&key=${row.key}`;
-  return Object.fromEntries(Object.keys(row.fileHashes).sort().map((f) => [f, `/api/v3/radius/package/${f}?${query}`]));
+  return Object.fromEntries(Object.keys(row.fileHashes).sort().map((f) => [f, `/api/v4/radius/package/${f}?${query}`]));
 }
 
 export async function radiusManifest(archive: Archive, row: RadiusPackageRow): Promise<Manifest & { links: Record<string, string> }> {

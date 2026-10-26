@@ -8,7 +8,6 @@ import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { bufferBbox } from "@/lib/domain/gazetteer/land";
 import { findMatch, openPairTask, resolveMergedByExternalId, typeGroup } from "@/lib/domain/gazetteer/merge";
 import { addNames, type NameDraft } from "@/lib/domain/gazetteer/names";
-import { assertSeasPresent, nearSea } from "@/lib/domain/gazetteer/sea-distance";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
 
@@ -17,18 +16,42 @@ export const WIKIDATA_STAGE = "gazetteer.wikidata";
 let logger: ReturnType<typeof createLogger> | undefined;
 const getLog = () => (logger ??= createLogger("gazetteer.wikidata"));
 
-/** Types a Wikidata item may create without OSM counterpart; OSM is more complete for the others. */
-const CREATE_WITHOUT_MATCH = new Set<GeoObjectType>(["poi", "island", "islet", "cape", "bay"]);
+/**
+ * Types a Wikidata item of the skeleton may create without OSM counterpart; OSM is more complete for the others. No
+ * `poi`: the skeleton has no POI classes (N7 4.4, B8); the stage around the candidates passes its own set.
+ */
+const CREATE_WITHOUT_MATCH = new Set<GeoObjectType>(["island", "islet", "cape", "bay"]);
+
+export type WikidataImportResult = { linked: number; created: number; uncertain: number; names: number; skipped: number };
 
 type Classified = { type: GeoObjectType; category?: PoiCategory; wikidataClass?: string };
 
-/** Type (and POI category) of the first class in config order that the item has. */
+/**
+ * Types that win when an item has classes of several types, in this order; every other type after them (B9: a
+ * Wikidata port is often also a bay and would otherwise become one more anchorage candidate). Type logic, not a
+ * threshold: it stays in code.
+ */
+const TYPE_PRECEDENCE: GeoObjectType[] = ["harbour", "bay"];
+
+function precedence(type: GeoObjectType): number {
+  const i = TYPE_PRECEDENCE.indexOf(type);
+  return i === -1 ? TYPE_PRECEDENCE.length : i;
+}
+
+/**
+ * Type (and POI category) of the item's class whose type comes first in `TYPE_PRECEDENCE` (`harbour` before `bay`
+ * before all others); among equals the first in config order.
+ */
 function classify(
   item: WikidataItem,
   classes: Record<string, GeoObjectType>,
   categories: Record<string, PoiCategory>,
 ): Classified | null {
-  const cls = Object.keys(classes).find((c) => item.classes.includes(c));
+  let cls: string | undefined;
+  for (const c of Object.keys(classes)) {
+    if (!item.classes.includes(c)) continue;
+    if (cls === undefined || precedence(classes[c]!) < precedence(classes[cls]!)) cls = c;
+  }
   if (!cls) return null;
   const type = classes[cls]!;
   if (type !== "poi") return { type };
@@ -106,116 +129,121 @@ async function setWebsite(db: Db, id: string, website: string | undefined): Prom
 }
 
 /**
- * Stage `gazetteer.wikidata` (Spec 03, step 2): queries WDQS for items of the configured classes in the
- * subdivision box plus `bboxBufferKm` and, in one transaction, per item: (1) an object with this `wikidata_id`
- * gets the names (for an object merged away with it, its survivor gets them and counts as linked); (2) else
- * an object of a compatible type whose OSM tag `wikidata` names the item is linked; (3) else `findMatch`
- * within `wikidataLinkDistanceM`, ignoring objects known only from GeoNames: `same` links (unless that
- * object carries another Wikidata ID, then it counts as uncertain), `uncertain` creates a new object and
- * opens a pair task, `none` creates one only for poi, island, islet, cape and bay. Steps 1 and 2 run for all
- * items before step 3. A POI farther than `poiCoastDistanceKm` from an IHO sea is skipped and counted in `skipped`. Labels and aliases become names with `origin wikidata`.
+ * The per-item import of `gazetteer.wikidata` (Spec 03, step 2), for the caller's transaction `tx`. Per item of a class
+ * in `opts.classes` (`harbour` before `bay` before other types, else first class in config order: `classify`; a POI
+ * class gets its category from `opts.categories`):
+ * (1) an object with this `wikidata_id` gets the names (for an object merged away with it, its survivor gets them and
+ * counts as linked); (2) else an object of a compatible type whose OSM tag `wikidata` names the item is linked;
+ * (3) else `findMatch` within `wikidataLinkDistanceM`, ignoring objects known only from GeoNames: `same` links (unless
+ * that object carries another Wikidata ID, then it counts as uncertain), `uncertain` creates a new object and opens a
+ * pair task (none between two POIs), `none` creates one only for a type in `opts.allowCreate`. Steps 1 and 2 run for
+ * all items before step 3. Labels and aliases become names with `origin wikidata`, `P856` the object's
+ * `website_wikidata`. An item whose point the store cannot use is logged and counted in `skipped`.
+ */
+export async function importWikidataItems(
+  tx: Db,
+  items: WikidataItem[],
+  opts: { classes: Record<string, GeoObjectType>; categories: Record<string, PoiCategory>; allowCreate: Set<GeoObjectType> },
+): Promise<WikidataImportResult> {
+  const { gazetteer } = getConfig();
+  const result = { linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 };
+  // ID and tag links first, matching by name second: a name match then sees the names of every item
+  // linked by ID, as a rerun would, so it does not depend on the order of the items.
+  const unlinked: Array<{ item: WikidataItem; cls: Classified; names: NameDraft[] }> = [];
+  for (const item of items) {
+    const cls = classify(item, opts.classes, opts.categories);
+    if (!cls) continue;
+    const names = itemNames(item);
+
+    const known = await byWikidataId(tx, item.id);
+    if (known) {
+      if (known.merged) result.linked++;
+      result.names += await addNames(tx, known.id, names);
+      await setWebsite(tx, known.id, item.website);
+      continue;
+    }
+
+    const tagged = await byOsmTag(tx, item.id, cls.type);
+    if (tagged) {
+      await link(tx, tagged, item.id);
+      result.linked++;
+      result.names += await addNames(tx, tagged, names);
+      await setWebsite(tx, tagged, item.website);
+      continue;
+    }
+    unlinked.push({ item, cls, names });
+  }
+
+  for (const { item, cls, names } of unlinked) {
+    const match = await findMatch(
+      tx,
+      { type: cls.type, point: { lon: item.lon, lat: item.lat }, names: names.map((n) => n.name) },
+      gazetteer.merge,
+      // GeoNames runs after this stage: matching its objects would link differently on every rerun.
+      { distanceM: gazetteer.merge.wikidataLinkDistanceM, excludeGeonamesOnly: true },
+    );
+    if (match.kind === "same" && (await link(tx, match.id, item.id))) {
+      result.linked++;
+      result.names += await addNames(tx, match.id, names);
+      await setWebsite(tx, match.id, item.website);
+      continue;
+    }
+    if (match.kind === "none" && !opts.allowCreate.has(cls.type)) continue;
+
+    const { wikidataClass, ...classified } = cls;
+    const created = await upsertGeoObject(tx, {
+      ...classified,
+      ...(wikidataClass ? { tags: { wikidata_class: wikidataClass } } : {}),
+      origin: "wikidata",
+      wikidataId: item.id,
+      geometry: { type: "Point", coordinates: [item.lon, item.lat] },
+      names,
+    });
+    if ("skipped" in created) {
+      getLog().warn({ wikidataId: item.id, reason: created.skipped }, "skipped wikidata item with unusable geometry");
+      result.skipped++;
+      continue;
+    }
+    result.created++;
+    result.names += created.names;
+    await setWebsite(tx, created.id, item.website);
+    if (match.kind !== "none") {
+      // Two POIs near each other are two places: no review between them (spec 16).
+      if (cls.type === "poi" && (await isPoi(tx, match.id))) {
+        result.uncertain++;
+        continue;
+      }
+      await openPairTask(tx, created.id, match.id, {
+        similarity: match.similarity,
+        distanceM: match.distanceM,
+        source: "wikidata",
+      });
+      result.uncertain++;
+    }
+  }
+  return result;
+}
+
+/**
+ * Stage `gazetteer.wikidata` (Spec 03, step 2): queries WDQS for items of the configured skeleton classes
+ * (`gazetteer.wikidata.classes`, no POI classes: N7 4.4, B8) in the subdivision box plus `bboxBufferKm` and imports
+ * them with `importWikidataItems` in one transaction (all or nothing).
  */
 export async function importWikidata(
   db: Db,
   input: { scope: GazetteerScope; runId: string },
   deps: { transport: Transport },
-): Promise<{ linked: number; created: number; uncertain: number; names: number; skipped: number }> {
+): Promise<WikidataImportResult> {
   const { scope, runId } = input;
   const { gazetteer, categories } = getConfig();
   const { classes, languages } = gazetteer.wikidata;
   const bbox = bufferBbox(scope.bbox, gazetteer.bboxBufferKm);
 
-  await assertSeasPresent(db, bbox, gazetteer.poiCoastDistanceKm, scope.key);
-
   // Fetch outside the import transaction: a rollback must not drop the external_calls row.
   const sparql = buildWikidataQuery(bbox, Object.keys(classes), languages);
   const items = await wikidataQuery(deps.transport, sparql, { db, runId, stage: WIKIDATA_STAGE }, gazetteer.wikidata);
 
-  return db.transaction(async (tx) => {
-    const result = { linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 };
-    // ID and tag links first, matching by name second: a name match then sees the names of every item
-    // linked by ID, as a rerun would, so it does not depend on the order of the items.
-    const unlinked: Array<{ item: WikidataItem; cls: Classified; names: NameDraft[] }> = [];
-    for (const item of items) {
-      const cls = classify(item, classes, categories.wikidata);
-      if (!cls) continue;
-      const names = itemNames(item);
-
-      const known = await byWikidataId(tx, item.id);
-      if (known) {
-        if (known.merged) result.linked++;
-        result.names += await addNames(tx, known.id, names);
-        await setWebsite(tx, known.id, item.website);
-        continue;
-      }
-
-      const tagged = await byOsmTag(tx, item.id, cls.type);
-      if (tagged) {
-        await link(tx, tagged, item.id);
-        result.linked++;
-        result.names += await addNames(tx, tagged, names);
-        await setWebsite(tx, tagged, item.website);
-        continue;
-      }
-      unlinked.push({ item, cls, names });
-    }
-
-    const poiNearSea = await nearSea(
-      tx,
-      unlinked.filter((u) => u.cls.type === "poi").map((u) => ({ key: u.item.id, lon: u.item.lon, lat: u.item.lat })),
-      gazetteer.poiCoastDistanceKm,
-    );
-
-    for (const { item, cls, names } of unlinked) {
-      if (cls.type === "poi" && !poiNearSea.has(item.id)) {
-        result.skipped++;
-        continue;
-      }
-      const match = await findMatch(
-        tx,
-        { type: cls.type, point: { lon: item.lon, lat: item.lat }, names: names.map((n) => n.name) },
-        gazetteer.merge,
-        // GeoNames runs after this stage: matching its objects would link differently on every rerun.
-        { distanceM: gazetteer.merge.wikidataLinkDistanceM, excludeGeonamesOnly: true },
-      );
-      if (match.kind === "same" && (await link(tx, match.id, item.id))) {
-        result.linked++;
-        result.names += await addNames(tx, match.id, names);
-        await setWebsite(tx, match.id, item.website);
-        continue;
-      }
-      if (match.kind === "none" && !CREATE_WITHOUT_MATCH.has(cls.type)) continue;
-
-      const { wikidataClass, ...classified } = cls;
-      const created = await upsertGeoObject(tx, {
-        ...classified,
-        ...(wikidataClass ? { tags: { wikidata_class: wikidataClass } } : {}),
-        origin: "wikidata",
-        wikidataId: item.id,
-        geometry: { type: "Point", coordinates: [item.lon, item.lat] },
-        names,
-      });
-      if ("skipped" in created) {
-        getLog().warn({ wikidataId: item.id, reason: created.skipped }, "skipped wikidata item with unusable geometry");
-        continue;
-      }
-      result.created++;
-      result.names += created.names;
-      await setWebsite(tx, created.id, item.website);
-      if (match.kind !== "none") {
-        // Two POIs near each other are two places: no review between them (spec 16).
-        if (cls.type === "poi" && (await isPoi(tx, match.id))) {
-          result.uncertain++;
-          continue;
-        }
-        await openPairTask(tx, created.id, match.id, {
-          similarity: match.similarity,
-          distanceM: match.distanceM,
-          source: "wikidata",
-        });
-        result.uncertain++;
-      }
-    }
-    return result;
-  });
+  return db.transaction((tx) =>
+    importWikidataItems(tx, items, { classes, categories: categories.wikidata, allowCreate: CREATE_WITHOUT_MATCH }),
+  );
 }

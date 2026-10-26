@@ -1,16 +1,12 @@
-import { loadConfig } from "@/lib/config";
 import { eq, sql } from "drizzle-orm";
 import type { PgInsertValue } from "drizzle-orm/pg-core";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import type { PoiCategory } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
 import {
-  chunks,
   documents,
   documentVersions,
-  extractionRuns,
   geoObjects,
-  mentions,
   runs,
   sources,
   subdivisions,
@@ -24,12 +20,9 @@ import { tileBbox } from "@/lib/domain/tiles";
 import type { Db } from "@/lib/db/client";
 
 /*
- * Fixtures for text-pipeline tests (M4). Every row is meant for `withRollback`: append-only rows (mentions,
- * facts, routes) and stable rows (sources, geo objects) must never be committed by a test. Sources use
+ * Shared fixtures. Every row is meant for `withRollback`; a test must not commit it. Sources use
  * `<uuid>.test.invalid` domains, geo objects sit at 21.0° E / 35.2° N, outside the pilot box.
  */
-
-export const CHUNK_TEXT = "Good holding in sand, well sheltered from the meltemi.";
 
 export async function insertTestRun(tx: Db): Promise<string> {
   const [row] = await tx
@@ -63,92 +56,6 @@ export async function insertTestSource(tx: Db): Promise<string> {
     })
     .returning({ id: sources.id });
   return row!.id;
-}
-
-/** A source, a document, one version and one chunk with `CHUNK_TEXT`. */
-export async function insertTestChunk(tx: Db): Promise<{ sourceId: string; versionId: string; chunkId: string }> {
-  const sourceId = await insertTestSource(tx);
-  const url = `https://${newId()}.test.invalid/page`;
-  const [doc] = await tx
-    .insert(documents)
-    .values({ sourceId, url, urlNormalized: url, docType: "trip_report" })
-    .returning({ id: documents.id });
-  const [version] = await tx
-    .insert(documentVersions)
-    .values({
-      documentId: doc!.id,
-      fetchedAt: new Date("2026-10-19T10:00:00Z"),
-      contentHash: "c1",
-      rawHash: "r1",
-      rawKey: `archive/${doc!.id}/raw.html`,
-      mdKey: `archive/${doc!.id}/raw.md`,
-      observedAt: "2026-10-19",
-      observedAtBasis: "fetched",
-      docType: "trip_report",
-      converter: "local",
-      charCount: CHUNK_TEXT.length,
-    })
-    .returning({ id: documentVersions.id });
-  const [chunk] = await tx
-    .insert(chunks)
-    .values({
-      documentVersionId: version!.id,
-      ordinal: 0,
-      text: CHUNK_TEXT,
-      textNormalized: CHUNK_TEXT,
-      textHash: "t1",
-      charStart: 0,
-      charEnd: CHUNK_TEXT.length,
-      wordCount: 9,
-    })
-    .returning({ id: chunks.id });
-  return { sourceId, versionId: version!.id, chunkId: chunk!.id };
-}
-
-export async function insertTestExtractionRun(
-  tx: Db,
-  values: Partial<PgInsertValue<typeof extractionRuns>> = {},
-): Promise<string> {
-  const [row] = await tx
-    .insert(extractionRuns)
-    .values({
-      task: "extract-facts",
-      model: "claude-sonnet-5-5",
-      promptVersion: 1,
-      factSchemaVersion: loadConfig("config").factSchema.version,
-      runId: values.runId ?? (await insertTestRun(tx)),
-      ...values,
-    })
-    .returning({ id: extractionRuns.id });
-  return row!.id;
-}
-
-export type TestMention = { mentionId: string; versionId: string; chunkId: string; geoObjectId: string };
-
-/** A deterministic mention of a new geo object in a new chunk; `values` override the mention columns. */
-export async function insertTestMention(
-  tx: Db,
-  values: Partial<PgInsertValue<typeof mentions>> = {},
-): Promise<TestMention> {
-  const { versionId, chunkId } = await insertTestChunk(tx);
-  const geoObjectId = await insertTestGeoObject(tx);
-  const [row] = await tx
-    .insert(mentions)
-    .values({
-      documentVersionId: versionId,
-      chunkId,
-      geoObjectId,
-      surface: "Good",
-      charStart: 0,
-      charEnd: 4,
-      observedAt: "2026-10-19",
-      confidence: 1,
-      matchKind: "deterministic",
-      matchScore: 1,
-      ...values,
-    })
-    .returning({ id: mentions.id });
-  return { mentionId: row!.id, versionId, chunkId, geoObjectId };
 }
 
 /**
@@ -237,15 +144,14 @@ export async function insertNamedObject(tx: Db, o: TestNamedObject): Promise<str
 }
 
 /**
- * A new document version whose chunks hold `texts` (one chunk each, `carried` maps a chunk index to the chunk it is
- * carried over from). `documentId` adds the version to an existing document; the version becomes current. `docType`
- * is the version's fetch-time type (default `trip_report`).
+ * A new document version (one per call; `texts` only sizes `char_count`). `documentId` adds the version to an existing
+ * document; the version becomes current. `docType` is the version's fetch-time type (default `trip_report`).
  */
 export async function insertTestVersion(
   tx: Db,
   texts: string[],
-  opts: { sourceId?: string; documentId?: string; carried?: Record<number, string>; observedAt?: string; fetchedAt?: Date; docType?: DocType } = {},
-): Promise<{ sourceId: string; documentId: string; versionId: string; chunkIds: string[] }> {
+  opts: { sourceId?: string; documentId?: string; observedAt?: string; fetchedAt?: Date; docType?: DocType } = {},
+): Promise<{ sourceId: string; documentId: string; versionId: string }> {
   const sourceId = opts.sourceId ?? (await insertTestSource(tx));
   let documentId = opts.documentId;
   if (!documentId) {
@@ -271,25 +177,5 @@ export async function insertTestVersion(
     })
     .returning({ id: documentVersions.id });
   await tx.update(documents).set({ currentVersionId: version!.id }).where(eq(documents.id, documentId));
-  const chunkIds: string[] = [];
-  let offset = 0;
-  for (const [i, text] of texts.entries()) {
-    const [chunk] = await tx
-      .insert(chunks)
-      .values({
-        documentVersionId: version!.id,
-        ordinal: i,
-        text,
-        textNormalized: text,
-        textHash: `t${i}`,
-        charStart: offset,
-        charEnd: offset + text.length,
-        wordCount: text.split(/\s+/).length,
-        carriedFromChunkId: opts.carried?.[i] ?? null,
-      })
-      .returning({ id: chunks.id });
-    chunkIds.push(chunk!.id);
-    offset += text.length + 2;
-  }
-  return { sourceId, documentId, versionId: version!.id, chunkIds };
+  return { sourceId, documentId, versionId: version!.id };
 }

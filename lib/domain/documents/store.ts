@@ -1,16 +1,12 @@
 import { createHash } from "node:crypto";
 import { createTwoFilesPatch } from "diff";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import type { FetchConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { chunks, documents, documentVersions, textShingles, type DocType } from "@/lib/db/schema";
+import { documents, documentVersions, type DocType } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
-import { matchCarried } from "./carry";
-import { chunkMarkdown } from "./chunker";
 import { observedFrom } from "./metadata";
 import { contentHash, normalizeMarkdown } from "./normalize";
-import { shingleHashes } from "./shingles";
 
 /** `archive/<documentId>/<fetchedAt ISO>_<hash8>.<suffix>`, suffix `raw.<ext>`, `md` or `diff`. */
 export function archiveKey(documentId: string, fetchedAt: Date, hash: string, suffix: string): string {
@@ -53,10 +49,8 @@ export type FetchedContent = {
 
 export type StoreOutcome = "new_version" | "unchanged" | "reverted";
 
-export type StoreResult = { outcome: StoreOutcome; versionId: string; chunks: { created: number; carried: number } };
+export type StoreResult = { outcome: StoreOutcome; versionId: string };
 
-const SHINGLE_BATCH = 5000;
-const CHUNK_BATCH = 500;
 const VERSIONS_UNIQUE = "document_versions_document_id_content_hash_unique";
 /** Attempts of a new version whose current version another store replaced meanwhile. */
 const MAX_STORE_ATTEMPTS = 3;
@@ -106,7 +100,7 @@ async function settleKnown(db: Db, documentId: string, versionId: string, conten
       .set({ ...checkedFields(content.fetchedAt, content.etag, content.lastModified), currentVersionId: versionId })
       .where(eq(documents.id, documentId));
     const outcome = doc.currentVersionId === versionId ? "unchanged" : "reverted";
-    return { outcome, versionId, chunks: { created: 0, carried: 0 } };
+    return { outcome, versionId };
   });
 }
 
@@ -122,28 +116,24 @@ async function versionWithHash(db: Db, documentId: string, hash: string): Promis
  * Archives one fetch of a document. The Markdown is normalized and hashed; a hash equal to the current version
  * only marks the document checked (`unchanged`), one equal to an older version makes that one current again
  * (`reverted`). A new content is written to S3 first (`raw`, `md`, and a unified `diff` against the current
- * version's Markdown, none for a first version), then in one transaction the version, its chunks (unchanged ones
- * carried over with the origin's embedding), the shingles of the chunks not carried, and the document. The
+ * version's Markdown, none for a first version), then in one transaction the version and the document. No chunks, shingles or
+ * embeddings are written (N6): the document view reads the Markdown from the archive. The
  * transaction locks the document row and checks that the version diffed against is still current; when another
  * store replaced it meanwhile, the whole store runs again against the new one (at most `MAX_STORE_ATTEMPTS`).
  * Losing a race on `(document_id, content_hash)` reads the winner and reports it like a known content; S3 objects of
  * a lost attempt stay behind as harmless orphans.
- *
- * A carried chunk takes the origin's embedding as it is at this moment: an origin not embedded yet leaves the
- * carried chunk without one (the embedding stage fills it like any other).
  */
 export async function storeFetched(
   db: Db,
   archive: Archive,
   documentId: string,
   content: FetchedContent,
-  cfg: FetchConfig["chunk"],
 ): Promise<StoreResult> {
   const md = normalizeMarkdown(content.markdown);
   const hash = contentHash(md);
   for (let attempt = 1; ; attempt++) {
     try {
-      return await storeOnce(db, archive, documentId, content, md, hash, cfg);
+      return await storeOnce(db, archive, documentId, content, md, hash);
     } catch (error) {
       if (!hasCause(error, (e) => e instanceof CurrentVersionMoved) || attempt >= MAX_STORE_ATTEMPTS) throw error;
     }
@@ -157,7 +147,6 @@ async function storeOnce(
   content: FetchedContent,
   md: string,
   hash: string,
-  cfg: FetchConfig["chunk"],
 ): Promise<StoreResult> {
   const known = await versionWithHash(db, documentId, hash);
   if (known) return settleKnown(db, documentId, known, content);
@@ -183,7 +172,6 @@ async function storeOnce(
     await archive.put(diffKey, createTwoFilesPatch(current.mdKey, mdKey, new TextDecoder().decode(previous), md), "text/x-diff; charset=utf-8");
   }
 
-  const drafts = chunkMarkdown(md, cfg);
   const observed = observedFrom(content.publishedAt, content.fetchedAt);
   try {
     return await db.transaction(async (tx) => {
@@ -216,59 +204,11 @@ async function storeOnce(
         runId: content.runId ?? null,
       });
 
-      const prev = current
-        ? await tx
-            .select({ id: chunks.id, textHash: chunks.textHash, carriedFromChunkId: chunks.carriedFromChunkId })
-            .from(chunks)
-            .where(eq(chunks.documentVersionId, current.id))
-            .orderBy(chunks.ordinal)
-        : [];
-      const origins = matchCarried(prev, drafts);
-      const originIds = [...new Set(origins.filter((o): o is string => o !== null))];
-      const embeddings = new Map(
-        (originIds.length > 0
-          ? await tx
-              .select({ id: chunks.id, embedding: chunks.embedding, embeddingModel: chunks.embeddingModel })
-              .from(chunks)
-              .where(inArray(chunks.id, originIds))
-          : []
-        ).map((c) => [c.id, c]),
-      );
-
-      const rows = drafts.map((d, i) => {
-        const origin = origins[i] ?? null;
-        const source = origin ? embeddings.get(origin) : undefined;
-        return {
-          id: newId(),
-          documentVersionId: versionId,
-          ordinal: d.ordinal,
-          text: d.text,
-          textNormalized: d.textNormalized,
-          textHash: d.textHash,
-          heading: d.heading,
-          charStart: d.charStart,
-          charEnd: d.charEnd,
-          wordCount: d.wordCount,
-          embedding: source?.embedding ?? null,
-          embeddingModel: source?.embeddingModel ?? null,
-          carriedFromChunkId: origin,
-        };
-      });
-      for (let i = 0; i < rows.length; i += CHUNK_BATCH) await tx.insert(chunks).values(rows.slice(i, i + CHUNK_BATCH));
-
-      const shingles = rows
-        .filter((r) => r.carriedFromChunkId === null)
-        .flatMap((r) => shingleHashes(r.text).map((shingleHash) => ({ shingleHash, chunkId: r.id })));
-      for (let i = 0; i < shingles.length; i += SHINGLE_BATCH) {
-        await tx.insert(textShingles).values(shingles.slice(i, i + SHINGLE_BATCH)).onConflictDoNothing();
-      }
-
       await tx
         .update(documents)
         .set({ ...checkedFields(content.fetchedAt, content.etag, content.lastModified), currentVersionId: versionId })
         .where(eq(documents.id, documentId));
-      const carried = origins.filter((o) => o !== null).length;
-      return { outcome: "new_version" as const, versionId, chunks: { created: rows.length, carried } };
+      return { outcome: "new_version" as const, versionId };
     });
   } catch (error) {
     if (!isUniqueViolation(error, VERSIONS_UNIQUE)) throw error;

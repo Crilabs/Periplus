@@ -3,11 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FACT_SCHEMAS } from "@/config/fact-schema";
-import { METRIC_KEYS } from "@/lib/db/schema/quality";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { countryConfig, getConfig, getConsolidationConfig, loadConfig } from "../index";
-import { modelsSchema, queuesSchema } from "../schemas";
+import { gazetteerSchema, modelsSchema, queuesSchema } from "../schemas";
 
 const repoConfig = loadConfig("config");
 
@@ -25,8 +24,6 @@ type Overrides = {
   sourceTypes?: unknown;
   discovery?: unknown;
   fetch?: unknown;
-  embeddings?: unknown;
-  whitelist?: unknown;
   mentions?: unknown;
   nameAffixes?: unknown;
   extraction?: unknown;
@@ -57,8 +54,6 @@ function fixtureDir(overrides: Overrides): string {
     "source-types": overrides.sourceTypes ?? repoConfig.sourceTypes,
     discovery: overrides.discovery ?? repoConfig.discovery,
     fetch: overrides.fetch ?? repoConfig.fetch,
-    embeddings: overrides.embeddings ?? repoConfig.embeddings,
-    "sources-whitelist": overrides.whitelist ?? repoConfig.whitelist,
     mentions: overrides.mentions ?? repoConfig.mentions,
     "name-affixes": overrides.nameAffixes ?? repoConfig.nameAffixes,
     extraction: overrides.extraction ?? repoConfig.extraction,
@@ -139,8 +134,8 @@ describe("loadConfig", () => {
   it("loads the repo config", () => {
     const c = loadConfig("config");
     expect(c.queues["system.ping"].retryLimit).toBe(2);
-    // A crawled PDF is transcribed page by page in one job: it must not expire after pg-boss's default 15 minutes.
-    expect(c.queues["fetch.url"].expireInSeconds).toBeGreaterThanOrEqual(3600);
+    // A fetched page may be a PDF transcribed page by page in one job: it must not expire after pg-boss's default 15 minutes.
+    expect(c.queues["research.fetch"].expireInSeconds).toBeGreaterThanOrEqual(1800);
     // A package build holds its area lock and two pool connections; it must not expire and be retried meanwhile.
     expect(c.queues["delivery.build"].expireInSeconds).toBe(3600);
     expect(c.budgets.anthropic.dailyEur).toBeGreaterThan(0);
@@ -170,6 +165,22 @@ describe("loadConfig", () => {
         }),
       ),
     ).toThrow(/expireInSeconds/);
+  });
+
+  it("Overpass queues expire no sooner than two parts' worst case (a 24-minute land job was fetched twice at the 15-minute default)", () => {
+    const { retries, timeoutSeconds, retryDelaySeconds } = repoConfig.gazetteer.overpass;
+    const worstCase = 2 * ((retries + 1) * (timeoutSeconds + 30) + retryDelaySeconds * (2 ** retries - 1));
+    expect(worstCase).toBe(3900);
+    for (const queue of ["gazetteer.build", "gazetteer.coarse"]) {
+      expect(repoConfig.queues[queue]!.expireInSeconds, queue).toBeGreaterThanOrEqual(worstCase);
+    }
+    const queues = structuredClone(repoConfig.queues) as Record<string, Record<string, unknown>>;
+    queues["gazetteer.build"] = { ...queues["gazetteer.build"], expireInSeconds: worstCase - 1 };
+    expect(() => loadConfig(fixtureDir({ queues }))).toThrow(/queues\.json: gazetteer\.build\.expireInSeconds 3899 is below two Overpass parts' worst case, 3900 s/);
+    // without a value pg-boss's default of 900 s applies and is refused
+    const bare = structuredClone(repoConfig.queues) as Record<string, Record<string, unknown>>;
+    delete bare["gazetteer.coarse"]!.expireInSeconds;
+    expect(() => loadConfig(fixtureDir({ queues: bare }))).toThrow(/gazetteer\.coarse\.expireInSeconds 900 is below/);
   });
 
   it("rejects an unknown budget service", () => {
@@ -222,29 +233,18 @@ describe("loadConfig", () => {
     expect(loadConfig("config").quality.navily).toMatchObject({ protectedThreshold: 0.5, seabedShareMin: 0.3 });
     const bad = { ...repoConfig.quality, navily: { ...repoConfig.quality.navily, protectedThreshold: 1.5 } };
     expect(() => loadConfig(fixtureDir({ quality: bad }))).toThrow(/quality\.json.*protectedThreshold/);
+    expect(loadConfig("config").quality.navily).toMatchObject({ excludedTypes: ["prohibited", "dry-berthing"], prohibitedTypes: ["prohibited"] });
+    const orphan = { ...repoConfig.quality, navily: { ...repoConfig.quality.navily, prohibitedTypes: ["unknown-type"] } };
+    expect(() => loadConfig(fixtureDir({ quality: orphan }))).toThrow(/quality\.json.*prohibitedTypes/);
     const duplicate = { ...repoConfig.quality, navilySample: { ...repoConfig.quality.navilySample, protectedThreshold: 0.5 } };
     expect(() => loadConfig(fixtureDir({ quality: duplicate }))).toThrow(/quality\.json/);
   });
 
-  it("quality config loads pilot targets", () => {
+  it("quality config loads the comparison set and the navily assistant", () => {
     const q = getConfig().quality;
-    expect(q.targets.coverage.pilot).toBe(0.85);
-    expect(q.targets.cost_per_place).toEqual({ pilot: 2.0, full: 0.5, direction: "max" });
-    expect(q.targets.review_minutes_per_100).toEqual({ pilot: null, full: 30, direction: "max" });
-    expect(q.secondRunReviewMinutesMax).toBe(60);
-    expect(q.placesPerTile).toEqual({ min: 10, max: 40 });
     expect(q.comparisonSet).toEqual({ pilotSize: 50, perSubdivisionMin: 20, perSubdivisionMax: 30 });
     expect(q.navily.proposalVersion).toBe("navily-assistant/1");
-    expect(q.extrapolation).toEqual({ subdivisionsMin: 60, subdivisionsMax: 100, placesPerSubdivision: null });
-  });
-
-  it("quality config targets only name metric keys and reject an inverted tile range", () => {
-    const targets = Object.keys(repoConfig.quality.targets);
-    expect(targets.every((k) => (METRIC_KEYS as readonly string[]).includes(k))).toBe(true);
-    const unknown = { ...repoConfig.quality, targets: { ...repoConfig.quality.targets, rating: { pilot: 1, full: 1, direction: "min" } } };
-    expect(() => loadConfig(fixtureDir({ quality: unknown }))).toThrow(/quality\.json/);
-    const inverted = { ...repoConfig.quality, placesPerTile: { min: 50, max: 40 } };
-    expect(() => loadConfig(fixtureDir({ quality: inverted }))).toThrow(/quality\.json.*placesPerTile/);
+    expect(q).not.toHaveProperty("targets");
   });
 
   it("config rejects a malformed Natura 2000 code", () => {
@@ -297,18 +297,25 @@ describe("loadConfig", () => {
   it("loads categories and gazetteer settings", () => {
     const c = loadConfig("config");
     expect(c.categories.wikidata.Q40080).toBe("beach");
-    expect(c.categories.osm).toContainEqual({ key: "shop", values: ["bakery"], category: "bakery" });
-    expect(c.categories.osm).toContainEqual({ key: "highway", values: ["bus_stop"], category: "transport" });
-    expect(c.categories.osm).toContainEqual({ key: "amenity", values: ["bus_station", "taxi", "ferry_terminal"], category: "transport" });
-    expect(c.categories.osm).toContainEqual({ key: "man_made", values: ["pier"], category: "landing" });
-    expect(c.categories.osm).toContainEqual({ key: "leisure", values: ["slipway"], category: "landing" });
-    expect(c.categories.osm).toContainEqual({ key: "historic", values: "*", category: "culture" });
+    expect(c.categories.osm).toContainEqual({ key: "shop", values: ["bakery"], category: "bakery", unnamed: false });
+    expect(c.categories.osm).toContainEqual({ key: "highway", values: ["bus_stop"], category: "transport", unnamed: true });
+    expect(c.categories.osm).toContainEqual({ key: "amenity", values: ["bus_station", "taxi", "ferry_terminal"], category: "transport", unnamed: true });
+    expect(c.categories.osm).toContainEqual({ key: "man_made", values: ["pier", "jetty"], category: "landing", unnamed: true });
+    expect(c.categories.osm).toContainEqual({ key: "leisure", values: ["slipway"], category: "landing", unnamed: true });
+    expect(c.categories.osm).toContainEqual({ key: "natural", values: ["beach"], category: "beach", unnamed: true });
+    expect(c.categories.osm).toContainEqual({ key: "historic", values: "*", category: "culture", unnamed: false });
     expect(c.gazetteer.overpass.timeoutSeconds).toBe(180);
     expect(c.gazetteer.wikidata.classes.Q23442).toBe("island");
     expect(c.gazetteer.geonames.featureCodes.PPLA2).toBe("settlement");
     expect(c.gazetteer.merge.distanceM.default).toBe(500);
+    // Generic bay words are stripped token-wise from normalized names: each must normalize to one non-empty token.
+    expect(c.gazetteer.merge.genericBayWords).toContain("ormos");
+    for (const word of c.gazetteer.merge.genericBayWords) expect(normalizeName(word)).toMatch(/^\S+$/);
     expect(c.gazetteer.landBufferKm).toBe(55);
-    expect(c.gazetteer.poiCoastDistanceKm).toBe(20);
+    expect(c.gazetteer).not.toHaveProperty("poiCoastDistanceKm");
+    expect(c.gazetteer).not.toHaveProperty("coastSectionMaxAreaKm2");
+    // The skeleton has no POI classes (N7, B8): the stage around the candidates brings its own.
+    expect(Object.values(c.gazetteer.wikidata.classes)).not.toContain("poi");
     expect(c.gazetteer.noAnchoringKinds).toEqual(["military", "cable", "firing_area", "aquaculture"]);
   });
 
@@ -360,7 +367,7 @@ describe("source configuration", () => {
     expect(fetch.converterBySource).toEqual({});
     expect(fetch.decision.status).toBe("provisional");
     expect(fetch.trackingParams).toEqual(["utm_*", "fbclid", "gclid", "msclkid", "mc_cid", "mc_eid"]);
-    expect(fetch.chunk).toEqual({ targetWords: 500, maxWords: 800, maxOverlapWords: 200 });
+    expect(fetch).not.toHaveProperty("chunk");
     expect(fetch.goneAfter).toBe(2);
     expect(fetch.renderMinMainChars).toBe(500);
   });
@@ -372,12 +379,11 @@ describe("source configuration", () => {
     expect(() => loadConfig(fixtureDir({ fetch: byId }))).toThrow(/fetch\.json.*converterBySource/);
   });
 
-  it("loads discovery, embeddings and the whitelist", () => {
+  it("loads discovery", () => {
     const c = loadConfig("config");
     expect(c.discovery.serp).toMatchObject({ depth: 20, reuseDays: 30, maxQueriesPerRun: 240 });
-    expect(c.discovery.templates.tile).toContainEqual({ template: "αγκυροβόλιο {name}", lang: "el", locationCode: 2300 });
     expect(c.discovery.bay).toEqual({ minAnchorAreaM2: 20000, minWikidataNames: 2 });
-    expect(c.discovery.proposals).toMatchObject({ minSerpHits: 3, minLinkingSources: 2, defaultType: "trip_report" });
+    expect(c.discovery.proposals).toMatchObject({ defaultType: "trip_report" });
     expect(c.discovery.proposals.typeHints.map((h) => h.type)).toEqual([
       "forum",
       "authority",
@@ -387,45 +393,22 @@ describe("source configuration", () => {
       "trip_report",
     ]);
     expect(c.discovery.proposals.ignoreDomains).toContain("navily.com");
-    expect(c.embeddings).toMatchObject({ provider: "voyage", model: "voyage-3.5", dimension: 1024 });
-    expect(c.whitelist).toHaveLength(1);
-    expect(c.whitelist[0]).toMatchObject({ domain: "wikivoyage.org", type: "travel_guide", changeRate: "normal" });
-    expect(c.whitelist[0]!.crawlRules).toMatchObject({ allow: ["^/wiki/[^:?]+$"], maxDepth: 0, render: "never", pdf: false });
+    expect(c).not.toHaveProperty("embeddings");
+    expect(c).not.toHaveProperty("whitelist");
   });
 
   it("rejects a discovery template without {name} and an invalid type hint", () => {
     const discovery = structuredClone(repoConfig.discovery);
-    discovery.templates.area[0]!.template = "Törnbericht";
-    expect(() => loadConfig(fixtureDir({ discovery }))).toThrow(/discovery\.json.*templates\.area\.0\.template/);
+    discovery.placeWebsite.templates[0]!.template = "Törnbericht";
+    expect(() => loadConfig(fixtureDir({ discovery }))).toThrow(/discovery\.json.*placeWebsite\.templates\.0\.template/);
     const d2 = structuredClone(repoConfig.discovery);
     d2.proposals.typeHints = [{ pattern: "(forum", type: "forum" }];
     expect(() => loadConfig(fixtureDir({ discovery: d2 }))).toThrow(/discovery\.json.*typeHints\.0\.pattern/);
-  });
-
-  it("rejects whitelist crawl rules with defaults filled in or invalid", () => {
-    const whitelist = structuredClone(repoConfig.whitelist);
-    whitelist[0]!.crawlRules = { maxDepth: 42 };
-    expect(() => loadConfig(fixtureDir({ whitelist }))).toThrow(/sources-whitelist\.json.*crawlRules\.maxDepth/);
-    expect(repoConfig.whitelist[0]!.crawlRules).not.toHaveProperty("maxPages");
-  });
-
-  it("rejects an embeddings dimension that is not a positive integer", () => {
-    expect(() => loadConfig(fixtureDir({ embeddings: { ...repoConfig.embeddings, dimension: 0 } }))).toThrow(
-      /embeddings\.json.*dimension/,
-    );
   });
 });
 
 describe("text configuration", () => {
   const cfg = repoConfig;
-
-  it("the extraction model is one of the compared models, with a recorded decision status", () => {
-    // Model and decision status change at the M4 acceptance (Christian decides in config/models.json): not pinned here.
-    const task = cfg.models.tasks["extract-facts"]!;
-    expect(task).toMatchObject({ promptVersion: 6, effort: "medium", maxTokens: 16000, cacheSystem: true });
-    expect(cfg.models.comparison.models).toContain(task.model);
-    expect(["provisional", "decided"]).toContain(task.decision?.status);
-  });
 
   it("a batch poll job survives a provider outage of at least an hour before it dead-letters", () => {
     // pg-boss backoff: retry n (from 0) waits retryDelay * 2^n .. retryDelay * 2^(n+1) seconds.
@@ -437,12 +420,13 @@ describe("text configuration", () => {
   });
 
   it("the haiku tasks leave room for thinking and the defaults fill in", () => {
-    expect(cfg.models.tasks["classify-document"]).toMatchObject({ model: "claude-haiku-5-5", effort: "low", maxTokens: 4096 });
-    expect(cfg.models.tasks["disambiguate-mention"]).toMatchObject({ model: "claude-haiku-5-5", effort: "low", maxTokens: 4096 });
+    expect(cfg.models.tasks["assess-page"]).toMatchObject({ model: "claude-sonnet-5-5", effort: "medium", maxTokens: 4096 });
+    expect(cfg.models.tasks["extract-berth"]).toMatchObject({ model: "claude-sonnet-5-5", promptVersion: 2, effort: "medium", maxTokens: 16000, cacheSystem: true });
+    for (const gone of ["classify-document", "disambiguate-mention", "extract-facts", "summarize-profile"]) expect(cfg.models.tasks).not.toHaveProperty(gone);
     expect(cfg.models.tasks["extract-route"]).toMatchObject({ model: "claude-sonnet-5-5", effort: "medium", maxTokens: 16000 });
     expect(cfg.models.tasks["system.echo"]).toMatchObject({ effort: "low", cacheSystem: false });
     expect(cfg.models.batch).toEqual({ discount: 0.5, pollSeconds: 60, maxHours: 26, maxRequests: 1000, providerTimeoutSeconds: 120, leaseSeconds: 600, clockSkewSeconds: 120, reservationHours: 48, budgetRetrySeconds: 900 });
-    expect(cfg.models.comparison.models).toEqual(["claude-sonnet-5-5", "claude-opus-5-5"]);
+    expect(cfg.models).not.toHaveProperty("comparison");
   });
 
   it("a batch lease must outlast the provider call", () => {
@@ -451,23 +435,19 @@ describe("text configuration", () => {
     expect(() => modelsSchema.parse(models)).toThrow(/longer than providerTimeoutSeconds/);
   });
 
-  it("every model named in tasks and comparison has a price", () => {
-    const named = [...Object.values(cfg.models.tasks).map((t) => t.model), ...cfg.models.comparison.models];
-    for (const model of named) expect(cfg.models.pricesEurPerMTok[model], model).toBeDefined();
-    const models = structuredClone(cfg.models);
-    models.comparison.models = ["claude-sonnet-5-5", "claude-mystery-1"];
-    expect(() => loadConfig(fixtureDir({ models }))).toThrow(/models\.json.*claude-mystery-1/);
+  it("every model named in tasks has a price", () => {
+    for (const model of Object.values(cfg.models.tasks).map((t) => t.model)) expect(cfg.models.pricesEurPerMTok[model], model).toBeDefined();
     const m2 = structuredClone(cfg.models);
-    m2.tasks["extract-facts"]!.model = "claude-mystery-2";
+    m2.tasks["assess-page"]!.model = "claude-mystery-2";
     expect(() => loadConfig(fixtureDir({ models: m2 }))).toThrow(/models\.json.*claude-mystery-2/);
   });
 
   it("a task needs maxTokens and an effort from the list", () => {
     const models = structuredClone(cfg.models) as { tasks: Record<string, Record<string, unknown>> };
-    delete models.tasks["classify-document"]!.maxTokens;
+    delete models.tasks["assess-page"]!.maxTokens;
     expect(() => loadConfig(fixtureDir({ models }))).toThrow(/models\.json.*maxTokens/);
     const m2 = structuredClone(cfg.models) as { tasks: Record<string, Record<string, unknown>> };
-    m2.tasks["classify-document"]!.effort = "max";
+    m2.tasks["assess-page"]!.effort = "max";
     expect(() => loadConfig(fixtureDir({ models: m2 }))).toThrow(/models\.json.*effort/);
   });
 
@@ -500,25 +480,12 @@ describe("text configuration", () => {
       fuzzyMinChars: 5,
       sureSimilarity: 0.75,
       uncertainSimilarity: 0.6,
-      maxNgramWords: 4,
       maxCandidates: 6,
-      versionsPerJob: 50,
-      prepassTypes: ["area", "gulf", "archipelago", "island", "country", "admin_region", "sea"],
     });
-    // The fallback to the source's areas is built into `candidateTiles`; no switch for it (it was never read).
-    expect(cfg.mentions).not.toHaveProperty("fallbackScope");
     expect(cfg.mentions.stopNames).toContain("limani");
     expect(cfg.extraction.quote).toEqual({ minChars: 12, maxChars: 300 });
     expect(cfg.extraction.routeStop).toEqual({ nameMaxChars: 80, maxBeaufort: 12 });
-    expect(cfg.extraction.geocode).toMatchObject({ minDocuments: 2, minSources: 2, radiusKm: 20, ratePerMinute: 60 });
-    expect(cfg.extraction.comparison).toEqual({
-      units: 200,
-      minSources: 8,
-      ratingSample: 50,
-      numericTolerance: 0.1,
-      systemTokens: 3000,
-      outputTokensPerUnit: 4000,
-    });
+    expect(cfg.extraction.geocode).toMatchObject({ radiusKm: 20, ratePerMinute: 60 });
     expect(cfg.extraction.earliestDate).toBe("1990-01-01");
   });
 
@@ -544,59 +511,21 @@ describe("consolidation rules", () => {
     return rules;
   };
 
-  it("consolidation v3 is active and has highlights", () => {
+  it("consolidation v3 is active and keeps the rules of the berth state", () => {
     const c = getConfig().consolidation;
     expect(c.version).toBe("v3");
-    expect(c.highlights?.maxPerCategory).toBe(5);
-    expect(c.highlights?.reachKm).toEqual([1, 1, 5, 20, 20]);
-    expect(c.highlights?.levelWeights).toEqual([0.005, 0.2, 1, 3, 6]);
-    expect(c.highlights?.textNameImportance).toBe(2);
-    const [low, high] = c.highlights!.levelThresholds;
-    expect(low).toBeLessThan(high!);
-    expect(c.importance.tagBonus?.["historic=castle"]).toBe(2);
-    expect(c.importance.tagBonus?.["wikidata:Q39715"]).toBe(1);
-  });
-
-  it("highlights rejects reachKm of length 4 and descending level thresholds", () => {
-    const withHighlights = (patch: (h: NonNullable<ReturnType<typeof rulesFile>["highlights"]>) => void) => {
-      const c = rulesFile();
-      patch(c.highlights!);
-      return () => loadConfig(fixtureDir({ consolidation: { v2: c }, consolidationActive: { version: "v2" } }));
-    };
-    expect(withHighlights(() => {})).not.toThrow();
-    expect(withHighlights((h) => (h.reachKm = [1, 1, 5, 20]))).toThrow(/consolidation\/v2\.json.*highlights/);
-    expect(withHighlights((h) => (h.levelThresholds = [6, 1]))).toThrow(/consolidation\/v2\.json.*highlights/);
-  });
-
-  it("the v1 rules still validate and carry the spec values", () => {
-    const c = getConsolidationConfig("v1");
-    expect(c.version).toBe("v1");
     expect(c).toMatchObject({
       recency: { halfLifeYears: 3 },
       precision: 3,
       conflict: { minRatio: 1.5 },
       confidence: { secondSourceBonus: 0.15, cap: 0.95, review: 0.95 },
-      change: { minIndependent: 2, strongWeight: 0.8 },
       expiry: { cycles: 2, defaultCycleDays: 365 },
       weights: { computed: 1, review: 1, observed: 0.8, poi: 0.6 },
     });
     expect(c.rules.shelter).toMatchObject({ maxCorrection: 0.3, harbourFloor: 0.8, openSideMinConfidence: 0.7 });
     expect(c.rules.shelter.harbourKinds).toEqual(["port", "marina"]);
-    expect(c.importance.radiusNm).toEqual([5, 10, 20, 35, 50]);
     expect(c.confidence.classes.map((k) => k.name)).toEqual(["high", "medium", "low"]);
-    expect(c.quietness.weights).toEqual({ settlement: 0.3, road: 0.2, occupancy: 0.2, text: 0.2, ferry: 0.1 });
-    expect(c.profileConfidence).toEqual({ shelter: 0.4, depth: 0.25, seabed: 0.2, exclude: 0.15 });
-    // Ruling M5-P5: the safety patterns name attributes; there is no attribute `restriction`.
-    expect(c.severity.safety).toEqual(["exclude", "max_draft", "max_length", "hazards", "restricted_zones", "prohibitions", "depth.*"]);
-    // every safety list is a safety attribute: its changes and uncertain tasks rank as safety (final review M-2)
-    for (const list of c.change.additiveLists) expect(c.severity.safety, list).toContain(list);
-    expect(c.profileConfidenceGroups).toEqual({
-      shelter: ["shelter.*"],
-      depth: ["depth.min", "depth.max", "depth.anchoring_min", "depth.anchoring_max"],
-      seabed: ["seabed"],
-      exclude: ["prohibitions"],
-    });
-    // Ruling M5-P3: identity keys of the list attributes merged by `union`; [] = the element itself.
+    // identity keys of the list attributes merged by `union`; [] = the element itself
     expect(c.rules.union.keys).toEqual({
       hazards: ["kind", "name"],
       restricted_zones: ["kind", "name"],
@@ -606,13 +535,10 @@ describe("consolidation rules", () => {
       charter_bases: [],
       supply_ports: [],
     });
-    expect(c.followup).toEqual({ minDocuments: 2, cooldownDays: 90, maxPlacesPerRun: 30 });
-    expect(c.summary).toEqual({
-      levels: ["place", "poi"],
-      sentences: { place: [2, 4], poi: [1, 2] },
-      maxAttempts: 3,
-      lowConfidence: 0.3,
-    });
+    // the keys of the old profile pipeline are gone
+    for (const gone of ["highlights", "importance", "quietness", "profileConfidence", "severity", "change", "followup", "summary"]) {
+      expect(c, gone).not.toHaveProperty(gone);
+    }
   });
 
   it("getConsolidationConfig reads the active version by default and a named one on demand", () => {
@@ -624,25 +550,13 @@ describe("consolidation rules", () => {
     expect(getConsolidationConfig("v99", dir)).toMatchObject({ version: "v99", conflict: { minRatio: 2 } });
   });
 
-  it("quietness weights must be positive and importance thresholds ascending", () => {
+  it("the rule parameters are validated", () => {
     const withRules = (patch: (c: ReturnType<typeof rulesFile>) => void) => {
       const c = rulesFile();
       patch(c);
       return () => loadConfig(fixtureDir({ consolidation: { v2: c }, consolidationActive: { version: "v2" } }));
     };
-    expect(withRules((c) => (c.quietness.weights.ferry = 0))).toThrow(/consolidation\/v2\.json.*quietness\.weights/);
-    expect(withRules((c) => (c.quietness.weights.ferry = 0.2))).toThrow(/quietness\.weights.*sum to 1/);
-    expect(withRules((c) => delete (c.quietness.weights as Partial<typeof c.quietness.weights>).ferry)).toThrow(
-      /quietness\.weights/,
-    );
-    expect(withRules((c) => Object.assign(c.profileConfidence, { bogus: 0 }))).toThrow(/profileConfidence/);
-    expect(withRules((c) => (c.importance.thresholds = [2, 1, 3.5, 5]))).toThrow(
-      /consolidation\/v2\.json.*importance/,
-    );
-    // One radius per importance level: four thresholds separate five levels.
-    expect(withRules((c) => (c.importance.radiusNm = [5, 10, 20, 35]))).toThrow(/consolidation\/v2\.json.*importance/);
     expect(withRules((c) => ((c.confidence.classes[2] as { min: number }).min = 0.1))).toThrow(/consolidation\/v2\.json.*confidence/);
-    expect(withRules((c) => (c.summary.sentences.place = [4, 2]))).toThrow(/consolidation\/v2\.json.*summary/);
     expect(withRules((c) => Object.assign(c, { bogus: 1 }))).toThrow(/consolidation\/v2\.json/);
     expect(withRules(() => {})).not.toThrow();
   });
@@ -661,8 +575,8 @@ describe("consolidation rules", () => {
   });
 
   it("getConsolidationConfig caches per (version, dir)", () => {
-    const dir = fixtureDir({ consolidation: { v1: rulesFile(), v2: { ...rulesFile(), conflict: { minRatio: 2 } } } });
-    const other = fixtureDir({ consolidation: { v1: rulesFile(), v2: { ...rulesFile(), conflict: { minRatio: 3 } } } });
+    const dir = fixtureDir({ consolidation: { v3: rulesFile(), v2: { ...rulesFile(), conflict: { minRatio: 2 } } } });
+    const other = fixtureDir({ consolidation: { v3: rulesFile(), v2: { ...rulesFile(), conflict: { minRatio: 3 } } } });
     const first = getConsolidationConfig("v2", dir);
     expect(getConsolidationConfig("v2", dir)).toBe(first);
     expect(getConsolidationConfig("v2", other)).not.toBe(first);
@@ -683,7 +597,7 @@ describe("consolidation rules", () => {
 describe("delivery configuration", () => {
   it("the delivery config carries the spec values", () => {
     expect(getConfig().delivery).toMatchObject({
-      schemaVersion: "3.0",
+      schemaVersion: "4.0",
       coast: { marginNm: 2, simplifyToleranceM: 10 },
       validation: {
         maxWaterDistanceNm: 1.5,
@@ -699,11 +613,8 @@ describe("delivery configuration", () => {
       coast: { source: "OpenStreetMap, ODbL", restrictedSourceDefault: "EMODnet Human Activities" },
       regions: { types: ["island", "archipelago", "coast_section", "gulf", "channel"], pointRadiusNm: 2 },
       weather: { regionBufferNm: 3, capeOffsetNm: 1, capeLandRadiusM: 2000 },
-      highlights: { maxSpotIds: 50 },
       radius: { nmPerDay: 50, returnFactor: 0.5, minDays: 1, maxDays: 28 },
-      popularity: { neighbourhoodNm: 50 },
       validation: { harbourMinShelter: 0.8, lowConfidenceNote: "wenig belegt" },
-      severity: { shelterDelta: 0.2 },
       api: { cacheMaxAgeSeconds: 60 },
       build: { lockTimeoutMs: 300000 },
     });
@@ -716,10 +627,6 @@ describe("delivery configuration", () => {
       expect.objectContaining({ name: "Copernicus-DEM", files: [], fields: expect.arrayContaining(["spots.json#/spots/*/images"]) }),
     ]);
     expect(repoConfig.delivery.licenses[0]!.fields).toContain("regions.json#/regions/*/polygon");
-  });
-
-  it("the low-confidence threshold of the delivery equals the summary's (ruling M6-P9)", () => {
-    expect(repoConfig.delivery.validation.lowConfidence).toBe(repoConfig.consolidation.summary.lowConfidence);
   });
 
   it("rejects a missing or invalid delivery config", () => {
@@ -736,7 +643,6 @@ describe("delivery configuration", () => {
     expect(withDelivery((d) => (d.validation.maxDraftM = [10, 0.5]))).toThrow(/delivery\.json.*maxDraftM/);
     expect(withDelivery((d) => (d.spots.statuses = ["bogus" as never]))).toThrow(/delivery\.json.*statuses/);
     expect(withDelivery((d) => (d.regions.types = ["volcano" as never]))).toThrow(/delivery\.json.*types/);
-    expect(withDelivery((d) => (d.regions.character.meltemiLow = 0.7))).toThrow(/delivery\.json.*character/);
     expect(withDelivery((d) => (d.forbiddenDomains = ["https://navily.com"]))).toThrow(/delivery\.json.*forbiddenDomains/);
     expect(withDelivery((d) => (d.licenses[0]!.files = ["land.json" as never]))).toThrow(/delivery\.json.*files/);
     expect(withDelivery((d) => (d.licenses[0]!.fields = ["land.json#/name"]))).toThrow(/delivery\.json.*fields/);
@@ -759,6 +665,19 @@ describe("queue configuration", () => {
     const entry = { concurrency: 8, retryLimit: 2, retryDelaySeconds: 120, retryBackoff: true };
     expect(queuesSchema.safeParse({ "fetch.url": { ...entry, expireInSeconds: 3600 } }).success).toBe(true);
     expect(queuesSchema.safeParse({ "fetch.url": { ...entry, expireInSecond: 3600 } }).success).toBe(false);
+  });
+});
+
+describe("gazetteer overpass configuration", () => {
+  it("rejects a minBlockDeg above blockDeg (B15)", () => {
+    const gazetteer = loadConfig("config").gazetteer;
+    const with_ = (blockDeg: number, minBlockDeg: number) =>
+      gazetteerSchema.safeParse({ ...gazetteer, overpass: { ...gazetteer.overpass, blockDeg, minBlockDeg } });
+    expect(with_(2, 0.5).success).toBe(true);
+    expect(with_(2, 2).success).toBe(true);
+    const result = with_(1, 2);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toMatch(/minBlockDeg must not exceed blockDeg/);
   });
 });
 

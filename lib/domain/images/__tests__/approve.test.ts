@@ -278,7 +278,6 @@ describe("decisions on a place_image task", () => {
       expect(task!.context.allowedZooms).toContain("z2");
       const result = await decide(tx, task!, { action: "regenerate_image", zoom: "z2" }, archive);
       expect(result.regenerateImage).toEqual({ geoObjectId: s.objectId, view: { slot: "title", zoom: "z2" }, force: true });
-      expect(result.consolidate).toBeNull();
       const [row] = await tx.select({ status: reviewTasks.status }).from(reviewTasks).where(eq(reviewTasks.id, task!.id));
       expect(row!.status).toBe("decided");
       expect(await currentImages(tx, s.objectId)).toEqual([]);

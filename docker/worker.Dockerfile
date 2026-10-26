@@ -16,5 +16,8 @@ COPY --chown=pwuser:pwuser drizzle ./drizzle
 COPY --chown=pwuser:pwuser lib ./lib
 COPY --chown=pwuser:pwuser worker ./worker
 COPY --chown=pwuser:pwuser scripts ./scripts
+# Late, so a new sha does not bust the layers above.
+ARG GIT_SHA
+ENV GIT_SHA=$GIT_SHA
 USER pwuser
 CMD ["node", "--import", "tsx", "worker/index.ts"]

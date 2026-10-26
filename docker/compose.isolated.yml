@@ -1,0 +1,44 @@
+# Own database pair for parallel work, so several sessions do not share one Postgres (see docs/runbook.md,
+# "Parallele Entwicklung mit eigener Datenbank"). The shared S3 on port 8333 is used with an own bucket (S3_BUCKET).
+#   docker compose -f docker/compose.isolated.yml up -d --build
+name: periplus-isolated
+
+services:
+  db:
+    build: ./postgres
+    # A memory blow-up triggers the cgroup OOM of this container, not the OOM killer of the Docker VM.
+    mem_limit: 2g
+    environment:
+      POSTGRES_DB: periplus
+      POSTGRES_USER: periplus
+      POSTGRES_PASSWORD: periplus
+    ports:
+      - "${PERIPLUS_DB_PORT:-5435}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U periplus -d periplus"]
+      interval: 5s
+      retries: 10
+
+  # Separate instance for Vitest; the test setup refuses database names that do not end in _test.
+  db-test:
+    build: ./postgres
+    mem_limit: 1g
+    # Vitest runs one worker per core, each with its own pool (up to 10 clients); 100 is too few on large machines.
+    command: postgres -c max_connections=400
+    environment:
+      POSTGRES_DB: periplus_test
+      POSTGRES_USER: periplus
+      POSTGRES_PASSWORD: periplus
+    ports:
+      - "${PERIPLUS_DB_TEST_PORT:-5436}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U periplus -d periplus_test"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  db-data:

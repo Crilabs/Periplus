@@ -6,17 +6,19 @@ import type { ComposedRadius, RadiusInput, SourcePackage } from "./types";
 
 /*
  * Composes a radius package from the current valid subdivision packages (spec 18, "Was im Paket steht", "Woraus es
- * gebaut wird", "Lücken"). Pure: every object is taken as it stands in one of the packages; only `spotIds` of
- * highlights and regions are united over all versions and trimmed to the included spots. Coast, file list and object
+ * gebaut wird", "Lücken"). Pure: every object is taken as it stands in one of the packages (contract 4.0 has no versions: per
+ * subdivision the current package counts); only `spotIds` of regions are united over all packages and trimmed to the
+ * included spots. Coast, file list and object
  * counts are added by the build after clipping and serialising.
  */
 
-type Versioned = { id: string; profileVersion?: number; spotIds?: string[] };
+type Versioned = { id: string; exclude?: { excluded: boolean }; spotIds?: string[] };
 
 /** One object over all packages: the version taken, the package it came from, the united `spotIds`. */
 type Merged<T> = { value: T; from: SourcePackage; spotIds: string[] };
 
-const byId = <T extends { id: string }>(a: T, b: T) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const byId = <T extends { id: string }>(a: T, b: T) => cmp(a.id, b.id);
 
 /** JSON with sorted keys: equal for equal content regardless of key order (absent and undefined alike). */
 function canonical(value: unknown): string {
@@ -27,14 +29,14 @@ function canonical(value: unknown): string {
   );
 }
 
-/** The content compared between versions: everything but `spotIds`, `profileVersion` and `validFrom`. */
-function content(o: Versioned & { validFrom?: string }): string {
-  return canonical({ ...o, spotIds: undefined, profileVersion: undefined, validFrom: undefined });
+/** The content compared between packages: everything but `spotIds`. */
+function content(o: Versioned): string {
+  return canonical({ ...o, spotIds: undefined });
 }
 
 /**
- * Each object once: the version with the higher `profileVersion`, on a tie the one from the younger package. Versions
- * that differ beyond `spotIds`, `profileVersion` and `validFrom` add one warning per object.
+ * Each object once. Safety first: an excluded copy (spots) always beats a confirmed one; otherwise the copy from the
+ * younger package wins (`asOf` plays no part), then the subdivision key. Versions that differ beyond `spotIds` add one warning per object.
  */
 function merge<T extends Versioned>(
   packages: SourcePackage[],
@@ -49,8 +51,9 @@ function merge<T extends Versioned>(
   for (const [id, list] of versions) {
     const sorted = [...list].sort(
       (a, b) =>
-        (b.value.profileVersion ?? 0) - (a.value.profileVersion ?? 0) ||
-        Date.parse(b.from.generatedAt) - Date.parse(a.from.generatedAt),
+        Number(b.value.exclude?.excluded ?? false) - Number(a.value.exclude?.excluded ?? false) ||
+        Date.parse(b.from.generatedAt) - Date.parse(a.from.generatedAt) ||
+        cmp(a.from.coverage.key, b.from.coverage.key),
     );
     const [taken] = sorted as [(typeof sorted)[number], ...typeof sorted];
     const spotIds = [...new Set(sorted.flatMap((v) => v.value.spotIds ?? []))];
@@ -70,7 +73,6 @@ export function composeRadiusPackage(input: RadiusInput, cfg: DeliveryConfig): C
   const warnings: string[] = [];
 
   const spots = merge(packages, (p) => p.spots, warnings);
-  const highlights = merge(packages, (p) => p.highlights, warnings);
   const regions = merge(packages, (p) => p.regions, warnings);
   const points = merge(packages, (p) => p.weatherPoints, warnings);
 
@@ -79,17 +81,14 @@ export function composeRadiusPackage(input: RadiusInput, cfg: DeliveryConfig): C
   const spotIn = new Set(keptSpots.map((m) => m.value.id));
   const trim = (ids: string[]) => ids.filter((id) => spotIn.has(id));
 
-  // highlights: assigned to an included spot, or in the circle
-  const keptHighlights = [...highlights.values()].filter((m) => m.spotIds.some((id) => spotIn.has(id)) || inCircle(m.value.position));
-
   // weather points: in the circle plus the coast margin (their regions are pulled in below)
   const nearPoints = [...points.values()].filter((m) => inCircle(m.value.position, cfg.coast.marginNm));
 
-  // regions: touching the circle, every region of an included spot, highlight or weather point, and their parent chains
+  // regions: touching the circle, every region of an included spot or weather point, and their parent chains
   const regionIn = new Set<string>();
   const queue = [
     ...[...regions.values()].filter((m) => regionTouchesCircle(m.value, center, r)).map((m) => m.value.id),
-    ...[...keptSpots, ...keptHighlights, ...nearPoints].flatMap((m) => (m.value.regionId ? [m.value.regionId] : [])),
+    ...[...keptSpots, ...nearPoints].flatMap((m) => (m.value.regionId ? [m.value.regionId] : [])),
   ];
   for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
     if (regionIn.has(id)) continue;
@@ -128,11 +127,10 @@ export function composeRadiusPackage(input: RadiusInput, cfg: DeliveryConfig): C
     },
     files: {
       "spots.json": { ...envelope, spots: keptSpots.map((m) => m.value).sort(byId) },
-      "highlights.json": { ...envelope, highlights: keptHighlights.map((m) => ({ ...m.value, spotIds: trim(m.spotIds) })).sort(byId) },
       "regions.json": { ...envelope, regions: keptRegions.map((m) => ({ ...m.value, spotIds: trim(m.spotIds) })).sort(byId) },
       "weather-points.json": { ...envelope, points: keptPoints.map((m) => m.value).sort(byId) },
     },
-    imageFiles: imagesOf([...keptSpots, ...keptHighlights]),
+    imageFiles: imagesOf(keptSpots),
     warnings,
   };
 }
@@ -154,7 +152,7 @@ function mergeTarget(spots: Map<string, Merged<Spot>>, m: Merged<Spot>): Merged<
   return current;
 }
 
-/** The images of the included spots and highlights (`images/<id>-<slot>.jpg`), from the package their version came from. */
+/** The images of the included spots (`images/<id>-<slot>.jpg`), from the package their version came from. */
 function imagesOf(kept: Array<Merged<{ id: string }>>): SourcePackage["imageFiles"] {
   return kept
     .flatMap((m) => m.from.imageFiles.filter((f) => f.name.startsWith(`images/${m.value.id}-`)))
@@ -170,7 +168,7 @@ function mergeTiles(input: RadiusInput): Manifest["tiles"] {
     const seen = tiles.get(tile.id);
     if (!seen || (tile.lastRunAt ?? "") > (seen.lastRunAt ?? "")) tiles.set(tile.id, tile);
   }
-  for (const id of input.missingTiles) if (!tiles.has(id)) tiles.set(id, { id, lastRunAt: null, profilesAsOf: null });
+  for (const id of input.missingTiles) if (!tiles.has(id)) tiles.set(id, { id, lastRunAt: null, statesAsOf: null });
   return [...tiles.values()].sort(byId);
 }
 

@@ -21,7 +21,7 @@ import { memoryArchive } from "@/test/s3";
 import { buildDelivery } from "../../build";
 import { distanceNm } from "../../geo";
 import { sha256Hex } from "../../serialize";
-import type { DeliveryPackage } from "../../types";
+import type { DeliveryPackage } from "@/lib/domain/delivery/types";
 import { getRadiusPackage, RADIUS_BUILD_REVISION, radiusPackageByKey, radiusPackageKey, readRadiusFile, type RadiusPackageRow } from "../build";
 import { clipCoast } from "../coast";
 import { circlePolygon, destination } from "../geometry";
@@ -73,7 +73,7 @@ async function readJson<T>(archive: Archive, row: RadiusPackageRow, file: string
 async function storedPackage(archive: Archive, prefix: string): Promise<DeliveryPackage> {
   const read = async (file: string) => JSON.parse(decoder.decode((await archive.get(prefix + file))!)) as unknown;
   const files = Object.fromEntries(
-    await Promise.all(["spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json"].map(async (f) => [f, await read(f)] as const)),
+    await Promise.all(["spots.json", "regions.json", "coast.geojson", "weather-points.json"].map(async (f) => [f, await read(f)] as const)),
   );
   return { manifest: (await read("manifest.json")) as Manifest, files: files as DeliveryPackage["files"] };
 }
@@ -85,11 +85,11 @@ describe("radiusPackageKey", () => {
     { id: "sd_01J9ZE00000000000000000001", key: "B", name: "b", status: "delivered" as const, dataVersion: 3 },
     { id: "sd_01J9ZD00000000000000000001", key: "A", name: "a", status: "missing" as const, dataVersion: null },
   ];
-  const input = { marina: "sp_01J9ZD00000000000000000002", days: 7, radiusNm: 175, coverage, schemaVersion: "3.0" };
+  const input = { marina: "sp_01J9ZD00000000000000000002", days: 7, radiusNm: 175, coverage, schemaVersion: "4.0" };
 
   it("is the first 16 hex characters of the sha256 over marina, days, radius, version, build revision and the sorted coverage", () => {
-    expect(RADIUS_BUILD_REVISION).toBe(1);
-    const text = "sp_01J9ZD00000000000000000002|7|175|3.0|1|sd_01J9ZD00000000000000000001:missing|sd_01J9ZE00000000000000000001:3";
+    expect(RADIUS_BUILD_REVISION).toBe(2);
+    const text = "sp_01J9ZD00000000000000000002|7|175|4.0|2|sd_01J9ZD00000000000000000001:missing|sd_01J9ZE00000000000000000001:3";
     expect(radiusPackageKey(input)).toBe(sha256Hex(new TextEncoder().encode(text)).slice(0, 16));
     expect(radiusPackageKey({ ...input, coverage: [...coverage].reverse() })).toBe(radiusPackageKey(input));
   });
@@ -97,7 +97,7 @@ describe("radiusPackageKey", () => {
   it("changes with every input", () => {
     const key = radiusPackageKey(input);
     expect(radiusPackageKey({ ...input, days: 8 })).not.toBe(key);
-    expect(radiusPackageKey({ ...input, schemaVersion: "3.1" })).not.toBe(key);
+    expect(radiusPackageKey({ ...input, schemaVersion: "4.1" })).not.toBe(key);
     expect(radiusPackageKey({ ...input, coverage: [coverage[0]!, { ...coverage[1]!, status: "delivered", dataVersion: 1 }] })).not.toBe(key);
   });
 });
@@ -139,19 +139,20 @@ describe("getRadiusPackage", () => {
         Object.fromEntries(Object.entries(row.fileHashes).filter(([name]) => name !== "manifest.json")),
       );
       expect(Object.keys(row.fileHashes).sort()).toEqual(
-        ["coast.geojson", "highlights.json", IMAGE, "manifest.json", "regions.json", "spots.json", "weather-points.json"].sort(),
+        ["coast.geojson", IMAGE, "manifest.json", "regions.json", "spots.json", "weather-points.json"].sort(),
       );
-      for (const file of ["spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json"] as ContractFile[]) {
+      for (const file of ["spots.json", "regions.json", "coast.geojson", "weather-points.json"] as ContractFile[]) {
         const parsed = CONTRACT_SCHEMAS[file].safeParse(await readJson(archive, row, file));
         expect(parsed.success, `${file}: ${JSON.stringify(parsed.error?.issues.slice(0, 3))}`).toBe(true);
       }
-      expect(manifest.objectCounts.changes).toBe(0);
+      expect(Object.keys(manifest.objectCounts).sort()).toEqual(["coastFeatures", "regions", "spots", "weatherPoints"]);
       expect(row.objectCounts).toEqual(manifest.objectCounts);
 
       // objects of both subdivisions; the image copied from the east package's prefix
       const spotIds = (await readJson<SpotsFile>(archive, row, "spots.json")).spots.map((s) => s.id);
       expect(spotIds).toEqual(expect.arrayContaining([marina, f.places.A.publicId, EAST.spot, EAST.marina]));
       expect(await readRadiusFile(archive, row, IMAGE)).toEqual(IMAGE_BYTES);
+      expect(await readRadiusFile(archive, row, "highlights.json")).toBeNull();
       expect(await readRadiusFile(archive, row, "changes.json")).toBeNull();
 
       // one request row of kind `package`
@@ -176,9 +177,6 @@ describe("getRadiusPackage", () => {
       expect(await countRows(tx, first.key)).toBe(1);
       const requests = await tx.select().from(radiusPackageRequests).where(eq(radiusPackageRequests.radiusPackageId, first.id));
       expect(requests.map((r) => r.kind).sort()).toEqual(["file", "package"]);
-      // both tables are append-only
-      await expect(tx.transaction((sp) => sp.execute(sql`update radius_packages set days = 4 where id = ${first.id}`))).rejects.toThrow();
-      await expect(tx.transaction((sp) => sp.execute(sql`delete from radius_package_requests where radius_package_id = ${first.id}`))).rejects.toThrow();
     }));
 
   it("a second request waits for the build lock of the key (radius:<key>)", { timeout: 60_000 }, async () => {
@@ -243,7 +241,7 @@ describe("getRadiusPackage", () => {
         { id: EAST.subdivisionId, key: EAST.key, name: EAST.name, status: "missing", dataVersion: null },
       ]);
       const manifest = await readJson<Manifest>(archive, missing, "manifest.json");
-      expect(manifest.tiles).toContainEqual({ id: EAST.tileId, lastRunAt: null, profilesAsOf: null });
+      expect(manifest.tiles).toContainEqual({ id: EAST.tileId, lastRunAt: null, statesAsOf: null });
 
       await storeSubdivisionPackage(tx, archive, { subdivisionId: eastId, pkg: eastPackage(), dataVersion: 1 });
       const v1 = await getRadiusPackage(tx, archive, { marina, days: 7, now: NOW });
@@ -267,13 +265,13 @@ describe("getRadiusPackage", () => {
         { id: EAST.subdivisionId, key: EAST.key, name: EAST.name, status: "missing", dataVersion: null },
       ]);
       const manifest = await readJson<Manifest>(archive, row, "manifest.json");
-      expect(manifest.tiles).toContainEqual({ id: EAST.tileId, lastRunAt: null, profilesAsOf: null });
+      expect(manifest.tiles).toContainEqual({ id: EAST.tileId, lastRunAt: null, statesAsOf: null });
       // nothing of its package is in the radius package
       const spotIds = (await readJson<SpotsFile>(archive, row, "spots.json")).spots.map((s) => s.id);
       expect(spotIds).not.toContain(EAST.spot);
     }));
 
-  it("a merged spot follows its target; a dangling mergedInto or highlightIds reference throws and stores nothing", { timeout: 60_000 }, () =>
+  it("a merged spot follows its target; a dangling mergedInto reference throws and stores nothing", { timeout: 60_000 }, () =>
     withRollback(async (tx) => {
       const { f, eastId, archive } = await setup(tx, { east: false });
       const marina = f.places.M.publicId!;
@@ -302,18 +300,6 @@ describe("getRadiusPackage", () => {
         new RegExp(`references outside the package: .*${EAST.spot} → ${ghost}`),
       );
 
-      // version 3: the anchorage lists the highlight, which only the far marina selects and which lies far away
-      const listed = eastPackage();
-      const marina2 = listed.files["spots.json"].spots.find((s) => s.id === EAST.marina)!;
-      marina2.position = far(marina2.position);
-      const highlight = listed.files["highlights.json"].highlights[0]!;
-      highlight.spotIds = [EAST.marina];
-      highlight.position = far(highlight.position);
-      expect(listed.files["spots.json"].spots.find((s) => s.id === EAST.spot)!.highlightIds).toEqual([EAST.highlight]);
-      await storeSubdivisionPackage(tx, archive, { subdivisionId: eastId, pkg: listed, dataVersion: 3 });
-      await expect(tx.transaction((sp) => getRadiusPackage(sp, archive, { marina, days: 1, now: NOW }))).rejects.toThrow(
-        new RegExp(`references outside the package: .*${EAST.spot} → ${EAST.highlight}`),
-      );
       // only the package of version 1 is stored
       expect((await tx.select().from(radiusPackages).where(eq(radiusPackages.homeMarinaPublicId, marina))).map((r) => r.id)).toEqual([v1.id]);
     }));
@@ -387,7 +373,6 @@ describe("getRadiusPackage", () => {
       const excluded = structuredClone(v1);
       const m = excluded.files["spots.json"].spots.find((s) => s.id === marina)!;
       m.exclude = { excluded: true, reason: "military", detail: null };
-      m.profileVersion += 1;
       await storeSubdivisionPackage(tx, archive, { subdivisionId: f.subdivisionId, pkg: excluded, dataVersion: 2 });
       expect(await getRadiusPackage(tx, archive, { marina, days: 2, now: NOW })).toBe("marina_not_found");
       expect(await radiusPackageByKey(tx, old.key)).toEqual(old);
@@ -397,6 +382,16 @@ describe("getRadiusPackage", () => {
       gone.files["spots.json"].spots = gone.files["spots.json"].spots.filter((s) => s.id !== marina);
       await storeSubdivisionPackage(tx, archive, { subdivisionId: f.subdivisionId, pkg: gone, dataVersion: 3 });
       expect(await getRadiusPackage(tx, archive, { marina, days: 2, now: NOW })).toBe("marina_not_found");
+    }));
+
+  it("a stored row of another contract version is not served by its key", { timeout: 60_000 }, () =>
+    withRollback(async (tx) => {
+      const { f, archive } = await setup(tx, { east: false });
+      const row = await getRadiusPackage(tx, archive, { marina: f.places.M.publicId!, days: 1, now: NOW });
+      isRow(row);
+      await tx.insert(radiusPackages).values({ ...row, id: newId(), key: "00000000000000a3", schemaVersion: "3.0" });
+      expect(await radiusPackageByKey(tx, "00000000000000a3")).toBeNull();
+      expect(await radiusPackageByKey(tx, row.key)).toEqual(row);
     }));
 
   it("readRadiusFile refuses bytes that do not match the recorded hash", { timeout: 60_000 }, () =>

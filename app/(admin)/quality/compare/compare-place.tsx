@@ -45,7 +45,6 @@ type ActionNotice = { notice: string } | { error: string };
 export function ComparePlace({
   placeId,
   subdivisionKey,
-  evaluationRunId,
   title,
   description,
   rows,
@@ -53,7 +52,6 @@ export function ComparePlace({
 }: {
   placeId: string;
   subdivisionKey: string;
-  evaluationRunId?: string;
   title: string;
   description: string;
   rows: CompareRow[];
@@ -63,7 +61,7 @@ export function ComparePlace({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const base = { placeId, subdivisionKey, ...(evaluationRunId ? { evaluationRunId } : {}) };
+  const base = { placeId, subdivisionKey };
 
   const run = (work: () => Promise<ActionNotice | null>) => {
     setError(null);

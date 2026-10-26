@@ -1,4 +1,4 @@
-import type { CategoriesConfig, GazetteerConfig } from "@/lib/config";
+import type { GazetteerConfig } from "@/lib/config";
 import type { Bbox } from "@/lib/domain/tiles";
 import { RetryableHttpError, httpCall, type CallContext, type Transport } from "./http";
 
@@ -24,48 +24,56 @@ function regexLiteral(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Overpass QL for the gazetteer sources of one box (Spec 03, step 1): seas and gulfs, bays, islands,
- * coastal settlements, capes, straits, harbours, marinas and the named POIs of every category rule.
- */
-export function buildGazetteerQuery(bbox: Bbox, categories: CategoriesConfig, timeoutSeconds: number): string {
-  const [west, south, east, north] = bbox;
-  const box = `(${south},${west},${north},${east})`;
-  const statements = [
-    'relation["place"~"sea|gulf"]',
-    'relation["natural"="bay"]',
-    'way["natural"="bay"]',
-    'nwr["place"~"^(island|islet|archipelago)$"]',
-    'node["place"~"^(town|village|hamlet)$"]',
-    'nwr["natural"~"^(bay|cape|strait|peninsula)$"]',
-    'nwr["seamark:type"~"^(harbour|anchorage|mooring|small_craft_facility)$"]',
-    'nwr["leisure"="marina"]',
-    'nwr["harbour"]',
-    ...categories.osm.map((rule) => {
-      const key = qlString(rule.key);
-      const filter =
-        rule.values === "*"
-          ? `["${key}"]`
-          : `["${key}"~"^(${rule.values.map((v) => qlString(regexLiteral(v))).join("|")})$"]`;
-      return `nwr${filter}["name"]`;
-    }),
-  ];
-  return [
-    `[out:json][timeout:${timeoutSeconds}];`,
-    "(",
-    ...statements.map((s) => `  ${s}${box};`),
-    ");",
-    "out geom;",
-    "",
-  ].join("\n");
-}
-
 /** `[out:json]` query for `statements`, each limited to `bbox`, answered with full geometry. */
 function boxQuery(statements: string[], bbox: Bbox, timeoutSeconds: number): string {
   const [west, south, east, north] = bbox;
   const box = `(${south},${west},${north},${east})`;
   return [`[out:json][timeout:${timeoutSeconds}];`, "(", ...statements.map((s) => `  ${s}${box};`), ");", "out geom;", ""].join(
     "\n",
+  );
+}
+
+/**
+ * Overpass QL for the gazetteer skeleton of one box (Spec 03, step 1; N7 4.3/4.4): gulfs and bays, islands, coastal
+ * settlements, capes, straits, harbours, marinas and anchorage seamarks. No seas (they come from Marine Regions only),
+ * no peninsulas (coast sections come from the configuration) and no POIs (the stage around the candidates loads them).
+ */
+export function buildGazetteerQuery(bbox: Bbox, timeoutSeconds: number): string {
+  return boxQuery(
+    [
+      'relation["place"="gulf"]',
+      'relation["natural"="bay"]',
+      'way["natural"="bay"]',
+      'nwr["place"~"^(island|islet|archipelago)$"]',
+      'node["place"~"^(town|village|hamlet)$"]',
+      'nwr["natural"~"^(bay|cape|strait)$"]',
+      'nwr["seamark:type"~"^(harbour|anchorage|mooring|small_craft_facility)$"]',
+      'nwr["leisure"="marina"]',
+      'nwr["harbour"]',
+    ],
+    bbox,
+    timeoutSeconds,
+  );
+}
+
+/** One tag rule of `categories.osm` as the land query reads it: key and its values (`"*"`: any value). */
+export type LandQueryRule = { key: string; values: string[] | "*" };
+
+/**
+ * Overpass QL for the things on land of one ring box (stage `gazetteer.land`, N7 4.4): nodes, ways and relations of
+ * every rule (one statement each, values as an anchored alternation), answered with full geometry. `requireWikidata`
+ * (the far ring) keeps only elements with a `wikidata` tag.
+ */
+export function buildLandQuery(bbox: Bbox, rules: LandQueryRule[], timeoutSeconds: number, requireWikidata = false): string {
+  const wikidata = requireWikidata ? '["wikidata"]' : "";
+  return boxQuery(
+    rules.map((r) => {
+      const key = qlString(r.key);
+      const filter = r.values === "*" ? `["${key}"]` : `["${key}"~"^(${r.values.map((v) => qlString(regexLiteral(v))).join("|")})$"]`;
+      return `nwr${filter}${wikidata}`;
+    }),
+    bbox,
+    timeoutSeconds,
   );
 }
 
@@ -113,26 +121,61 @@ export function buildBoundaryQuery(country: string, levels: number[], timeoutSec
   ].join("\n");
 }
 
+/** One named part of a split Overpass job: `part` names it in errors and archive keys. */
+export type OverpassPart = { part: string; ql: string };
+
 /**
- * Overpass QL for the coarse gazetteer features of one country (plan 14b): islands and archipelagos, named bays (the
- * caller keeps the large ones as gulfs) and the towns of `cfg.placeTypes`, all inside the country's `admin_level=2`
- * area, with full geometry. `country` is an ISO 3166-1 alpha-2 code.
+ * The boundary queries of one country as parts (B15): `country` (the country relation itself, `admin_level=2`) and
+ * one `level-<n>` query per level, each inside the country's area. A level that times out is fetched again alone.
  */
-export function buildCoarseFeatureQuery(country: string, cfg: GazetteerConfig["coarse"], timeoutSeconds: number): string {
-  const cc = qlString(country);
-  const places = cfg.placeTypes.map((t) => qlString(regexLiteral(t))).join("|");
-  const statements = [
-    'way[place~"^(island|archipelago)$"](area.c);',
-    'relation[place~"^(island|archipelago)$"](area.c);',
-    "way[natural=bay][name](area.c);",
-    "relation[natural=bay][name](area.c);",
-    `node[place~"^(${places})$"](area.c);`,
+export function buildBoundaryQueries(country: string, levels: number[], timeoutSeconds: number): OverpassPart[] {
+  return [
+    { part: "country", ql: buildBoundaryQuery(country, [], timeoutSeconds) },
+    ...levels.map((level) => ({
+      part: `level-${level}`,
+      ql: [
+        `[out:json][timeout:${timeoutSeconds}];`,
+        `area["ISO3166-1"="${qlString(country)}"][admin_level=2]->.c;`,
+        "(",
+        `  relation[boundary=administrative][admin_level=${level}](area.c);`,
+        ");",
+        "out geom;",
+        "",
+      ].join("\n"),
+    })),
   ];
+}
+
+/** The kinds the coarse feature import asks Overpass for, one query each (B15). */
+export const COARSE_KINDS = ["islands", "bays", "towns"] as const;
+export type CoarseKind = (typeof COARSE_KINDS)[number];
+
+/**
+ * The coarse feature query of one kind for one country (B15): inside the country's `admin_level=2` area and, when
+ * given, `box` (the country's part of the Mediterranean box, or a block of it after a failure), with full geometry. `islands`: islands and
+ * archipelagos; `bays`: named bays (the caller keeps the large ones as gulfs); `towns`: the nodes of `cfg.placeTypes`.
+ * One query for all kinds of a large country overloaded the public Overpass server (HTTP 502). `country` is an
+ * ISO 3166-1 alpha-2 code.
+ */
+export function buildCoarseKindQuery(
+  country: string,
+  cfg: GazetteerConfig["coarse"],
+  kind: CoarseKind,
+  timeoutSeconds: number,
+  box?: Bbox,
+): string {
+  const places = cfg.placeTypes.map((t) => qlString(regexLiteral(t))).join("|");
+  const statements = {
+    islands: ['way[place~"^(island|archipelago)$"]', 'relation[place~"^(island|archipelago)$"]'],
+    bays: ["way[natural=bay][name]", "relation[natural=bay][name]"],
+    towns: [`node[place~"^(${places})$"]`],
+  }[kind];
+  const filter = box ? `(area.c)(${box[1]},${box[0]},${box[3]},${box[2]})` : "(area.c)";
   return [
     `[out:json][timeout:${timeoutSeconds}];`,
-    `area["ISO3166-1"="${cc}"][admin_level=2]->.c;`,
+    `area["ISO3166-1"="${qlString(country)}"][admin_level=2]->.c;`,
     "(",
-    ...statements.map((s) => `  ${s}`),
+    ...statements.map((st) => `  ${st}${filter};`),
     ");",
     "out geom;",
     "",
@@ -185,4 +228,32 @@ export async function overpassQuery(
     throw new RetryableHttpError("overpass answer has no elements array", res.status);
   }
   return { raw, elements: parsed.elements as OverpassElement[] };
+}
+
+/**
+ * `overpassQuery` with repetition (B15): a `RetryableHttpError` (429, 502, 504, timeout, a `remark` with a runtime
+ * error, an HTML answer) is tried again up to `cfg.retries` times, waiting `cfg.retryDelaySeconds` and doubling it
+ * per attempt. After the last attempt it throws a `RetryableHttpError` that names `opts.part` and keeps the last
+ * failure as its cause (a job retry later may still succeed). Errors that are not retryable pass through at once.
+ * `opts.sleep` replaces the wait (tests).
+ */
+export async function overpassQueryRetrying(
+  transport: Transport,
+  ql: string,
+  ctx: CallContext,
+  cfg: GazetteerConfig["overpass"],
+  opts: { sleep?: (ms: number) => Promise<void>; part?: string } = {},
+): Promise<{ raw: string; elements: OverpassElement[] }> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await overpassQuery(transport, ql, ctx, cfg);
+    } catch (error) {
+      if (!(error instanceof RetryableHttpError)) throw error;
+      if (attempt >= cfg.retries) {
+        throw new RetryableHttpError(`overpass part ${opts.part ?? "query"} failed after ${attempt + 1} attempts: ${error.message}`, error.status, { cause: error });
+      }
+      await sleep(cfg.retryDelaySeconds * 1000 * 2 ** attempt);
+    }
+  }
 }

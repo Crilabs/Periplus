@@ -3,10 +3,10 @@ import type { ExtractRouteOutput } from "@/lib/ai/tasks/extract-route";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documentVersions, geoNames, pageAssessments, places, researchRouteStops } from "@/lib/db/schema";
-import { locateQuote } from "@/lib/domain/extraction/quote";
+import { locateQuote } from "@/lib/domain/research/text/quote";
 import { isGreek, normalizeName } from "@/lib/domain/gazetteer/names";
-import { plausibleDate } from "@/lib/domain/mentions/classification";
-import { jsonUuids } from "@/lib/domain/mentions/scope";
+import { plausibleDate } from "@/lib/domain/research/util/dates";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import { activeAssessor } from "./assessment";
 import { activeRouteExtractor, berthNameForms, berthNameMatches, placeNames, type NamedPlace } from "./assign";
 

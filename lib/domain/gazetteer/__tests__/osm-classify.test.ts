@@ -12,11 +12,9 @@ describe("classifyOsm", () => {
     ["anchorage seamark", { "seamark:type": "anchorage", name: "Anchorage A" }, { type: "bay" }],
     ["island", { place: "island", name: "Αίγινα" }, { type: "island" }],
     ["islet", { place: "islet", "name:en": "Small Rock" }, { type: "islet" }],
-    ["sea", { place: "sea", name: "Saronic" }, { type: "sea" }],
     ["gulf", { place: "gulf", name: "Σαρωνικός Κόλπος" }, { type: "gulf" }],
     ["cape", { natural: "cape", name: "Akra" }, { type: "cape" }],
     ["strait", { natural: "strait", name: "Stenó" }, { type: "strait" }],
-    ["peninsula", { natural: "peninsula", name: "Methana" }, { type: "coast_section" }],
     ["bay", { natural: "bay", name: "Όρμος Κλήμα" }, { type: "bay" }],
     ["village", { place: "village", name: "Perdika" }, { type: "settlement" }],
     ["city", { place: "city", name: "Valletta" }, { type: "settlement" }],
@@ -24,6 +22,13 @@ describe("classifyOsm", () => {
     ["ruins", { historic: "ruins", name: "Temple" }, { type: "poi", category: "culture" }],
   ])("%s", (_label, tags, expected) => {
     expect(classifyOsm(tags, categories)).toEqual(expected);
+  });
+
+  it("a sea and a peninsula are no gazetteer objects (B5, B6): seas come from Marine Regions, coast sections from config", () => {
+    expect(classifyOsm({ place: "sea", name: "Aegean Sea" }, categories)).toBeNull();
+    expect(classifyOsm({ place: "sea", name: "Aegean Sea" }, categories, "relation")).toBeNull();
+    expect(classifyOsm({ natural: "peninsula", name: "Peloponnese" }, categories)).toBeNull();
+    expect(classifyOsm({ natural: "peninsula", name: "Peloponnese" }, categories, "relation")).toBeNull();
   });
 
   it("an unnamed bay is null", () => {
@@ -57,6 +62,27 @@ describe("classifyOsm", () => {
     expect(classifyOsm({ ...tags, admin_level: "4" }, categories, "relation")).toEqual({ type: "admin_region", adminLevel: 4 });
     expect(classifyOsm({ ...tags, admin_level: "4" }, categories, "way")).toBeNull();
     expect(classifyOsm({ boundary: "administrative", admin_level: "4" }, categories, "relation")).toBeNull();
+  });
+
+  it.each([
+    ["bus stop", { highway: "bus_stop" }, { type: "poi", category: "transport" }],
+    ["taxi stand", { amenity: "taxi" }, { type: "poi", category: "transport" }],
+    ["beach", { natural: "beach" }, { type: "poi", category: "beach" }],
+    ["jetty", { man_made: "jetty" }, { type: "poi", category: "landing" }],
+    ["pier", { man_made: "pier" }, { type: "poi", category: "landing" }],
+  ])("an unnamed %s passes: its rule allows unnamed objects (N7)", (_label, tags, expected) => {
+    expect(classifyOsm(tags, categories)).toEqual(expected);
+  });
+
+  it("an unnamed object whose rule does not allow it is null; skeleton types stay name-bound", () => {
+    expect(classifyOsm({ amenity: "restaurant" }, categories)).toBeNull();
+    expect(classifyOsm({ natural: "bay" }, categories)).toBeNull();
+    expect(classifyOsm({ man_made: "pier", harbour: "yes" }, categories)).toBeNull();
+    expect(classifyOsm({ leisure: "beach_resort" }, categories)).toBeNull();
+  });
+
+  it("a named pier tagged harbour stays a harbour (the land stage filters it)", () => {
+    expect(classifyOsm({ man_made: "pier", harbour: "yes", name: "X" }, categories)).toEqual({ type: "harbour" });
   });
 
   it("place outranks a harbour tag", () => {

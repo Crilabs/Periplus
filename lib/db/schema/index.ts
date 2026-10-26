@@ -5,7 +5,7 @@ export * from "./geo";
 export * from "./derived";
 export * from "./sources";
 export * from "./text";
-export * from "./profiles";
+export * from "./wikidata";
 export * from "./deliveries";
 export * from "./quality";
 export * from "./images";

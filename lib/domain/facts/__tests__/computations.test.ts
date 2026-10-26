@@ -53,7 +53,7 @@ describe("recordComputation", () => {
         ["shelter.N", 0.8, 0.5, ACTIVE, id, "2026-10-19"],
         ["swell_protection", 0.3, 0.4, ACTIVE, id, "2026-10-19"],
       ]);
-      expect(fs.every((f) => f.computationId === r.id && f.mentionId === null && f.reviewDecisionId === null)).toBe(true);
+      expect(fs.every((f) => f.computationId === r.id && f.reviewDecisionId === null)).toBe(true);
     });
   });
 

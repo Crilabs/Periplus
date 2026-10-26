@@ -61,9 +61,6 @@ export const crawlRulesSchema = z.strictObject({
   boilerplateSelectors: fields.boilerplateSelectors.default([]),
 });
 
-/** Partial crawl rules (e.g. whitelist entries): only the given keys, validated, no defaults filled in. */
-export const crawlRulesPatchSchema = z.strictObject(fields).partial();
-
 export type CrawlRules = z.infer<typeof crawlRulesSchema>;
 
 export const DEFAULT_CRAWL_RULES: CrawlRules = crawlRulesSchema.parse({});

@@ -1,9 +1,9 @@
 import { sql } from "drizzle-orm";
 import type { CategoriesConfig } from "@/lib/config";
-import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
+import { consolidationConfigFor } from "@/lib/domain/rules/active";
 import type { Db } from "@/lib/db/client";
 import type { PoiCategory } from "@/lib/db/schema";
-import { validAtAlias } from "@/lib/domain/timeline";
+import { validAtAlias } from "@/lib/db/valid-at";
 import { categoryForTags } from "./osm-classify";
 
 export type ReclassifyResult = { cleared: number; changed: number; geoObjectIds: string[] };
@@ -13,17 +13,16 @@ type PoiRow = { id: string; category: PoiCategory | null; tags: Record<string, s
 /**
  * Re-applies `categories.osm` to the stored OSM POIs (spec 15 A): valid, unmerged `poi` rows of origin `osm` with
  * tags (Wikidata and review POIs carry none and keep their category). A POI whose category differs gets the new one,
- * or none (delivery then drops it). Returns the ids of the geo objects with a place within reach of a changed POI:
- * `poiRadiusM` (highlight facts) or, when the rules select highlights (spec 16), the largest `highlights.reachKm`. Their
- * profiles and highlight selections are stale and need a new consolidation. `dryRun` counts only and writes nothing.
+ * or none (delivery then drops it). Returns the ids of the geo objects with a place within
+ * `poiRadiusM` of a changed POI. `dryRun` counts only and writes nothing.
  */
 export async function reclassifyPois(
   db: Db,
   categories: CategoriesConfig,
   opts: { dryRun?: boolean; radiusM?: number } = {},
 ): Promise<ReclassifyResult> {
-  const rules = await consolidationConfigFor(db);
-  const radiusM = opts.radiusM ?? Math.max(rules.rules.highlight.poiRadiusM, ...(rules.highlights?.reachKm ?? []).map((km) => km * 1000));
+  const rules = consolidationConfigFor();
+  const radiusM = opts.radiusM ?? rules.rules.highlight.poiRadiusM;
   const { rows } = await db.execute<PoiRow>(sql`
     select o.id, o.category::text as category, o.tags
     from geo_objects o

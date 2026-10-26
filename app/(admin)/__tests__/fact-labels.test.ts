@@ -6,7 +6,6 @@ import {
   EXPOSURE_SCALE_WORDS,
   FACT_ATTRIBUTE_LABELS,
   formatFactValue,
-  MENTION_EXTRACTION_STATUS_LABELS,
   SHELTER_SCALE_WORDS,
 } from "../_components/labels";
 
@@ -43,9 +42,5 @@ describe("fact labels", () => {
   it("the scale words cover exactly the values of the fact schema's text scales", () => {
     expect(Object.keys(SHELTER_SCALE_WORDS).sort()).toEqual(Object.values(TEXT_SCALE).map(String).sort());
     expect(Object.keys(EXPOSURE_SCALE_WORDS).sort()).toEqual(Object.values(EXPOSURE_SCALE).map(String).sort());
-  });
-
-  it("a mention whose unit failed has a German status", () => {
-    expect(MENTION_EXTRACTION_STATUS_LABELS.failed).toBe("Fehlgeschlagen");
   });
 });

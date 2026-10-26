@@ -1,4 +1,4 @@
-import type { PlaceImage } from "@/contract";
+import type { PlaceImage } from "@/contract/v2";
 import type { DeliverableImage } from "./types";
 
 /*
@@ -26,7 +26,6 @@ export function mapImages(publicId: string, rows: DeliverableImage[]): PlaceImag
     observedAt: r.observedAt,
     license: r.license,
     attribution: r.attribution,
-    sourceUrl: null,
     camera: r.camera,
   }));
 }

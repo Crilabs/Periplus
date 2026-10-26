@@ -4,7 +4,7 @@ import type { SeabedType } from "@/lib/db/schema";
 import { getEnv, type Env } from "@/lib/env";
 import { normalizeName, transliterateElot743 } from "@/lib/domain/gazetteer/names";
 import type { LonLat } from "@/lib/domain/geometry/water";
-import { stripAffix } from "@/lib/domain/mentions/affixes";
+import { stripAffix } from "@/lib/domain/research/util/affixes";
 import {
   COMPARISON_ATTRIBUTES,
   comparedPosition,
