@@ -4,6 +4,7 @@ import type { Db } from "@/lib/db/client";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { AREA_IMPORT_STAGE } from "@/lib/pipeline/areas-import";
 import { DATASETS_STAGE } from "@/lib/pipeline/datasets";
+import { LAND_STAGE } from "@/lib/pipeline/gazetteer/land";
 import { GAZETTEER_STAGES } from "@/lib/pipeline/gazetteer/stages";
 import { GEOMETRY_RUN_STAGES } from "@/lib/pipeline/geometry-run";
 import { startRun } from "@/lib/pipeline/runs";
@@ -12,9 +13,10 @@ import { SEED_STAGE } from "@/lib/pipeline/tile-scope";
 
 /*
  * „Aufbauen“ of a subdivision (spec 14 „Landesteil-Lauf“, „Admin-UI“): one run of kind `full` with the stages of the
- * gazetteer, dataset, seed, marina website (`places.website`, spec 15 C), geometry runs and the Revier import, in that
- * order. The research of the subdivision is a separate run the operator starts per subdivision (N6: the build neither
- * re-reads mentions nor discovers sources). Each stage plans when it is reached, so the run needs no
+ * gazetteer, dataset, seed, marina website (`places.website`, spec 15 C), geometry runs, things on land
+ * (`gazetteer.land`, N7 4.4) and the Revier import, in that order. The research of the subdivision is a separate run the operator
+ * starts per subdivision (N6: the build neither re-reads mentions nor discovers sources). Each stage plans when it is
+ * reached, so the run needs no
  * tiles to start (the gazetteer creates them). A queue per country („Alle offenen aufbauen“) builds one subdivision
  * after the other: `queued_at` marks the waiting ones, and the end of a build (finished, failed or ended by an admin,
  * `afterBuildRunEnded`) starts the oldest waiting one of the same country.
@@ -28,6 +30,10 @@ export const SUBDIVISION_BUILD_STAGES = [
   // the websites of the seeded marinas and ports become approved sources (spec 15 C); their crawl stays a separate run
   PLACE_WEBSITE_STAGE,
   ...GEOMETRY_RUN_STAGES,
+  // the things on land around the candidates (N7 4.4), after geometry: `geometry.detect_bays` creates candidates
+  // (computed bays) and `geometry.place` their computed anchor positions, the ring centers; neither reads POIs.
+  // It assigns what it loads itself.
+  LAND_STAGE,
   AREA_IMPORT_STAGE,
 ] as const;
 

@@ -17,6 +17,15 @@ export function bufferBbox([west, south, east, north]: Bbox, km: number): Bbox {
   return [west - dLon, south - dLat, east + dLon, north + dLat];
 }
 
+/** The overlap of two boxes, or null when they only touch or lie apart. */
+export function clipBbox([w1, s1, e1, n1]: Bbox, [w2, s2, e2, n2]: Bbox): Bbox | null {
+  const west = Math.max(w1, w2);
+  const south = Math.max(s1, s2);
+  const east = Math.min(e1, e2);
+  const north = Math.min(n1, n2);
+  return west < east && south < north ? [west, south, east, north] : null;
+}
+
 function envelope([west, south, east, north]: Bbox) {
   return sql`ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)`;
 }
@@ -103,24 +112,50 @@ export async function landCoverage(db: Db, bbox: Bbox): Promise<number> {
 }
 
 /**
- * The box land polygons are imported for (spec 14): the union of the extents of the configured Mediterranean seas
- * plus `bufferKm`, snapped outward to the tile grid. Needs the seas (`importSeas`); throws without them.
+ * The box land polygons are imported for (spec 14): `subdivisions.mediterranean.bbox` (which covers the configured
+ * Mediterranean seas) plus `bufferKm`, snapped outward to the tile grid. Reads no data, so the land import can run on an
+ * empty database before the first run "Landesteile neu bilden" (B3, B14).
  */
-export async function mediterraneanBbox(db: Db, bufferKm: number): Promise<Bbox> {
-  const mrgids = getConfig().subdivisions.mediterranean.marineRegionsMrgids.map(String);
-  const { rows } = await db.execute<{ w: number | null; s: number; e: number; n: number }>(sql`
-    SELECT ST_XMin(x.b) AS w, ST_YMin(x.b) AS s, ST_XMax(x.b) AS e, ST_YMax(x.b) AS n
-    FROM (SELECT ST_Extent(geom)::geometry AS b FROM geo_objects
-          WHERE type = 'sea' AND origin = 'marine_regions' AND valid_to IS NULL
-            AND tags->>'mrgid' IN (${sql.join(mrgids.map((m) => sql`${m}`), sql`, `)})) x
-    WHERE x.b IS NOT NULL`);
-  const r = rows[0];
-  if (!r || r.w === null) throw new Error("Mediterranean seas missing – run the stage gazetteer.coarse first");
-  const [w, s, e, n] = bufferBbox([r.w, r.s, r.e, r.n], bufferKm);
+export function mediterraneanBbox(bufferKm: number): Bbox {
+  const [w, s, e, n] = bufferBbox(getConfig().subdivisions.mediterranean.bbox, bufferKm);
   return [
     Math.floor(w / TILE_SIZE) * TILE_SIZE,
     Math.floor(s / TILE_SIZE) * TILE_SIZE,
     Math.ceil(e / TILE_SIZE) * TILE_SIZE,
     Math.ceil(n / TILE_SIZE) * TILE_SIZE,
+  ];
+}
+
+/**
+ * Splits `bbox` into blocks of at most `blockDeg` degrees per side, from the south-west corner, row by row; the last
+ * column and row end exactly at the box edge, so the blocks cover the box without gaps.
+ */
+export function countryBlocks([west, south, east, north]: Bbox, blockDeg: number): Bbox[] {
+  const steps = (from: number, to: number) => Math.max(1, Math.ceil((to - from) / blockDeg - 1e-9));
+  const columns = steps(west, east);
+  const rows = steps(south, north);
+  const blocks: Bbox[] = [];
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      blocks.push([
+        west + column * blockDeg,
+        south + row * blockDeg,
+        column === columns - 1 ? east : west + (column + 1) * blockDeg,
+        row === rows - 1 ? north : south + (row + 1) * blockDeg,
+      ]);
+    }
+  }
+  return blocks;
+}
+
+/** The four quadrants of `bbox`: south-west, south-east, north-west, north-east. */
+export function quadrants([west, south, east, north]: Bbox): Bbox[] {
+  const x = (west + east) / 2;
+  const y = (south + north) / 2;
+  return [
+    [west, south, x, y],
+    [x, south, east, y],
+    [west, y, x, north],
+    [x, y, east, north],
   ];
 }

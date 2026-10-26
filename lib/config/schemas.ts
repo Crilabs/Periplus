@@ -181,8 +181,17 @@ const coastSectionsSchema = z.array(coastSectionSchema).superRefine((sections, c
 /** Which unit is a Landesteil, per country, and how the OSM units are split, merged, added or left out (spec 14). */
 export const subdivisionsConfigSchema = z
   .strictObject({
-    /** IHO sea areas counted as Mediterranean (Marine Regions ids); the Sea of Marmara is not among them. */
-    mediterranean: z.strictObject({ marineRegionsMrgids: z.array(z.number().int().positive()).min(1) }),
+    mediterranean: z.strictObject({
+      /** IHO sea areas counted as Mediterranean (Marine Regions ids); the Sea of Marmara is not among them. */
+      marineRegionsMrgids: z.array(z.number().int().positive()).min(1),
+      /**
+       * [west, south, east, north] covering those seas: the box of the land polygon import (plus `landBufferKm`), so
+       * the import needs no seas in the database (B3, B14).
+       */
+      bbox: z
+        .tuple([z.number().min(-180).max(180), z.number().min(-90).max(90), z.number().min(-180).max(180), z.number().min(-90).max(90)])
+        .refine(([w, s, e, n]) => w < e && s < n, "bbox must be [west, south, east, north] with west < east and south < north"),
+    }),
     countries: z.record(
       iso2,
       z.strictObject({
@@ -194,6 +203,11 @@ export const subdivisionsConfigSchema = z
         cycleDays: z.number().int().min(1),
         status: subdivisionStatus.optional(),
         statusReason: z.string().trim().min(1).optional(),
+        /**
+         * OSM relation id of the country itself, when its relation is no `boundary=administrative` + `admin_level=2`
+         * (Palestine: `boundary=disputed`, B2). Stored as the country regardless of its tags.
+         */
+        countryRelation: z.number().int().positive().optional(),
       }),
     ),
     /** A first-level unit split into groups of second-level units (by Wikidata id). */
@@ -275,15 +289,18 @@ export const categoriesSchema = z.strictObject({
       key: z.string().min(1),
       values: z.union([z.literal("*"), z.array(z.string().min(1)).min(1)]),
       category: poiCategory,
+      /** The rule also classifies objects without a name (N7: bus stops, taxi stands, piers, beaches). */
+      unnamed: z.boolean().default(false),
     }),
   ),
   wikidata: z.record(wikidataQid, poiCategory),
 });
 
-const distanceMSchema = z.strictObject({
-  default: z.number().positive(),
-  ...Object.fromEntries(geoObjectTypeEnum.enumValues.map((t) => [t, z.number().positive().optional()])),
-} as { default: z.ZodNumber } & Record<GeoObjectType, z.ZodOptional<z.ZodNumber>>);
+/** An optional distance in metres per geo object type. */
+const distanceMByType = Object.fromEntries(
+  geoObjectTypeEnum.enumValues.map((t) => [t, z.number().positive().optional()]),
+) as Record<GeoObjectType, z.ZodOptional<z.ZodNumber>>;
+const distanceMSchema = z.strictObject({ default: z.number().positive(), ...distanceMByType });
 
 export const gazetteerSchema = z.strictObject({
   overpass: z.strictObject({
@@ -292,7 +309,16 @@ export const gazetteerSchema = z.strictObject({
     ratePerMinute: z.number().positive(),
     /** Relations with more member points are skipped: assembling the Aegean Sea (678,000 points) exhausted the database. */
     maxRelationPoints: z.number().int().positive(),
-  }),
+    /** Repeats of a part that failed retryably (429, 502, 504, timeout); the wait doubles per attempt (B15). */
+    retries: z.number().int().min(0),
+    retryDelaySeconds: z.number().positive(),
+    /**
+     * Edge length in degrees of the blocks a coarse feature query is split into when it fails for the whole country
+     * (B15); a block that fails is split into quadrants down to `minBlockDeg`.
+     */
+    blockDeg: z.number().positive(),
+    minBlockDeg: z.number().positive(),
+  }).refine((o) => o.minBlockDeg <= o.blockDeg, { message: "minBlockDeg must not exceed blockDeg", path: ["minBlockDeg"] }),
   /** Marine Regions WFS (IHO sea areas, spec 14). */
   marineRegions: z.strictObject({
     endpoint: z.url(),
@@ -305,6 +331,19 @@ export const gazetteerSchema = z.strictObject({
     languages: z.array(z.string().regex(/^[a-z]{2,3}$/)).min(1),
     classes: z.record(wikidataQid, geoObjectType),
     ratePerMinute: z.number().positive(),
+  }),
+  /**
+   * The stage `gazetteer.land` (N7 4.4, 4.6): candidates are grouped into query boxes of at most `maxBoxKm` per edge;
+   * `marginM` widens both rings (radii from `research.state`, `landRings`) for the extent of the anchor area around
+   * the candidate point; `minSplitKm` is the floor for splitting a failing box; `wikidataClasses` are the Wikidata classes of the far ring (POIs, category from
+   * `categories.wikidata`).
+   */
+  land: z.strictObject({
+    maxBoxKm: z.number().positive(),
+    marginM: z.number().nonnegative(),
+    /** A ring box whose query keeps failing is split into quadrants while they stay at least this long on their larger edge. */
+    minSplitKm: z.number().positive(),
+    wikidataClasses: z.array(wikidataQid).min(1),
   }),
   geonames: z.strictObject({
     baseUrl: z.url(),
@@ -321,16 +360,28 @@ export const gazetteerSchema = z.strictObject({
     gulfMinAreaKm2: z.number().nonnegative(),
     coastDistanceKm: z.number().positive(),
   }),
-  /** A gazetteer POI counts as a place's POI (and is kept at import) within this distance of the coast (spec 16). */
-  poiCoastDistanceKm: z.number().positive(),
   /** Radius around an object's centroid within which a subdivision's land counts for the assignment (spec 14). */
   subdivisionRadiusM: z.number().positive(),
   islandParentBufferM: z.number().nonnegative(),
-  coastSectionMaxAreaKm2: z.number().positive(),
+  /**
+   * A bay, islet or cape without island within `islandParentBufferM` takes the nearest island within this distance,
+   * unless land outside every island polygon is nearer (B10).
+   */
+  islandParentNearestM: z.number().nonnegative(),
   merge: z.strictObject({
     trigramMin: z.number().min(0).max(1),
     uncertainTrigramMin: z.number().min(0).max(1),
     distanceM: distanceMSchema,
+    /**
+     * Per type, the distance within which a name of similarity `≥ trigramMin` is still the same object (B9: a Wikidata
+     * point lies up to ~1 km from the OSM bay); the distance used is the larger of this and `distanceM`.
+     */
+    similarNameDistanceM: z.strictObject(distanceMByType),
+    /**
+     * Words a bay name carries in any language (B9): stripped token-wise from both sides (normalized) before the trigram
+     * comparison of bays in `findMatch`, so "Ormos Valariou" and "Valariou Bay" are one name.
+     */
+    genericBayWords: z.array(z.string().min(1)),
     uncertainDistanceFactor: z.number().min(1),
     wikidataLinkDistanceM: z.number().positive(),
     geonamesNewObjectRadiusM: z.number().positive(),

@@ -12,6 +12,7 @@ import {
   pickDeliveryName,
   transliterateElot743,
 } from "@/lib/domain/gazetteer/names";
+import { newId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";
 
 // Outside the pilot box 23.0-23.75 E x 37.0-38.0 N.
@@ -233,6 +234,15 @@ describe("ensureFallbackNames", () => {
         "wikidata",
       ]);
       expect((await validNames(tx, withoutEn)).filter((n) => n.language === "de")).toEqual([]);
+    });
+  });
+
+  it("takes more ids than one statement has parameters (one array parameter)", async () => {
+    await withRollback(async (tx) => {
+      const id = await insertGeoObject(tx);
+      await addNames(tx, id, [{ name: "Poros", language: "en", origin: "osm" }]);
+      const ids = [...Array.from({ length: 70_000 }, () => newId()), id];
+      expect(await ensureFallbackNames(tx, ids)).toBe(1);
     });
   });
 

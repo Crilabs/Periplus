@@ -1,13 +1,15 @@
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
+import { wikidataQuery } from "@/lib/adapters/wikidata";
+import { getConfig } from "@/lib/config";
 import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, places, rateLimits, reviewTasks } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
-import { importWikidata } from "@/lib/pipeline/gazetteer/wikidata";
+import { importWikidata, importWikidataItems } from "@/lib/pipeline/gazetteer/wikidata";
 import { withRollback } from "@/test/db";
 import { createdInThisTransaction, ownGeoObjectIds, pairTaskOf, pairTasksOf } from "@/test/gazetteer";
 
@@ -47,7 +49,7 @@ const ITEMS = {
   island: rows(q(1), "Q23442", 26.1, 35.7, [["Testinsel", "de"], ["Test Island", "en"]]),
   // Bay ~450 m east of an OSM bay with the same English name, no tag.
   bay: rows(q(2), "Q39594", 26.205, 35.75, [["Testbucht", "de"], ["Kalm Bay", "en"]]),
-  // Monastery without OSM counterpart.
+  // Monastery without OSM counterpart (a POI class: only `importWikidataItems` with POI classes creates it).
   monastery: rows(q(3), "Q44613", 26.3, 35.8, [["Moni Dokimis", "en"], ["Μονή Δοκιμής", "el"], ["Test Monastery", "en", true]]),
   // Cape ~1500 m north of an OSM cape with the same name: beyond 1 km, within 2 km.
   cape: rows(q(4), "Q185113", 26.35, 35.6635, [["Akrotiri Kavos", "en"]]),
@@ -91,19 +93,12 @@ function transport(bindings: unknown[], seen: HttpRequest[] = []): Transport {
 
 const allRows = () => Object.values(ITEMS).flat();
 
-/** The pre-existing OSM objects and a full wikidata token bucket, all rolled back with the test. */
+/** The pre-existing OSM objects and a full wikidata token bucket, all rolled back with the test. No IHO sea: no stage needs one. */
 async function prepare(db: Db): Promise<Record<string, string>> {
   await db
     .insert(rateLimits)
     .values({ key: "http:wikidata", tokens: 1_000_000, updatedAt: new Date() })
     .onConflictDoUpdate({ target: rateLimits.key, set: { tokens: 1_000_000, updatedAt: new Date() } });
-  const sea = await upsertGeoObject(db, {
-    type: "sea",
-    origin: "marine_regions",
-    geometry: { type: "Polygon", coordinates: [[[25.5, 35.0], [27.0, 35.0], [27.0, 36.2], [25.5, 36.2], [25.5, 35.0]]] },
-    names: [],
-  });
-  if ("skipped" in sea) throw new Error(sea.skipped);
   const ids: Record<string, string> = {};
   for (const draft of OSM_OBJECTS) {
     const r = await upsertGeoObject(db, draft);
@@ -130,6 +125,20 @@ async function names(db: Db, geoObjectId: string) {
 const run = (db: Db, bindings = allRows(), seen?: HttpRequest[]) =>
   importWikidata(db, { scope: scope(), runId: newId() }, { transport: transport(bindings, seen) });
 
+/** POI classes as a caller of `importWikidataItems` passes them (the stage around the candidates, not the skeleton). */
+const POI_CLASSES = { Q44613: "poi", Q33506: "poi", Q839954: "poi" } as const;
+
+/** `importWikidataItems` on the parsed bindings, with the skeleton classes plus `POI_CLASSES`; POIs may be created. */
+async function runItems(db: Db, bindings: unknown[]) {
+  const { gazetteer, categories } = getConfig();
+  const items = await wikidataQuery(transport(bindings), "SELECT", { db, runId: newId(), stage: "test" }, gazetteer.wikidata);
+  return importWikidataItems(db, items, {
+    classes: { ...gazetteer.wikidata.classes, ...POI_CLASSES },
+    categories: categories.wikidata,
+    allowCreate: new Set(["poi", "island", "islet", "cape", "bay"]),
+  });
+}
+
 describe("importWikidata", () => {
   it("links via osm wikidata tag", () =>
     withRollback(async (db) => {
@@ -152,7 +161,9 @@ describe("importWikidata", () => {
       expect(seen).toHaveLength(1);
       const sparql = decodeURIComponent(new URL(seen[0]!.url).searchParams.get("query")!);
       expect(sparql).toContain("wd:Q23442");
-      expect(sparql).toContain("wd:Q44613");
+      // No POI classes in the skeleton (B8).
+      expect(sparql).not.toContain("wd:Q44613");
+      expect(sparql).not.toContain("wd:Q839954");
       expect(sparql).toContain('"hr"');
       const sw = /cornerSouthWest "Point\(([\d.]+) ([\d.]+)\)"/.exec(sparql)!.slice(1).map(Number);
       expect(sw[1]).toBeCloseTo(35.6 - 5 / 111.32, 6);
@@ -175,10 +186,10 @@ describe("importWikidata", () => {
       );
     }));
 
-  it("creates a monastery poi with category culture", () =>
+  it("importWikidataItems with POI classes creates a monastery poi with category culture", () =>
     withRollback(async (db) => {
       await prepare(db);
-      const result = await run(db, ITEMS.monastery);
+      const result = await runItems(db, ITEMS.monastery);
       expect(result).toMatchObject({ linked: 0, created: 1, uncertain: 0 });
       const [monastery] = await byWikidata(db, q(3));
       expect(monastery).toMatchObject({ type: "poi", category: "culture", origin: "wikidata", osmId: null });
@@ -198,7 +209,8 @@ describe("importWikidata", () => {
     withRollback(async (db) => {
       await prepare(db);
       const site = (rows: typeof ITEMS.island, url: string) => rows.map((r) => ({ ...r, website: lit(url) }));
-      await run(db, [...site(ITEMS.island, "https://island.example/"), ...site(ITEMS.monastery, "https://moni.example/")]);
+      await run(db, site(ITEMS.island, "https://island.example/"));
+      await runItems(db, site(ITEMS.monastery, "https://moni.example/"));
       const website = async (id: string) =>
         (await db.select({ w: geoObjects.websiteWikidata }).from(geoObjects).where(eq(geoObjects.wikidataId, id)))[0]?.w;
       expect(await website(q(1))).toBe("https://island.example/");
@@ -211,6 +223,26 @@ describe("importWikidata", () => {
       const result = await run(db, ITEMS.settlement);
       expect(result).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 });
       expect(await byWikidata(db, q(5))).toEqual([]);
+    }));
+
+  it("an item that is a harbour and a bay is a harbour: without OSM counterpart it is not created (B9)", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const port = [...rows(q(40), "Q39594", 26.25, 35.8, [["Dokimi Port", "en"]]), ...rows(q(40), "Q44782", 26.25, 35.8, [["Dokimi Port", "en"]])];
+      expect(await run(db, port)).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 });
+      expect(await byWikidata(db, q(40))).toEqual([]);
+      // Classes in the other order: still a harbour, which links to the OSM harbour of the same name.
+      const harbour = await upsertGeoObject(db, {
+        type: "harbour",
+        origin: "osm",
+        osmId: osm("node", 40),
+        geometry: { type: "Point", coordinates: [26.25, 35.8] },
+        names: [{ name: "Dokimi Port", language: "en", origin: "osm" }],
+      });
+      if ("skipped" in harbour) throw new Error(harbour.skipped);
+      const reversed = [...rows(q(40), "Q44782", 26.25, 35.8, [["Dokimi Port", "en"]]), ...rows(q(40), "Q39594", 26.25, 35.8, [["Dokimi Port", "en"]])];
+      expect(await run(db, reversed)).toMatchObject({ linked: 1, created: 0 });
+      expect(await byWikidata(db, q(40))).toEqual([expect.objectContaining({ id: harbour.id, type: "harbour" })]);
     }));
 
   it("an uncertain match with an OSM object is decided 'same' by the system and merged into the OSM object", () =>
@@ -251,7 +283,7 @@ describe("importWikidata", () => {
       if ("skipped" in existing) throw new Error(existing.skipped);
       // The existing POI already matches by name and distance, the other carries another QID: uncertain.
       await db.update(geoObjects).set({ wikidataId: q(31) }).where(eq(geoObjects.id, existing.id));
-      const result = await run(db, ITEMS.monastery);
+      const result = await runItems(db, ITEMS.monastery);
       expect(result).toMatchObject({ linked: 0, created: 1, uncertain: 1 });
       const [monastery] = await byWikidata(db, q(3));
       expect(monastery).toMatchObject({ type: "poi" });
@@ -272,25 +304,19 @@ describe("importWikidata", () => {
   it("a wikidata POI stores its class as tags.wikidata_class", () =>
     withRollback(async (db) => {
       await prepare(db);
-      await run(db, ITEMS.monastery);
+      await runItems(db, ITEMS.monastery);
       const [monastery] = await byWikidata(db, q(3));
       const [row] = await db.select({ tags: geoObjects.tags }).from(geoObjects).where(eq(geoObjects.id, monastery!.id));
       expect(row!.tags).toEqual({ wikidata_class: "Q44613" });
     }));
 
-  it("missing IHO seas fails with a clear message before any request", () =>
-    withRollback(async (db) => {
-      const seen: HttpRequest[] = [];
-      await expect(run(db, allRows(), seen)).rejects.toThrow("IHO seas missing for wikidata-test");
-      expect(seen).toHaveLength(0);
-    }));
-
-  it("skips a wikidata POI farther than poiCoastDistanceKm from the sea", () =>
+  it("the skeleton creates no POI: an archaeological site (Q839954) and a monastery are not created", () =>
     withRollback(async (db) => {
       await prepare(db);
-      const far = rows(q(32), "Q44613", 26.3, 34.5, [["Moni Ferne", "en"]]);
-      expect(await run(db, far)).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 1 });
+      const site = rows(q(32), "Q839954", 26.3, 35.75, [["Archaia Dokimi", "en"]]);
+      expect(await run(db, [...site, ...ITEMS.monastery])).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 });
       expect(await byWikidata(db, q(32))).toEqual([]);
+      expect(await byWikidata(db, q(3))).toEqual([]);
     }));
 
   it("same match whose object carries another QID creates a new object, merged into the OSM object by the system", () =>
@@ -372,7 +398,7 @@ describe("importWikidata", () => {
       const islet = rows(q(1), "Q207524", 26.1, 35.7, [["Testinsel", "de"]]);
       const museum = rows(q(8), "Q33506", 26.2505, 35.8505, [["Test Museum", "en"]]);
 
-      const result = await run(db, [...islet, ...museum]);
+      const result = await runItems(db, [...islet, ...museum]);
       expect(result).toMatchObject({ linked: 1, created: 1, uncertain: 0 });
       const [poi] = await byWikidata(db, q(8));
       expect(poi).toMatchObject({ type: "poi", category: "culture", origin: "wikidata", osmId: null });
@@ -408,7 +434,7 @@ describe("importWikidata", () => {
     withRollback(async (db) => {
       const ids = await prepare(db);
       const first = await run(db);
-      expect(first).toMatchObject({ linked: 2, created: 2, uncertain: 1 });
+      expect(first).toMatchObject({ linked: 2, created: 1, uncertain: 1 });
       const qids = [1, 2, 3, 4, 5].map(q);
       const objects = await db
         .select({ id: geoObjects.id, wikidataId: geoObjects.wikidataId })
@@ -431,7 +457,7 @@ describe("importWikidata", () => {
       });
       const before = await snapshot();
       // the wikidata cape was merged into the OSM cape, which took over its QID
-      expect(before.objects.map((o) => o.wikidataId).sort()).toEqual([q(1), q(2), q(3), q(4), q(4)].sort());
+      expect(before.objects.map((o) => o.wikidataId).sort()).toEqual([q(1), q(2), q(4), q(4)].sort());
       const second = await run(db);
       expect(second).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 });
       expect(await snapshot()).toEqual(before);

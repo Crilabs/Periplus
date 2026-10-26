@@ -187,7 +187,7 @@ Die Schritte 4 bis 7 laufen, wie heute, je Kachel und Kachelblock und warten auf
 ## Admin-UI (ändert Teil-Spec 09)
 
 - `/subdivisions` „Länder und Landesteile“ (eigener Menüpunkt, Wunsch Christian): Baum **Land → Landesteile**. Ein Land, das als Ganzes ein Landesteil ist (`wholeCountry`, Kleinstaaten), steht als eine Zeile ohne Unterebene. Je Zeile: Name (de), Schlüssel, Status, Küstenkacheln, davon bearbeitet, letzter Lauf, Kosten.
-  - **Status je Landesteil:** `nicht begonnen` (kein Lauf), `läuft` (Landesteil-Lauf aktiv), `aufgebaut` (`built_at` gesetzt), `fehlgeschlagen` (letzter Lauf mit Fehler), `ausgeschlossen` (mit Grund aus der Konfiguration).
+  - **Status je Landesteil:** `nicht begonnen` (kein Lauf), `teilweise` (kein Aufbau fertig, aber mindestens eine Stufe des Aufbaus in einem Lauf mit diesem Landesteil als Umfang beendet, auch ein Einzellauf; N7 4.5, B11), `läuft` (irgendein Lauf mit diesem Landesteil als Umfang wartet oder läuft), `aufgebaut` (`built_at` gesetzt), `fehlgeschlagen` (letzter Aufbau mit Fehler), `ausgeschlossen` (mit Grund aus der Konfiguration). Die Landesteil-Seite zeigt je Stufe den jüngsten Lauf, der sie beendet hat; Länder mit einem begonnenen Landesteil sind aufgeklappt.
   - **Status je Land:** zusammengefasst aus seinen Landesteilen (z. B. „3 von 13 aufgebaut, 1 läuft“).
   - **Manuell starten:** Knopf „Aufbauen“ je Landesteil (auch erneut, wenn schon aufgebaut); je Land „Alle offenen aufbauen“, das die nicht begonnenen Landesteile nacheinander in die Warteschlange stellt (Entscheidung Claude). Ausgeschlossene Landesteile haben keinen Knopf.
   - Filter nach Status; Detailseite je Landesteil mit Kacheln, Revieren, Kennzahlen und Läufen.

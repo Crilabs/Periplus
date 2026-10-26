@@ -142,7 +142,7 @@ export function registerOperateTools(server: McpServer, caller: McpCaller): void
   subdivisionTool(
     "subdivision_build",
     "Landesteil aufbauen",
-    "Startet den Aufbau eines Landesteils (Gazetteer, Datensätze, Seed, Orts-Websites, Geometrie); läuft schon einer, nennt die Antwort ihn. Ohne `confirm` nur Umfang (Kacheln), Schätzung für den Lauf als Ganzes und Budgetstand.",
+    "Startet den Aufbau eines Landesteils (Gazetteer, Datensätze, Seed, Orts-Websites, Geometrie, Dinge an Land, Revier-Import); läuft schon einer, nennt die Antwort ihn. Ohne `confirm` nur Umfang (Kacheln), Schätzung für den Lauf als Ganzes und Budgetstand.",
     "build",
     async (key) => startSubdivisionBuild(getDb(), await boss(), key, by),
   );

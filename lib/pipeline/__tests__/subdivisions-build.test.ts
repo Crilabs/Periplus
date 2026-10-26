@@ -9,8 +9,9 @@ import { geoObjects, subdivisions } from "@/lib/db/schema";
 import type { PlannedSubdivision } from "@/lib/domain/subdivisions/plan";
 import { applySubdivisionPlan, loadAdminUnits } from "@/lib/domain/subdivisions/store";
 import { importCoarse, importSeas } from "@/lib/pipeline/gazetteer/coarse";
-import { buildSubdivisions } from "@/lib/pipeline/subdivisions";
+import { assignCoarse, buildSubdivisions, MissingCountries } from "@/lib/pipeline/subdivisions";
 import { startSubdivisionsBuildRun } from "@/lib/pipeline/subdivisions-run";
+import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { withRollback } from "@/test/db";
 
 // Rate limiting is covered by the http tests; its bucket rows would stay locked by the test transaction.
@@ -44,6 +45,18 @@ async function insertUnit(
 async function insertLand(tx: Db, box: [number, number, number, number]): Promise<void> {
   const [w, s, e, n] = box;
   await tx.execute(sql.raw(`INSERT INTO land_polygons (id, geom, dataset_version) VALUES (gen_random_uuid(), ${square(w, s, e, n)}, 'test')`));
+}
+
+/**
+ * One country object per configured country (none for `except`), far from any sea and without `osm_id`, so
+ * `loadAdminUnits` never plans them: they only satisfy the check that every configured country was imported.
+ */
+async function insertCountries(tx: Db, except: string[] = []): Promise<void> {
+  for (const country of Object.keys(getConfig().subdivisions.countries).filter((c) => !except.includes(c))) {
+    await tx.execute(sql.raw(`
+      INSERT INTO geo_objects (id, type, origin, admin_level, tags, geom)
+      VALUES (gen_random_uuid(), 'country', 'osm', 2, '${JSON.stringify({ country })}'::jsonb, ST_Multi(${square(-40, -60, -39.9, -59.9)}))`));
+  }
 }
 
 function entry(key: string, geoObjectId: string | null, over: Partial<PlannedSubdivision> = {}): PlannedSubdivision {
@@ -324,6 +337,33 @@ describe("importCoarse", () => {
     });
   });
 
+  it("PS: the configured countryRelation is the country, though tagged boundary=disputed without admin_level (B2)", async () => {
+    expect(getConfig().subdivisions.countries.PS!.countryRelation).toBe(1703814);
+    const ring = (w: number, s: number, e: number, n: number) => [
+      { lat: s, lon: w }, { lat: s, lon: e }, { lat: n, lon: e }, { lat: n, lon: w }, { lat: s, lon: w },
+    ];
+    const elements = [
+      {
+        type: "relation", id: 1703814,
+        tags: { boundary: "disputed", type: "boundary", name: "Palestinian Territories", "ISO3166-1": "PS" },
+        members: [{ type: "way", ref: 1, role: "outer", geometry: ring(34.2, 31.2, 35.6, 32.6) }],
+      },
+    ];
+    const queries: string[] = [];
+    const transport: Transport = async (req) => {
+      queries.push(decodeURIComponent(String(req.body)));
+      return makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
+    };
+    await withRollback(async (tx) => {
+      expect(await importCoarse(tx, "PS", { transport })).toEqual({ countries: 1, regions: 0 });
+      expect(queries.some((q) => q.includes("relation(id:1703814)"))).toBe(true);
+      const units = await unitsOf(tx, "PS");
+      expect(units).toHaveLength(1);
+      expect(units[0]).toMatchObject({ type: "country", level: 2, osmId: "relation/1703814" });
+      expect((units[0]!.tags as Record<string, string>).country).toBe("PS");
+    });
+  });
+
   it("HR: the 21 counties, without Vojvodina from the leaking area query", async () => {
     await withRollback(async (tx) => {
       expect(await importCoarse(tx, "HR", { transport: fixtureTransport() })).toEqual({ countries: 1, regions: 21 });
@@ -352,6 +392,7 @@ describe("buildSubdivisions", () => {
       await insertUnit(tx, [10, 47, 11, 48], { tags: { country: "HR", "ISO3166-2": "HR-92" } });
       await insertLand(tx, [10.2, 45.2, 10.8, 45.8]);
       await insertLand(tx, [11.2, 45.2, 11.8, 45.8]);
+      await insertCountries(tx);
 
       const result = await buildSubdivisions(tx, new Date("2026-10-20T10:00:00Z"));
       expect(result.planned).toBe(2);
@@ -372,7 +413,31 @@ describe("buildSubdivisions", () => {
       await insertUnit(tx, [11, 45.01, 12, 46], { tags: { country: "HR", "ISO3166-2": "HR-93" } });
       // Land exists, but elsewhere (like the Saronic pilot land): the check is per unit, not "any land".
       await insertLand(tx, [10.2, 47.2, 10.8, 47.8]);
+      await insertCountries(tx);
       await expect(buildSubdivisions(tx)).rejects.toThrow(/HR-93.*npx tsx scripts\/import-land-polygons\.ts --shp <land_polygons\.shp> --mediterranean/s);
+    });
+  });
+
+  it("fails naming every configured country without a country object, writing no subdivision", async () => {
+    await withRollback(async (tx) => {
+      await tx.execute(sql`UPDATE geo_objects SET valid_to = current_date WHERE type IN ('sea', 'country', 'admin_region') AND valid_to IS NULL AND origin IN ('marine_regions', 'osm') AND tags ? 'country'`);
+      const sea = String(mrgids[0]);
+      await tx.execute(sql.raw(`
+        INSERT INTO geo_objects (id, type, origin, tags, geom)
+        VALUES (gen_random_uuid(), 'sea', 'marine_regions', '{"mrgid":"${sea}"}'::jsonb, ST_Multi(${square(11, 44, 12, 45)}))`));
+      await insertUnit(tx, [11, 45.01, 12, 46], { tags: { country: "HR", "ISO3166-2": "HR-94" } });
+      await insertLand(tx, [11.2, 45.2, 11.8, 45.8]);
+      await insertCountries(tx, ["PS", "LY"]);
+      const count = async () => (await tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM subdivisions`)).rows[0]!.n;
+      const before = await count();
+      const error = await buildSubdivisions(tx).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(MissingCountries);
+      expect((error as MissingCountries).countries).toEqual(["LY", "PS"]);
+      expect((error as Error).message).toMatch(/LY, PS/);
+      expect(await count()).toBe(before);
     });
   });
 
@@ -385,24 +450,93 @@ describe("buildSubdivisions", () => {
 });
 
 describe("startSubdivisionsBuildRun", () => {
-  it("creates a system run with scope subdivisions and both stages", async () => {
+  function fakeBoss(inserted: Array<{ queue: string; key: unknown }>): PgBoss {
+    return {
+      insert: async (queue: string, jobs: Array<{ id: string; data: { key: string } }>) => {
+        inserted.push(...jobs.map((j) => ({ queue, key: j.data.key })));
+        return jobs.map((j) => j.id);
+      },
+    } as unknown as PgBoss;
+  }
+
+  it("creates a system run with scope subdivisions: seas first, then countries, the build and the assignment", async () => {
     await withRollback(async (tx) => {
+      await insertLand(tx, [10.2, 45.2, 10.8, 45.8]);
       const inserted: Array<{ queue: string; key: unknown }> = [];
-      const boss = {
-        insert: async (queue: string, jobs: Array<{ id: string; data: { key: string } }>) => {
-          inserted.push(...jobs.map((j) => ({ queue, key: j.data.key })));
-          return jobs.map((j) => j.id);
-        },
-      } as unknown as PgBoss;
-      const { id } = await startSubdivisionsBuildRun(tx, boss, "test");
-      const { rows } = await tx.execute<{ scope_type: string; scope_id: string; stages: string[] }>(
-        sql`SELECT scope_type, scope_id, stages FROM runs WHERE id = ${id}::uuid`,
+      const { id } = await startSubdivisionsBuildRun(tx, fakeBoss(inserted), "test");
+      const { rows } = await tx.execute<{ scope_type: string; scope_id: string; stages: string[]; params: unknown }>(
+        sql`SELECT scope_type, scope_id, stages, params FROM runs WHERE id = ${id}::uuid`,
       );
-      expect(rows[0]).toEqual({ scope_type: "system", scope_id: "subdivisions", stages: ["gazetteer.coarse", "subdivisions.build"] });
-      const jobs = inserted.filter((j) => j.queue === "gazetteer.coarse").map((j) => j.key);
-      expect(jobs).toContain("seas");
-      expect(jobs).toContain("HR");
-      expect(jobs).toHaveLength(Object.keys(getConfig().subdivisions.countries).length + 1);
+      expect(rows[0]).toEqual({
+        scope_type: "system",
+        scope_id: "subdivisions",
+        stages: ["gazetteer.seas", "gazetteer.coarse", "subdivisions.build", "subdivisions.assign"],
+        params: {},
+      });
+      expect(inserted).toEqual([{ queue: "gazetteer.coarse", key: "seas" }]);
+    });
+  });
+
+  it("keeps the countries to import again in the run params", async () => {
+    await withRollback(async (tx) => {
+      await insertLand(tx, [10.2, 45.2, 10.8, 45.8]);
+      const { id } = await startSubdivisionsBuildRun(tx, fakeBoss([]), "test", { countries: ["PS"] });
+      const { rows } = await tx.execute<{ params: unknown }>(sql`SELECT params FROM runs WHERE id = ${id}::uuid`);
+      expect(rows[0]!.params).toEqual({ countries: ["PS"] });
+      await expect(startSubdivisionsBuildRun(tx, fakeBoss([]), "test", { countries: ["XX"] })).rejects.toMatchObject({
+        reason: "unknown_country",
+        message: expect.stringContaining("XX"),
+      });
+    });
+  });
+
+  it("refuses to start without land polygons, before a run exists", async () => {
+    await withRollback(async (tx) => {
+      await tx.execute(sql`DELETE FROM land_polygons`);
+      const runs = async () => (await tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM runs`)).rows[0]!.n;
+      const before = await runs();
+      const error = await startSubdivisionsBuildRun(tx, fakeBoss([]), "test").then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(RunScopeNotReady);
+      expect((error as RunScopeNotReady).reason).toBe("land_missing");
+      expect(await runs()).toBe(before);
+    });
+  });
+});
+
+describe("assignCoarse", () => {
+  it("GR: assigns subdivision, sea and parent to the coarse objects of the country", async () => {
+    await withRollback(async (tx) => {
+      // Synthetic Greece at 10-12 E x 45-46 N: the country, one subdivision, a configured sea around it and an island.
+      const country = await insertUnit(tx, [10, 45, 12, 46], { type: "country", level: 2, tags: { country: "GR", "ISO3166-1": "GR" } });
+      await insertLand(tx, [10.2, 45.2, 11.8, 45.8]);
+      await applySubdivisionPlan(tx, [entry("GR-T1", country, { country: "GR", adminLevel: 2 })], TODAY);
+      const [sd] = await validRows(tx, ["GR-T1"]);
+      const sea = await tx.execute<{ id: string }>(sql.raw(`
+        INSERT INTO geo_objects (id, type, origin, tags, geom)
+        VALUES (gen_random_uuid(), 'sea', 'marine_regions', '{"mrgid":"${mrgids[0]}"}'::jsonb, ST_Multi(${square(9.5, 44.5, 12.5, 46.5)}))
+        RETURNING id`));
+      const island = await tx.execute<{ id: string }>(sql.raw(`
+        INSERT INTO geo_objects (id, type, origin, osm_id, tags, geom)
+        VALUES (gen_random_uuid(), 'island', 'osm', 'way/${++seq}9991', '{}'::jsonb, ST_Multi(${square(10.5, 45.5, 10.6, 45.6)}))
+        RETURNING id`));
+      const islandRow = async () =>
+        (await tx.select({ subdivisionId: geoObjects.subdivisionId, seaId: geoObjects.seaId }).from(geoObjects).where(eq(geoObjects.id, island.rows[0]!.id)))[0];
+      expect(await islandRow()).toEqual({ subdivisionId: null, seaId: null });
+
+      const result = await assignCoarse(tx, "GR");
+      expect(result.subdivisions).toBeGreaterThanOrEqual(1);
+      expect(result.seas).toBeGreaterThanOrEqual(1);
+      expect(await islandRow()).toEqual({ subdivisionId: sd!.id, seaId: sea.rows[0]!.id });
+    });
+  });
+
+  it("fails for a country without a country object", async () => {
+    await withRollback(async (tx) => {
+      await tx.execute(sql`UPDATE geo_objects SET valid_to = current_date WHERE type = 'country' AND valid_to IS NULL AND tags->>'country' = 'GR'`);
+      await expect(assignCoarse(tx, "GR")).rejects.toThrow(/GR/);
     });
   });
 });

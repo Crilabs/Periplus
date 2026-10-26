@@ -114,10 +114,13 @@ async function seedCandidates(tx: Db, key: string, names: string[] = ["Vathi", "
 describe("/api/mcp start tools", () => {
   /**
    * Every start tool with the kind of run it starts; each is given a fresh `GATE_KEY` subdivision with one tile and two
-   * candidates (geometry also bathymetry on that tile and land beside it, its starter refuses a tile without).
+   * candidates (geometry also bathymetry on that tile and land beside it, its starter refuses a tile without; the
+   * subdivisions run land polygons, N7 refuses it without).
    */
   const START_TOOLS: Array<[string, StartKind, (key: string) => object, ((tx: Db, tileId: string) => Promise<unknown>)?]> = [
-    ["subdivisions_rebuild", "subdivisions", () => ({})],
+    ["subdivisions_rebuild", "subdivisions", () => ({}), async (tx) => {
+      await tx.insert(landPolygons).values({ geom: sql`ST_MakeEnvelope(21.10, 35.20, 21.11, 35.21, 4326)`, datasetVersion: "test" });
+    }],
     ["subdivision_build", "build", (key) => ({ subdivision: key })],
     ["gazetteer_start", "gazetteer", (key) => ({ subdivision: key })],
     ["datasets_start", "datasets", (key) => ({ subdivision: key })],

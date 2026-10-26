@@ -2,8 +2,9 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { asGeoJson } from "@/lib/db/geometry";
 import { landPolygons } from "@/lib/db/schema";
-import { bufferBbox, featureIntersectsBbox, importLandPolygons, landCoverage } from "@/lib/domain/gazetteer/land";
-import type { Bbox } from "@/lib/domain/tiles";
+import { getConfig } from "@/lib/config";
+import { bufferBbox, clipBbox, featureIntersectsBbox, importLandPolygons, landCoverage, mediterraneanBbox } from "@/lib/domain/gazetteer/land";
+import { TILE_SIZE, type Bbox } from "@/lib/domain/tiles";
 import { withRollback } from "@/test/db";
 
 type LandFeature = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
@@ -176,5 +177,33 @@ describe("bufferBbox", () => {
 
   it("returns the box unchanged for 0 km", () => {
     expect(bufferBbox([23, 37, 24, 38], 0)).toEqual([23, 37, 24, 38]);
+  });
+});
+
+describe("mediterraneanBbox", () => {
+  it("is the configured box plus the buffer, snapped outward to the tile grid, without any sea in the database", () => {
+    // config/subdivisions.json: mediterranean.bbox [-6.1, 30.0, 36.3, 45.9]; 55 km are 0.49 degrees of latitude.
+    expect(getConfig().subdivisions.mediterranean.bbox).toEqual([-6.1, 30.0, 36.3, 45.9]);
+    const box = mediterraneanBbox(55);
+    expect(box).toEqual([-6.75, 29.5, 37, 46.5]);
+    expect(box.every((v) => Number.isInteger(v / TILE_SIZE))).toBe(true);
+  });
+
+  it("covers the buffered configured box", () => {
+    const [w, s, e, n] = bufferBbox(getConfig().subdivisions.mediterranean.bbox, 5);
+    const box = mediterraneanBbox(5);
+    expect(box[0]).toBeLessThanOrEqual(w);
+    expect(box[1]).toBeLessThanOrEqual(s);
+    expect(box[2]).toBeGreaterThanOrEqual(e);
+    expect(box[3]).toBeGreaterThanOrEqual(n);
+  });
+});
+
+describe("clipBbox", () => {
+  it("returns the overlap of two boxes and null when they only touch or lie apart", () => {
+    expect(clipBbox([-10, 35, 4, 44], [-6.75, 29.5, 37, 46.5])).toEqual([-6.75, 35, 4, 44]);
+    expect(clipBbox([14, 35.7, 15.1, 36.2], [-6.75, 29.5, 37, 46.5])).toEqual([14, 35.7, 15.1, 36.2]);
+    expect(clipBbox([-6, 50, 2, 59], [-6.75, 29.5, 37, 46.5])).toBeNull();
+    expect(clipBbox([0, 46.5, 2, 50], [-6.75, 29.5, 37, 46.5])).toBeNull();
   });
 });

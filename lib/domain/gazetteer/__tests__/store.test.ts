@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, places } from "@/lib/db/schema";
 import { isPublicId } from "@/lib/domain/ids";
-import { upsertGeoObject as upsertOrSkip, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
+import { ensureFallbackNames } from "@/lib/domain/gazetteer/names";
+import { resolveGeometrySql, upsertGeoObject as upsertOrSkip, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import type { Db } from "@/lib/db/client";
 import { withRollback } from "@/test/db";
 
@@ -88,6 +89,26 @@ describe("upsertGeoObject", () => {
       expect(second).toEqual({ id: first.id, created: false, changed: false, names: 0 });
       const rows = await db.select().from(geoObjects).where(eq(geoObjects.osmId, draft.osmId!));
       expect(rows).toHaveLength(1);
+    }));
+
+  it("stores an unnamed bus stop without inventing a name (N7)", () =>
+    withRollback(async (db) => {
+      const draft: GeoObjectDraft = {
+        type: "poi",
+        category: "transport",
+        origin: "osm",
+        osmId: osmId("node"),
+        tags: { highway: "bus_stop" },
+        geometry: { type: "Point", coordinates: [25.05, 35.35] },
+        names: [],
+      };
+      const r = await upsertGeoObject(db, draft);
+      expect(r).toMatchObject({ created: true, names: 0 });
+      expect(await ensureFallbackNames(db, [r.id])).toBe(0);
+      const names = await db.select().from(geoNames).where(eq(geoNames.geoObjectId, r.id));
+      expect(names).toEqual([]);
+      const [row] = await db.select().from(geoObjects).where(eq(geoObjects.id, r.id));
+      expect(row).toMatchObject({ type: "poi", category: "transport" });
     }));
 
   it("updates a changed geometry", () =>
@@ -223,5 +244,42 @@ describe("upsertGeoObject", () => {
       // the fitting ones pass
       await attempt(sql`update geo_objects set type = 'island', public_id = ${`rg_${bad}`} where id = ${poi.id}`);
       await attempt(sql`update places set public_id = ${`sp_${bad}`} where id = ${place!.id}`);
+    }));
+});
+
+describe("resolveGeometrySql", () => {
+  // Nested sub-selects over constant arguments were pulled up by the planner and constant-folded once per reference:
+  // ST_BuildArea of a 225,000-point relation ran 18 times during planning (1.1 GB, 14 s per upsert, Bay of Biscay,
+  // N7 check). Every step is a MATERIALIZED CTE now: the plan evaluates each heavy function once, with a Var argument.
+  it("assembles relation lines once: one ST_BuildArea and one ST_MakeValid in the plan, no InitPlan", () =>
+    withRollback(async (db) => {
+      const lines = [line([[25.0, 35.0], [25.1, 35.0], [25.1, 35.1]]), line([[25.1, 35.1], [25.0, 35.1], [25.0, 35.0]])];
+      const { rows } = await db.execute<{ "QUERY PLAN": string }>(sql`EXPLAIN (VERBOSE, FORMAT TEXT) ${resolveGeometrySql({ lines })}`);
+      const plan = rows.map((r) => r["QUERY PLAN"]).join("\n");
+      expect(plan.match(/st_buildarea/gi) ?? []).toHaveLength(1);
+      expect(plan.match(/st_makevalid/gi) ?? []).toHaveLength(1);
+      expect(plan).not.toMatch(/InitPlan/);
+    }));
+
+  it("still builds the area and repairs or refuses what the old statement did", () =>
+    withRollback(async (db) => {
+      const closed = [line([[25.0, 35.0], [25.1, 35.0], [25.1, 35.1]]), line([[25.1, 35.1], [25.0, 35.1], [25.0, 35.0]])];
+      const open = [line([[25.0, 35.0], [25.1, 35.0], [25.1, 35.1]])];
+      const bowtie: GeoJSON.Polygon = { type: "Polygon", coordinates: [[[25.0, 35.0], [25.1, 35.1], [25.1, 35.0], [25.0, 35.1], [25.0, 35.0]]] };
+      const empty: GeoJSON.Polygon = { type: "Polygon", coordinates: [] };
+      const resolve = async (geometry: GeoObjectDraft["geometry"]) => {
+        const { rows } = await db.execute<{ g: string | null; reason: string }>(resolveGeometrySql(geometry));
+        const r = rows[0]!;
+        if (!r.g) return { invalid: r.reason };
+        const [row] = (await db.execute<{ t: string; a: number }>(sql`select GeometryType(${r.g}::geometry) as t, ST_Area(${r.g}::geometry) as a`)).rows;
+        return row!;
+      };
+      expect(await resolve({ lines: closed })).toMatchObject({ t: "POLYGON", a: expect.closeTo(0.01, 6) });
+      // lines that enclose nothing become their centroid
+      expect(await resolve({ lines: open })).toMatchObject({ t: "POINT" });
+      // an invalid polygon is repaired, keeping its own dimension
+      expect(await resolve(bowtie)).toMatchObject({ t: "MULTIPOLYGON", a: expect.closeTo(0.005, 6) });
+      // nothing valid remains: the reason comes back
+      expect(await resolve(empty)).toEqual({ invalid: "empty geometry" });
     }));
 });

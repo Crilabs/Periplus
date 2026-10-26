@@ -7,7 +7,7 @@ const lang = ["en"];
 
 function config(over: Partial<SubdivisionsConfig> & { countries: SubdivisionsConfig["countries"] }): SubdivisionsConfig {
   return {
-    mediterranean: { marineRegionsMrgids: [1] },
+    mediterranean: { marineRegionsMrgids: [1], bbox: [0, 0, 1, 1] },
     split: [],
     wholeCountry: [],
     extra: [],

@@ -2,25 +2,32 @@ import { getTransport } from "@/lib/adapters/http";
 import { getArchive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
-import { COARSE_STAGE, importCoarse, importCoarseFeatures, importSeas } from "@/lib/pipeline/gazetteer/coarse";
+import { COARSE_STAGE, coarseCountries, importCoarse, importCoarseFeatures, importSeas, SEAS_STAGE } from "@/lib/pipeline/gazetteer/coarse";
 import type { StageDefinition } from "@/lib/pipeline/runs";
-import { buildSubdivisions, SUBDIVISIONS_STAGE } from "@/lib/pipeline/subdivisions";
+import { assignCoarse, buildSubdivisions, SUBDIVISIONS_ASSIGN_STAGE, SUBDIVISIONS_STAGE } from "@/lib/pipeline/subdivisions";
 
-/** Job key of the sea import within the stage `gazetteer.coarse`; every other job is a country code. */
-const SEAS_KEY = "seas";
-
-/** The coarse gazetteer: one job for the IHO seas, one per configured country. */
-export const gazetteerCoarseStage: StageDefinition = {
-  name: COARSE_STAGE,
+/** The IHO seas: one job, a stage before the countries so each country job finds them (B14). */
+export const gazetteerSeasStage: StageDefinition = {
+  name: SEAS_STAGE,
   queue: "gazetteer.coarse",
   async plan() {
-    return [{ key: SEAS_KEY }, ...Object.keys(getConfig().subdivisions.countries).map((country) => ({ key: country, country }))];
+    return [{ key: "seas" }];
   },
 };
 
+/** The coarse gazetteer: one job per country, only `params.countries` when the run names them. */
+export const gazetteerCoarseStage: StageDefinition = {
+  name: COARSE_STAGE,
+  queue: "gazetteer.coarse",
+  async plan(_db, run) {
+    return coarseCountries(run.params).map((country) => ({ key: country, country }));
+  },
+};
+
+/** Queue `gazetteer.coarse` serves both stages: the seas job, and the boundaries and coarse features of one country. */
 export const gazetteerCoarseHandler: JobHandler<JobData> = async (data, ctx) => {
   if (!data.runId) throw new Error("gazetteer.coarse job without runId");
-  if (data.key === SEAS_KEY) {
+  if (data.stage === SEAS_STAGE) {
     const created = await importSeas(ctx.db, { transport: getTransport(), runId: data.runId });
     ctx.log.info({ created }, "seas imported");
     return;
@@ -42,7 +49,26 @@ export const subdivisionsBuildStage: StageDefinition = {
   },
 };
 
-export const subdivisionsBuildHandler: JobHandler<JobData> = async (_data, ctx) => {
+/**
+ * The assignment of the coarse objects: one job per configured country, also in a run limited to some countries, since
+ * `subdivisions.build` may have replaced subdivisions of any country.
+ */
+export const subdivisionsAssignStage: StageDefinition = {
+  name: SUBDIVISIONS_ASSIGN_STAGE,
+  queue: "subdivisions.build",
+  async plan() {
+    return Object.keys(getConfig().subdivisions.countries).map((country) => ({ key: country, country }));
+  },
+};
+
+/** Queue `subdivisions.build` serves both stages: the Landesteil list, and the assignment of one country. */
+export const subdivisionsBuildHandler: JobHandler<JobData> = async (data, ctx) => {
+  if (data.stage === SUBDIVISIONS_ASSIGN_STAGE) {
+    if (typeof data.country !== "string") throw new Error("subdivisions.assign job without country");
+    const result = await assignCoarse(ctx.db, data.country);
+    ctx.log.info({ country: data.country, ...result }, "coarse objects assigned");
+    return;
+  }
   const { warnings, ...result } = await buildSubdivisions(ctx.db);
   ctx.log.info({ ...result, deviations: result.deviations.length, warnings: warnings.length }, "subdivisions built");
 };

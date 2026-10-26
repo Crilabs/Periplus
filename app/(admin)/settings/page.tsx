@@ -203,7 +203,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
     ["Puffer Land", `${gazetteer.landBufferKm} km`],
     ["Küstenabstand", `${gazetteer.coastDistanceM} m`],
     ["Puffer Insel-Elternobjekt", `${gazetteer.islandParentBufferM} m`],
-    ["Max. Fläche OSM-Küstenabschnitt als Elternobjekt", `${gazetteer.coastSectionMaxAreaKm2} km²`],
+    ["Nächste Insel als Elternobjekt bis", `${gazetteer.islandParentNearestM} m`],
     ["Trigramm-Ähnlichkeit (sicher)", String(gazetteer.merge.trigramMin)],
     ["Trigramm-Ähnlichkeit (unsicher)", String(gazetteer.merge.uncertainTrigramMin)],
     [
@@ -212,6 +212,13 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
         .map(([type, m]) => `${type === "default" ? "sonst" : type} ${m} m`)
         .join(", "),
     ],
+    [
+      "Zusammenführungsabstand bei ähnlichem Namen",
+      Object.entries(gazetteer.merge.similarNameDistanceM)
+        .map(([type, m]) => `${type} ${m} m`)
+        .join(", ") || "–",
+    ],
+    ["Allgemeine Buchtwörter", gazetteer.merge.genericBayWords.join(", ")],
     ["Faktor Abstand (unsicher)", String(gazetteer.merge.uncertainDistanceFactor)],
     ["Wikidata-Verknüpfung bis", `${gazetteer.merge.wikidataLinkDistanceM} m`],
     ["GeoNames neues Objekt ab", `${gazetteer.merge.geonamesNewObjectRadiusM} m`],

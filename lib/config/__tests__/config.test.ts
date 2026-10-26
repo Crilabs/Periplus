@@ -6,7 +6,7 @@ import { FACT_SCHEMAS } from "@/config/fact-schema";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { countryConfig, getConfig, getConsolidationConfig, loadConfig } from "../index";
-import { modelsSchema, queuesSchema } from "../schemas";
+import { gazetteerSchema, modelsSchema, queuesSchema } from "../schemas";
 
 const repoConfig = loadConfig("config");
 
@@ -167,6 +167,22 @@ describe("loadConfig", () => {
     ).toThrow(/expireInSeconds/);
   });
 
+  it("Overpass queues expire no sooner than two parts' worst case (a 24-minute land job was fetched twice at the 15-minute default)", () => {
+    const { retries, timeoutSeconds, retryDelaySeconds } = repoConfig.gazetteer.overpass;
+    const worstCase = 2 * ((retries + 1) * (timeoutSeconds + 30) + retryDelaySeconds * (2 ** retries - 1));
+    expect(worstCase).toBe(3900);
+    for (const queue of ["gazetteer.build", "gazetteer.coarse"]) {
+      expect(repoConfig.queues[queue]!.expireInSeconds, queue).toBeGreaterThanOrEqual(worstCase);
+    }
+    const queues = structuredClone(repoConfig.queues) as Record<string, Record<string, unknown>>;
+    queues["gazetteer.build"] = { ...queues["gazetteer.build"], expireInSeconds: worstCase - 1 };
+    expect(() => loadConfig(fixtureDir({ queues }))).toThrow(/queues\.json: gazetteer\.build\.expireInSeconds 3899 is below two Overpass parts' worst case, 3900 s/);
+    // without a value pg-boss's default of 900 s applies and is refused
+    const bare = structuredClone(repoConfig.queues) as Record<string, Record<string, unknown>>;
+    delete bare["gazetteer.coarse"]!.expireInSeconds;
+    expect(() => loadConfig(fixtureDir({ queues: bare }))).toThrow(/gazetteer\.coarse\.expireInSeconds 900 is below/);
+  });
+
   it("rejects an unknown budget service", () => {
     expect(() =>
       loadConfig(fixtureDir({ budgets: { ...repoConfig.budgets, bogus: { dailyEur: 1 } } })),
@@ -281,18 +297,25 @@ describe("loadConfig", () => {
   it("loads categories and gazetteer settings", () => {
     const c = loadConfig("config");
     expect(c.categories.wikidata.Q40080).toBe("beach");
-    expect(c.categories.osm).toContainEqual({ key: "shop", values: ["bakery"], category: "bakery" });
-    expect(c.categories.osm).toContainEqual({ key: "highway", values: ["bus_stop"], category: "transport" });
-    expect(c.categories.osm).toContainEqual({ key: "amenity", values: ["bus_station", "taxi", "ferry_terminal"], category: "transport" });
-    expect(c.categories.osm).toContainEqual({ key: "man_made", values: ["pier"], category: "landing" });
-    expect(c.categories.osm).toContainEqual({ key: "leisure", values: ["slipway"], category: "landing" });
-    expect(c.categories.osm).toContainEqual({ key: "historic", values: "*", category: "culture" });
+    expect(c.categories.osm).toContainEqual({ key: "shop", values: ["bakery"], category: "bakery", unnamed: false });
+    expect(c.categories.osm).toContainEqual({ key: "highway", values: ["bus_stop"], category: "transport", unnamed: true });
+    expect(c.categories.osm).toContainEqual({ key: "amenity", values: ["bus_station", "taxi", "ferry_terminal"], category: "transport", unnamed: true });
+    expect(c.categories.osm).toContainEqual({ key: "man_made", values: ["pier", "jetty"], category: "landing", unnamed: true });
+    expect(c.categories.osm).toContainEqual({ key: "leisure", values: ["slipway"], category: "landing", unnamed: true });
+    expect(c.categories.osm).toContainEqual({ key: "natural", values: ["beach"], category: "beach", unnamed: true });
+    expect(c.categories.osm).toContainEqual({ key: "historic", values: "*", category: "culture", unnamed: false });
     expect(c.gazetteer.overpass.timeoutSeconds).toBe(180);
     expect(c.gazetteer.wikidata.classes.Q23442).toBe("island");
     expect(c.gazetteer.geonames.featureCodes.PPLA2).toBe("settlement");
     expect(c.gazetteer.merge.distanceM.default).toBe(500);
+    // Generic bay words are stripped token-wise from normalized names: each must normalize to one non-empty token.
+    expect(c.gazetteer.merge.genericBayWords).toContain("ormos");
+    for (const word of c.gazetteer.merge.genericBayWords) expect(normalizeName(word)).toMatch(/^\S+$/);
     expect(c.gazetteer.landBufferKm).toBe(55);
-    expect(c.gazetteer.poiCoastDistanceKm).toBe(20);
+    expect(c.gazetteer).not.toHaveProperty("poiCoastDistanceKm");
+    expect(c.gazetteer).not.toHaveProperty("coastSectionMaxAreaKm2");
+    // The skeleton has no POI classes (N7, B8): the stage around the candidates brings its own.
+    expect(Object.values(c.gazetteer.wikidata.classes)).not.toContain("poi");
     expect(c.gazetteer.noAnchoringKinds).toEqual(["military", "cable", "firing_area", "aquaculture"]);
   });
 
@@ -642,6 +665,19 @@ describe("queue configuration", () => {
     const entry = { concurrency: 8, retryLimit: 2, retryDelaySeconds: 120, retryBackoff: true };
     expect(queuesSchema.safeParse({ "fetch.url": { ...entry, expireInSeconds: 3600 } }).success).toBe(true);
     expect(queuesSchema.safeParse({ "fetch.url": { ...entry, expireInSecond: 3600 } }).success).toBe(false);
+  });
+});
+
+describe("gazetteer overpass configuration", () => {
+  it("rejects a minBlockDeg above blockDeg (B15)", () => {
+    const gazetteer = loadConfig("config").gazetteer;
+    const with_ = (blockDeg: number, minBlockDeg: number) =>
+      gazetteerSchema.safeParse({ ...gazetteer, overpass: { ...gazetteer.overpass, blockDeg, minBlockDeg } });
+    expect(with_(2, 0.5).success).toBe(true);
+    expect(with_(2, 2).success).toBe(true);
+    const result = with_(1, 2);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toMatch(/minBlockDeg must not exceed blockDeg/);
   });
 });
 
