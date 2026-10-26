@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   const view = titleView();
   const only = process.argv.find((a) => a.startsWith("--ids="))?.slice(6).split(",").filter(Boolean);
   const ids = only ?? (await subdivisionSpots(db, key, cfg));
-  console.log(`${ids.length} spots in ${key}`);
+  process.stdout.write(`${ids.length} spots in ${key}` + "\n");
   for (const id of ids) {
     const place = await loadPlaceImageInput(db, id, icfg);
     if (!place || !place.country) continue;
@@ -51,14 +51,14 @@ async function main(): Promise<void> {
       const zoom = initialZoom(view, icfg);
       const plan = await planView(db, place, view, zoom, icfg);
       if (!plan.ok) {
-        console.log(`${id} ${place.kind} ${name}: no water view`);
+        process.stdout.write(`${id} ${place.kind} ${name}: no water view` + "\n");
         continue;
       }
       const resolved = await resolveView(db, place, view, { zoom, camera: plan.camera }, icfg, (target) =>
         ensureImagery(db, archive, getTransport(), { geoObjectId: id, lon: target.lon, lat: target.lat, country, coreSizeM: target.coreSizeM }, { db, stage: "preview" }, icfg),
       );
       if (!resolved || !resolved.ok) {
-        console.log(`${id} ${place.kind} ${name}: no water view at ${resolved?.zoom ?? "?"}`);
+        process.stdout.write(`${id} ${place.kind} ${name}: no water view at ${resolved?.zoom ?? "?"}` + "\n");
         continue;
       }
       const { camera, imagery } = resolved;
@@ -67,15 +67,15 @@ async function main(): Promise<void> {
       const caption = `${place.kind} · ${name} · ${light === "evening" ? "Abend" : "Mittag"} · Höhe ${Math.round(camera.heightM)} m · Neigung ${camera.tiltDeg}°`;
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${camera.width}" height="${camera.height}"><rect x="0" y="${camera.height - 40}" width="${camera.width}" height="40" fill="rgba(0,0,0,0.55)"/><text x="14" y="${camera.height - 12}" font-family="Helvetica" font-size="24" fill="white">${caption}</text></svg>`;
       writeFileSync(join(out, `${place.kind}_${id}.jpg`), await sharp(photo).composite([{ input: Buffer.from(svg) }]).jpeg({ quality: 88 }).toBuffer());
-      console.log(`${id} ${caption}`);
+      process.stdout.write(`${id} ${caption}` + "\n");
     } catch (e) {
-      console.log(`${id} ${place.kind} ${name}: error ${String(e).slice(0, 200)}`);
+      process.stdout.write(`${id} ${place.kind} ${name}: error ${String(e).slice(0, 200)}` + "\n");
     }
   }
   process.exit(0);
 }
 
 main().catch((e) => {
-  console.error(e);
+  process.stderr.write(`${e instanceof Error ? (e.stack ?? e.message) : String(e)}\n`);
   process.exit(1);
 });
