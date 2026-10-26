@@ -1152,6 +1152,21 @@ export const imagesSchema = z.strictObject({
   pipeline: z.strictObject({ maxGenerationsPerRun: z.number().int().positive() }),
   composition: z.strictObject({
     /**
+     * Camera fitted to a focus outline (spec 19, `fit.ts`): the lowest height from `minHeightM` (× `heightStep`, up
+     * to `maxHeightM`) at which the focus keeps `margin` from every edge, takes at most the wanted fill and has its
+     * centre within `centreTolerance` of the wanted point (at most `maxIterations` target moves per height).
+     * `floorZoom` is the finest zoom level whose height may be the floor of an automatic title camera.
+     */
+    fit: z.strictObject({
+      margin: z.number().min(0).max(0.45),
+      minHeightM: z.number().positive(),
+      maxHeightM: z.number().positive(),
+      heightStep: z.number().gt(1),
+      centreTolerance: z.number().positive(),
+      maxIterations: z.number().int().positive(),
+      floorZoom: z.enum(["z1", "z2", "z3"]),
+    }),
+    /**
      * Anchorage or mooring field near a town: the camera ground point lies `foregroundM` from the centre of the
      * place, away from the town, so the anchorage is in front and the town behind.
      */
