@@ -1,10 +1,10 @@
 import { sql, type SQL } from "drizzle-orm";
-import type { CoastCollection, CoastFeature } from "@/contract";
+import type { CoastCollection, CoastFeature } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { restrictedAreas, type RestrictedKind } from "@/lib/db/schema/geo";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 import { RESTRICTED_REASON } from "./vocab";
 
 /*
@@ -57,11 +57,11 @@ export function preClipPadDeg(toleranceM: number, maxAbsLat: number): number {
 }
 
 /** Valid on the five-decimal grid: snapped, or reduced to the grid where snapping would break it (review M-3). */
-const onGrid = (g: SQL): SQL =>
+export const onGrid = (g: SQL): SQL =>
   sql`(select case when ST_IsValid(s.g) then s.g else ST_ReducePrecision(${g}, ${GRID_DEG}::float8) end
        from (select ST_SnapToGrid(${g}, ${GRID_DEG}::float8) as g) s)`;
 /** Simplified in the UTM zone, back in WGS84 and made valid (simplify and reprojection can break rings; review M-3). */
-const simplified = (g: SQL, srid: number, toleranceM: number): SQL =>
+export const simplified = (g: SQL, srid: number, toleranceM: number): SQL =>
   sql`ST_MakeValid(ST_Transform(ST_SimplifyPreserveTopology(ST_Transform(${g}, ${srid}::int), ${toleranceM}::float8), 4326))`;
 
 const KIND_ORDER = { land: 0, coastline: 1, restrictedArea: 2 } as const;
@@ -159,7 +159,7 @@ export async function buildCoast(
  * West-to-east, then south-to-north extent of the rounded geometry; the serialized geometry, then a restricted area's
  * reason and source break ties (review M-1); the sort is stable, so the query's id order decides the rest.
  */
-function sortFeatures(features: CoastFeature[]): CoastFeature[] {
+export function sortFeatures(features: CoastFeature[]): CoastFeature[] {
   const keyed = features.map((f) => {
     let xMin = Number.POSITIVE_INFINITY;
     let yMin = Number.POSITIVE_INFINITY;

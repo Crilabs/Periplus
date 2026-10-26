@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, reviewTasks, tiles, type GeoObjectType } from "@/lib/db/schema";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 import { tilesInBbox, type Bbox } from "@/lib/domain/tiles";
 
 const REQUIRED_LANGUAGES = ["de", "en", "el"];

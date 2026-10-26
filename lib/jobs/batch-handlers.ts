@@ -1,11 +1,9 @@
 import type { BatchHandlerEntry } from "@/lib/pipeline/batches";
 import { assessPageBatchEntry } from "@/lib/pipeline/research/assess";
 import { extractBerthBatchEntry } from "@/lib/pipeline/research/extract";
+import { extractLandsideBatchEntry } from "@/lib/pipeline/research/landside-extract";
 import { extractRouteBatchEntry } from "@/lib/pipeline/research/routes";
 import { bundleFactsBatchEntry } from "@/lib/pipeline/research/state";
-import { classificationBatchEntry } from "@/lib/pipeline/text/classify";
-import { disambiguationBatchEntry } from "@/lib/pipeline/text/disambiguate";
-import { extractFactsBatchEntry } from "@/lib/pipeline/text/extract";
 
 /**
  * The batch handler of each model task that runs as a message batch, by task name: the task (its output schema is
@@ -14,12 +12,9 @@ import { extractFactsBatchEntry } from "@/lib/pipeline/text/extract";
  * stage modules it reaches never import the poll machinery back (ruling M4-P1).
  */
 export const BATCH_HANDLERS: Record<string, BatchHandlerEntry> = {
-  [classificationBatchEntry.task.name]: classificationBatchEntry,
-  [disambiguationBatchEntry.task.name]: disambiguationBatchEntry,
-  [extractFactsBatchEntry.task.name]: extractFactsBatchEntry,
-  // `extract-route` serves `extraction.route` and `research.routes`; the entry dispatches by the batch's stage.
   [extractRouteBatchEntry.task.name]: extractRouteBatchEntry,
   [assessPageBatchEntry.task.name]: assessPageBatchEntry,
   [extractBerthBatchEntry.task.name]: extractBerthBatchEntry,
+  [extractLandsideBatchEntry.task.name]: extractLandsideBatchEntry,
   [bundleFactsBatchEntry.task.name]: bundleFactsBatchEntry,
 };

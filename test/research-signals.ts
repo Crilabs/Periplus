@@ -1,7 +1,10 @@
+import type { Archive } from "@/lib/adapters/s3";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import {
+  berthFacts,
   berthSignals,
+  documentVersions,
   documents,
   pageAssessments,
   researchHits,
@@ -12,6 +15,7 @@ import {
   type BerthSignalKind,
   type PageKind,
 } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { newId } from "@/lib/domain/ids";
 import { activeAssessor } from "@/lib/domain/research/assessment";
 import { activeRouteExtractor } from "@/lib/domain/research/assign";
@@ -28,6 +32,8 @@ export type SignalPageOpts = {
   pageKind?: PageKind;
   /** How the page is linked to the place: a search hit (default), a route stop matched by name or by the corridor, or none. */
   link?: "search" | "name" | "corridor" | "none";
+  /** The purpose of the search hit of a `search` link (default `positive`). */
+  hitPurpose?: "positive" | "negative" | "landside";
   unitStatus?: "done" | "failed";
   unitModel?: string;
   quote?: string;
@@ -51,7 +57,7 @@ export async function signalPage(tx: Db, config: AppConfig, place: { placeId: st
       .values({ keyword: "k", languageCode: "en", locationCode: 2300, depth: 10, level: "place", scopeId: place.objectId, rawKey: `serp/x/${url}.json`, fetchedAt: new Date() })
       .returning({ id: serpQueries.id });
     const [r] = await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url, urlNormalized: url, domain: o.domain, title: "t", snippet: "s" }).returning({ id: serpResults.id });
-    await tx.insert(researchHits).values({ placeId: place.placeId, geoObjectId: place.objectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: url, domain: o.domain, rank: 1, purpose: "positive" });
+    await tx.insert(researchHits).values({ placeId: place.placeId, geoObjectId: place.objectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: url, domain: o.domain, rank: 1, purpose: o.hitPurpose ?? "positive" });
   } else if (link !== "none") {
     const route = activeRouteExtractor(config);
     await tx.insert(researchRouteStops).values({
@@ -73,3 +79,19 @@ export async function signalPage(tx: Db, config: AppConfig, place: { placeId: st
   return { signalId: signal!.id, versionId };
 }
 
+
+/**
+ * A source page of the place whose archived markdown is `markdown`, with one free fact extracted from it: what the
+ * delivery copy check (`loadCopyIndex`) holds the place's delivered texts against.
+ */
+export async function factSourcePage(tx: Db, config: AppConfig, archive: Archive, place: { placeId: string; objectId: string }, markdown: string): Promise<{ versionId: string }> {
+  const { versionId } = await signalPage(tx, config, place, { domain: `src-${newId().slice(0, 8)}.example`, link: "none" });
+  const [unit] = await tx.select({ id: researchUnits.id }).from(researchUnits).where(eq(researchUnits.documentVersionId, versionId));
+  const [version] = await tx.select({ mdKey: documentVersions.mdKey }).from(documentVersions).where(eq(documentVersions.id, versionId));
+  await archive.put(version!.mdKey, markdown, "text/markdown");
+  await tx.insert(berthFacts).values({
+    unitId: unit!.id, placeId: place.placeId, documentVersionId: versionId, statement: "A fact from this page.", quote: markdown.slice(0, 20),
+    quoteStart: 0, quoteEnd: Math.min(20, markdown.length), observedAt: "2024-06-15", observedAtBasis: "explicit",
+  });
+  return { versionId };
+}

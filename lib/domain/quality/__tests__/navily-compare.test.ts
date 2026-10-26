@@ -1,5 +1,5 @@
 import path from "node:path";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -7,7 +7,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { comparisonSet, places, tiles } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
+import { insertBerthState } from "@/test/berth-state";
 import { withRollback } from "@/test/db";
 import { insertNamedObject, insertTestSubdivision } from "@/test/text";
 import { acceptNavilyProposals, subdivisionComparisonView, confirmedSubdivisionPlaces, proposalDigest } from "../navily-compare";
@@ -55,7 +55,7 @@ async function scene(tx: Db) {
   };
   const kolona = await addPlace("Kolona", 51.0, 35.2, true);
   const other = await addPlace("Vathi", 51.06, 35.26, false);
-  await insertProfile(tx, kolona.objectId, { "services.water": true, "shelter.N": 0.9 }, { "shelter.N": provenanceEntry("computed") }, { version: 1 });
+  await insertBerthState(tx, kolona.placeId, { "services.water": true, "shelter.N": 0.9 });
   return { subdivisionKey, kolona, other, addPlace };
 }
 
@@ -111,12 +111,12 @@ describe("subdivisionComparisonView", () => {
       expect(view.coverage).toMatchObject({ matched: 2 });
     }));
 
-  it("coverage and matching use the delivered point from the profile: the anchor position of a bay", () =>
+  it("coverage and matching use the delivered point: the anchor position of a bay", () =>
     withRollback(async (tx) => {
       const { subdivisionKey, other } = await scene(tx);
       // Vathi (outside the set) delivers its anchor position 300 m north of its place point
-      const anchor = { lon: 51.06, lat: 35.26 + 300 / 111_195 };
-      await insertProfile(tx, other.objectId, { anchor_position: anchor }, {}, { version: 1 });
+      const anchor = { lon: 51.06, lat: 35.2627 };
+      await tx.update(places).set({ anchorPosition: geomFromGeoJson({ type: "Point", coordinates: [anchor.lon, anchor.lat] }) }).where(eq(places.id, other.placeId));
       const subdivisionPlaces = await confirmedSubdivisionPlaces(tx, subdivisionKey);
       expect(subdivisionPlaces.find((p) => p.placeId === other.placeId)).toMatchObject({ anchorPosition: anchor, status: "confirmed" });
       const spots = [{ ...spotAt(0, 0), ...anchor }];
@@ -147,15 +147,12 @@ describe("subdivisionComparisonView", () => {
       expect([view.places[0]!.open, view.checked]).toEqual([0, 16]);
       expect(view.places[0]!.rows.every((r) => r.stored?.carried === false && r.stored.method === "proposal_confirmed")).toBe(true);
 
-      // a new profile version: the unchanged values keep their outcome (carried), the changed one is open again
-      await insertProfile(tx, kolona.objectId, { "services.water": false, "shelter.N": 0.9 }, { "shelter.N": provenanceEntry("computed") }, {
-        version: 2,
-        validFrom: "2026-10-20",
-      });
+      // a changed berth state: the unchanged values keep their outcome, the changed one is open again
+      await insertBerthState(tx, kolona.placeId, { "services.water": false, "shelter.N": 0.9 });
       view = await subdivisionComparisonView(tx, { subdivisionKey, spots, ...settings });
       const rows = Object.fromEntries(view.places[0]!.rows.map((r) => [r.attribute, r.stored]));
       expect(rows["services.water"]).toBeNull();
-      expect(rows["shelter.N"]).toMatchObject({ result: "match", carried: true });
+      expect(rows["shelter.N"]).toMatchObject({ result: "match", carried: false });
       expect([view.places[0]!.open, view.checked]).toEqual([1, 15]);
     }));
 });

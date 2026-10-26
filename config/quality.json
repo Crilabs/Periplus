@@ -4,24 +4,6 @@
     "minPlaces": 20,
     "minMatchedForSectorRates": 5
   },
-  "targets": {
-    "coverage": { "pilot": 0.85, "full": 0.95, "direction": "min" },
-    "coverage_navily": { "pilot": 0.85, "full": 0.95, "direction": "min" },
-    "multi_source": { "pilot": 0.70, "full": 0.85, "direction": "min" },
-    "multi_document": { "pilot": 0.70, "full": 0.85, "direction": "min" },
-    "fact_precision": { "pilot": 0.90, "full": 0.95, "direction": "min" },
-    "quote_fidelity": { "pilot": 1.0, "full": 1.0, "direction": "min" },
-    "shelter_confidence": { "pilot": 0.60, "full": 0.80, "direction": "min" },
-    "route_reconstruction": { "pilot": 0.70, "full": 0.90, "direction": "min" },
-    "cost_per_place": { "pilot": 2.0, "full": 0.5, "direction": "max" },
-    "review_minutes_per_100": { "pilot": null, "full": 30, "direction": "max" }
-  },
-  "secondRunReviewMinutesMax": 60,
-  "pilotCriteria": { "minTripReports": 3, "revisitChanges": 10 },
-  "reviewDurationCapMinutes": 10,
-  "recentObservationMonths": 18,
-  "shelterConfirmTolerance": 0.2,
-  "placesPerTile": { "min": 10, "max": 40 },
   "comparisonSet": { "pilotSize": 50, "perSubdivisionMin": 20, "perSubdivisionMax": 30 },
   "navily": {
     "maxRadiusM": 1000,
@@ -33,7 +15,8 @@
     "protectedThreshold": 0.5,
     "seabedShareMin": 0.3,
     "depthStepM": 0.5,
+    "excludedTypes": ["prohibited", "dry-berthing"],
+    "prohibitedTypes": ["prohibited"],
     "proposalVersion": "navily-assistant/1"
-  },
-  "extrapolation": { "subdivisionsMin": 60, "subdivisionsMax": 100, "placesPerSubdivision": null }
+  }
 }

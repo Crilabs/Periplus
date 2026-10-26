@@ -1,11 +1,11 @@
 import { alias } from "drizzle-orm/pg-core";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { resolveTaskModel } from "@/lib/ai/cost";
 import { getConfig, type AppConfig, type NameAffixesConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documents, documentVersions, geoNames, geoObjects, pageAssessments, placeWebsites, places, researchHits, researchRouteStops, researchUnits } from "@/lib/db/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
-import { stripAffix } from "@/lib/domain/mentions/affixes";
+import { stripAffix } from "@/lib/domain/research/util/affixes";
 import { activeAssessor } from "./assessment";
 import { provisionalNameIds } from "./provisional-names";
 import { namesOccur } from "./unit-text";
@@ -117,7 +117,7 @@ export async function planUnits(
     .selectDistinct({ placeId: researchHits.placeId, versionId: documents.currentVersionId, urlNormalized: researchHits.urlNormalized, origin: researchHits.origin })
     .from(researchHits)
     .innerJoin(documents, eq(documents.urlNormalized, researchHits.urlNormalized))
-    .where(inArray(researchHits.placeId, placeIds));
+    .where(and(inArray(researchHits.placeId, placeIds), ne(researchHits.purpose, "landside")));
   const route = activeRouteExtractor(cfg);
   const stopRows = await db
     .selectDistinct({ placeId: sql<string>`${researchRouteStops.placeId}`, versionId: researchRouteStops.documentVersionId })
@@ -195,6 +195,7 @@ export async function planUnits(
       .where(
         and(
           inArray(researchUnits.documentVersionId, [...needText.keys()]),
+          eq(researchUnits.kind, "berth"),
           eq(researchUnits.model, extractor.model),
           eq(researchUnits.promptVersion, extractor.promptVersion),
           or(eq(researchUnits.status, "done"), and(eq(researchUnits.status, "skipped"), eq(researchUnits.reason, NOT_NAMED_REASON))),

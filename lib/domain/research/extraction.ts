@@ -6,10 +6,9 @@ import type { Db } from "@/lib/db/client";
 import { berthFacts, berthSignals, landingHints, researchUnits } from "@/lib/db/schema";
 import type { DroppedCounts } from "@/lib/db/schema/research-extract";
 import type { ObservedAtBasis } from "@/lib/db/schema/sources";
-import { nameInQuote } from "@/lib/domain/extraction/facts";
-import { locateQuote } from "@/lib/domain/extraction/quote";
+import { locateQuote, nameInQuote } from "@/lib/domain/research/text/quote";
 import { getFactSchema, SAFETY_LIST_ATTRIBUTES, validateTextFact } from "@/lib/domain/facts/schema";
-import { plausibleDate } from "@/lib/domain/mentions/classification";
+import { plausibleDate } from "@/lib/domain/research/util/dates";
 import { copiesSource } from "./verbatim";
 
 /*

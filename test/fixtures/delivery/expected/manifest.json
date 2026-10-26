@@ -1,49 +1,63 @@
 {
-  "schemaVersion": "2.3",
-  "subdivision": {
-    "id": "sd_01J9ZD00000000000000000001",
-    "key": "XT-DELIVERY",
-    "name": "Testlandesteil",
-    "names": [
-      {
-        "lang": "de",
-        "name": "Testlandesteil"
-      },
-      {
-        "lang": "en",
-        "name": "Test Subdivision"
-      }
-    ],
-    "polygon": {
-      "type": "MultiPolygon",
-      "coordinates": [
-        [
+  "schemaVersion": "4.0",
+  "scope": {
+    "type": "subdivision",
+    "subdivision": {
+      "id": "sd_01J9ZD00000000000000000001",
+      "key": "XT-DELIVERY",
+      "name": "Testlandesteil",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Testlandesteil"
+        },
+        {
+          "lang": "en",
+          "name": "Test Subdivision"
+        }
+      ],
+      "polygon": {
+        "type": "MultiPolygon",
+        "coordinates": [
           [
             [
-              21,
-              35
-            ],
-            [
-              21.5,
-              35
-            ],
-            [
-              21.5,
-              35.25
-            ],
-            [
-              21,
-              35.25
-            ],
-            [
-              21,
-              35
+              [
+                21,
+                35
+              ],
+              [
+                21.5,
+                35
+              ],
+              [
+                21.5,
+                35.25
+              ],
+              [
+                21,
+                35.25
+              ],
+              [
+                21,
+                35
+              ]
             ]
           ]
         ]
-      ]
-    }
+      }
+    },
+    "dataVersion": 1,
+    "previousDataVersion": null
   },
+  "coverage": [
+    {
+      "id": "sd_01J9ZD00000000000000000001",
+      "key": "XT-DELIVERY",
+      "name": "Testlandesteil",
+      "status": "delivered",
+      "dataVersion": 1
+    }
+  ],
   "areas": [
     {
       "id": "ar_01J9ZD00000000000000000001",
@@ -60,8 +74,6 @@
       ]
     }
   ],
-  "dataVersion": 1,
-  "previousDataVersion": null,
   "generatedAt": "2040-06-01T08:00:00.000Z",
   "bbox": [
     21,
@@ -73,21 +85,19 @@
     {
       "id": "q025:804:500",
       "lastRunAt": null,
-      "profilesAsOf": "2026-10-19"
+      "statesAsOf": "2026-10-20"
     },
     {
       "id": "q025:805:500",
       "lastRunAt": null,
-      "profilesAsOf": "2026-10-19"
+      "statesAsOf": "2026-10-19"
     }
   ],
   "objectCounts": {
     "spots": 3,
-    "highlights": 1,
     "regions": 2,
     "weatherPoints": 2,
-    "coastFeatures": 3,
-    "changes": 0
+    "coastFeatures": 3
   },
   "licenses": [
     {
@@ -101,7 +111,8 @@
         "spots.json#/spots/*/name",
         "spots.json#/spots/*/names",
         "spots.json#/spots/*/externalRefs/osmId",
-        "highlights.json#/highlights/*/name",
+        "spots.json#/spots/*/nearby/*/name",
+        "spots.json#/spots/*/nearby/*/names",
         "regions.json#/regions/*/name",
         "regions.json#/regions/*/names",
         "regions.json#/regions/*/polygon"
@@ -113,8 +124,7 @@
       "url": "https://creativecommons.org/licenses/by/3.0/",
       "files": [],
       "fields": [
-        "spots.json#/spots/*/images",
-        "highlights.json#/highlights/*/images"
+        "spots.json#/spots/*/images"
       ]
     },
     {
@@ -123,8 +133,7 @@
       "url": "https://creativecommons.org/licenses/by/4.0/",
       "files": [],
       "fields": [
-        "spots.json#/spots/*/images",
-        "highlights.json#/highlights/*/images"
+        "spots.json#/spots/*/images"
       ]
     },
     {
@@ -133,26 +142,20 @@
       "url": "https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model",
       "files": [],
       "fields": [
-        "spots.json#/spots/*/images",
-        "highlights.json#/highlights/*/images"
+        "spots.json#/spots/*/images"
       ]
     }
   ],
   "files": [
     {
       "name": "spots.json",
-      "sha256": "24e62a8685a858e66d8cc3920679ae5a0293420b3bb85981a2f83ae0e346e2fe",
-      "bytes": 10173
-    },
-    {
-      "name": "highlights.json",
-      "sha256": "544b333656949960976b7de81ef1f41f21357cfa56d6dbd19f815c6a7ac73ea0",
-      "bytes": 843
+      "sha256": "476ae72fa12cc46a8b1a038e6f154e66d810f328b0d6837a0550981db2878732",
+      "bytes": 10343
     },
     {
       "name": "regions.json",
-      "sha256": "25b5c61c29daab91cd912d5249d7174b49bf765d764c3a9e36816564119d9741",
-      "bytes": 1971
+      "sha256": "0ac6dd169314d808d30136dc9adff823aa885f400bb3af601c7a169f7a531725",
+      "bytes": 1642
     },
     {
       "name": "coast.geojson",
@@ -161,8 +164,8 @@
     },
     {
       "name": "weather-points.json",
-      "sha256": "e3c5da5481f98ba12587be876b50eea01b91353bd3153f17f3b33951a9b6c7cf",
-      "bytes": 603
+      "sha256": "61974f1eff525be86309045a68f89fdb33b431a46b0fe3a708963b0ffa16174e",
+      "bytes": 642
     }
   ]
 }

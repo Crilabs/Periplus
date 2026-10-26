@@ -1,6 +1,6 @@
 import type { ApiScope } from "@/lib/domain/api-clients";
 
-export type RouteRule = { kind: "public" } | { kind: "auth" } | { kind: "admin" } | { kind: "api"; scope: ApiScope };
+export type RouteRule = { kind: "public" } | { kind: "auth" } | { kind: "admin" } | { kind: "api"; scope: ApiScope } | { kind: "mcp" };
 
 /**
  * Default-deny policy: every URL-producing route under `app/` (route groups stripped,
@@ -28,27 +28,28 @@ export const ROUTE_POLICY: Record<string, RouteRule> = {
   "/tiles/[id]": { kind: "admin" },
   "/geo/[id]": { kind: "admin" },
   "/places/[id]": { kind: "admin" },
-  "/sources": { kind: "admin" },
-  "/sources/[id]": { kind: "admin" },
   "/documents/[id]": { kind: "admin" },
   "/documents/[id]/raw/[versionId]": { kind: "admin" },
-  "/compare/converters": { kind: "admin" },
-  "/compare/models": { kind: "admin" },
   "/deliveries": { kind: "admin" },
   "/deliveries/[id]": { kind: "admin" },
   "/deliveries/[id]/files/[file]": { kind: "admin" },
   "/deliveries/[id]/files/images/[file]": { kind: "admin" },
+  "/deliveries/radius": { kind: "admin" },
   "/images/file": { kind: "admin" },
-  "/api/v1/ping": { kind: "api", scope: "delivery:read" },
-  "/api/v1/schema/[version]/[file]": { kind: "api", scope: "delivery:read" },
-  "/api/v2/ping": { kind: "api", scope: "delivery:read" },
-  "/api/v2/subdivisions": { kind: "api", scope: "delivery:read" },
-  "/api/v2/subdivisions/[subdivision]/package": { kind: "api", scope: "delivery:read" },
-  "/api/v2/subdivisions/[subdivision]/package/[file]": { kind: "api", scope: "delivery:read" },
-  "/api/v2/subdivisions/[subdivision]/package/images/[file]": { kind: "api", scope: "delivery:read" },
-  "/api/v2/schema/[version]/[file]": { kind: "api", scope: "delivery:read" },
-  "/api/v2/subdivisions/[subdivision]/changes": { kind: "api", scope: "delivery:read" },
-  "/api/v2/spots/[id]": { kind: "api", scope: "delivery:read" },
+  "/api/mcp": { kind: "mcp" },
+  "/api/v4/ping": { kind: "api", scope: "delivery:read" },
+  "/api/v4/subdivisions": { kind: "api", scope: "delivery:read" },
+  "/api/v4/subdivisions/[subdivision]/package": { kind: "api", scope: "delivery:read" },
+  "/api/v4/subdivisions/[subdivision]/package/[file]": { kind: "api", scope: "delivery:read" },
+  "/api/v4/subdivisions/[subdivision]/package/images/[file]": { kind: "api", scope: "delivery:read" },
+  "/api/v4/schema/[version]/[file]": { kind: "api", scope: "delivery:read" },
+  "/api/v4/subdivisions/[subdivision]/changes": { kind: "api", scope: "delivery:read" },
+  "/api/v4/spots/[id]": { kind: "api", scope: "delivery:read" },
+  "/api/v4/radius/package": { kind: "api", scope: "delivery:read" },
+  "/api/v4/radius/package/[file]": { kind: "api", scope: "delivery:read" },
+  "/api/v4/radius/package/images/[file]": { kind: "api", scope: "delivery:read" },
+  "/api/v4/radius/changes": { kind: "api", scope: "delivery:read" },
+  "/api/v4/home-marinas": { kind: "api", scope: "delivery:read" },
 };
 
 const ENCODED_SEPARATOR = /%(2f|5c)/i;

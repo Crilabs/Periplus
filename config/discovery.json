@@ -10,18 +10,6 @@
     "taskRetries": 3,
     "taskRetryDelayMs": 5000
   },
-  "templates": {
-    "area": [
-      { "template": "Törnbericht {name}", "lang": "de", "locationCode": 2276 },
-      { "template": "Revierführer {name}", "lang": "de", "locationCode": 2276 },
-      { "template": "{name} anchorages", "lang": "en", "locationCode": 2826 }
-    ],
-    "tile": [
-      { "template": "Ankerplatz {name}", "lang": "de", "locationCode": 2276 },
-      { "template": "anchorage {name}", "lang": "en", "locationCode": 2826 },
-      { "template": "αγκυροβόλιο {name}", "lang": "el", "locationCode": 2300 }
-    ]
-  },
   "bay": { "minAnchorAreaM2": 20000, "minWikidataNames": 2 },
   "placeWebsite": {
     "templates": [
@@ -35,9 +23,6 @@
     "crawl": { "maxDepth": 2, "maxPagesPerStartUrl": 30 }
   },
   "proposals": {
-    "minSerpHits": 3,
-    "minLinkingSources": 2,
-    "maxHitsInContext": 20,
     "ignoreDomains": [
       "navily.com",
       "google.com",

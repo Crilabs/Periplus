@@ -20,12 +20,17 @@ import { pollBatch } from "@/lib/pipeline/batches";
 import { imageTargets } from "@/lib/pipeline/images/stage";
 import { RESEARCH_CONFIRM_STAGE } from "@/lib/pipeline/research/confirm";
 import { extractUnits, planResearchExtract, RESEARCH_EXTRACT_STAGE } from "@/lib/pipeline/research/extract";
-import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
+import { startDeliveryRun } from "@/lib/pipeline/delivery-run";
 import { RESEARCH_STAGES } from "@/lib/pipeline/research-run";
+import { planResearchAssess } from "@/lib/pipeline/research/assess";
+import { planResearchFetch } from "@/lib/pipeline/research/fetch";
+import { HANDLERS } from "@/lib/jobs/registry";
+import { STAGES } from "@/lib/jobs/stages";
+import { QUEUES } from "@/lib/jobs/queues";
 import { insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
-import { insertTestRun, insertTestSource } from "@/test/text";
+import { insertTestRun, insertTestSource, insertTestSubdivision } from "@/test/text";
 
 const base = loadConfig("config");
 const config: AppConfig = { ...base, budgets: { ...base.budgets, anthropic: { dailyEur: 1000 } } };
@@ -42,6 +47,59 @@ function recordingBoss() {
 }
 
 const ctxFor = (db: Db, boss: PgBoss): JobContext => ({ db, boss, log: createLogger("test"), jobId: newId() });
+
+describe("follow-up chain with the land research (N4b)", () => {
+  it("runs state, landside search, fetch, assess, landside extraction, fact bundling and images, each stage once", () => {
+    expect([...BERTH_FOLLOWUP_STAGES]).toEqual([
+      "research.state",
+      "research.landside_search",
+      "research.fetch",
+      "research.assess",
+      "research.landside_extract",
+      "research.state_facts",
+      "images.place",
+    ]);
+    expect(new Set(BERTH_FOLLOWUP_STAGES).size).toBe(BERTH_FOLLOWUP_STAGES.length);
+  });
+
+  it("the research run per subdivision has no landside stage", () => {
+    expect(RESEARCH_STAGES.filter((s) => s.includes("landside") || (s as string) === "research.state_facts")).toEqual([]);
+  });
+
+  it("every stage of the chain is registered with a queue that has a handler and a config entry", () => {
+    for (const stage of BERTH_FOLLOWUP_STAGES) {
+      const def = STAGES[stage];
+      expect(def, stage).toBeDefined();
+      expect(QUEUES).toContain(def!.queue);
+      expect(HANDLERS[def!.queue], stage).toBeDefined();
+      expect((base.queues as Record<string, unknown>)[def!.queue], stage).toBeDefined();
+    }
+  });
+
+  it("the run starts with all stages and fetch and assess plan the landside hits of the run's places", () =>
+    withRollback(async (tx) => {
+      const place = await insertPlace(tx, { name: "Vathi", status: "confirmed" });
+      const { boss } = recordingBoss();
+      const started = await startBerthFollowupRun(tx, boss, [place.placeId], "test");
+      const stages = await tx.select().from(runStages).where(eq(runStages.runId, started!.id));
+      expect(stages).toHaveLength(BERTH_FOLLOWUP_STAGES.length);
+      const archive = memoryArchive();
+      const versionId = await page(tx, place, "town-guide.example", archive);
+      await tx.update(researchHits).set({ purpose: "landside" }).where(eq(researchHits.placeId, place.placeId));
+      // a landside hit whose page was never fetched: the fetch plans it
+      const url = "https://www.town-guide.example/never-fetched";
+      const [q] = await tx
+        .insert(serpQueries)
+        .values({ keyword: "k", languageCode: "en", locationCode: 2300, depth: 10, level: "place", scopeId: place.objectId, rawKey: "serp/landside.json", fetchedAt: new Date() })
+        .returning({ id: serpQueries.id });
+      const [r] = await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url, urlNormalized: url, domain: "town-guide.example", title: "t", snippet: "s" }).returning({ id: serpResults.id });
+      await tx.insert(researchHits).values({ placeId: place.placeId, geoObjectId: place.objectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: url, domain: "town-guide.example", rank: 1, purpose: "landside" });
+      const run = { id: started!.id, params: { placeIds: [place.placeId] } };
+      expect((await planResearchFetch(tx, run)).map((j) => j.url)).toEqual([url]);
+      await tx.delete(pageAssessments).where(eq(pageAssessments.documentVersionId, versionId));
+      expect((await planResearchAssess(tx, run)).flatMap((j) => j.documentVersionIds as string[])).toEqual([versionId]);
+    }));
+});
 
 describe("startBerthFollowupRun", () => {
   it("starts an event run of scope system/berth-followup with the images stage for the places' objects", () =>
@@ -121,12 +179,12 @@ async function researchRun(tx: Db, placeIds: string[]): Promise<string> {
 }
 
 const confirmJob = (runId: string) => ({ runId, stage: RESEARCH_CONFIRM_STAGE, key: "confirm" });
-const realStarters = { followup: startBerthFollowupRun, consolidation: startConsolidationRun };
+const realStarters = { followup: startBerthFollowupRun, delivery: startDeliveryRun };
 const consolidationRunsOf = async (tx: Db, objectId: string) =>
   (await tx.select().from(runs)).filter((r) => (r.params as { geoObjectIds?: string[] }).geoObjectIds?.includes(objectId));
 
 describe("research.confirm handler", () => {
-  it("extracts two independent sources, confirms the berth, starts the follow-up run and a consolidation, and the tab says why", () =>
+  it("extracts two independent sources, confirms the berth, starts the follow-up run (no consolidation), and the tab says why", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx, { name: "Vathi", lon: 30.0, lat: 40.2, status: "candidate" });
       const archive = memoryArchive();
@@ -167,21 +225,17 @@ describe("research.confirm handler", () => {
       const followups = await tx.select().from(runs).where(eq(runs.scopeId, BERTH_FOLLOWUP_SCOPE));
       expect(followups).toHaveLength(1);
       expect(followups[0]!.params).toMatchObject({ placeIds: [place.placeId], images: { geoObjectIds: [place.objectId] } });
-      const consolidations = (await tx.select().from(runs)).filter((r) => (r.params as { geoObjectIds?: string[] }).geoObjectIds?.[0] === place.objectId);
-      expect(consolidations).toHaveLength(1);
+      expect(await consolidationRunsOf(tx, place.objectId)).toHaveLength(0);
       // the jobs this handler caused: the follow-up run's state job of the berth (the image stage after it plans no job
-      // without an image model), and the consolidation's geo job of the object
-      expect(inserted.slice(before).map((j) => [j.queue, j.data.geoObjectId ?? j.data.placeId])).toEqual([
-        ["research.state", place.placeId],
-        ["consolidation.geo", place.objectId],
-      ]);
+      // without an image model), nothing of a consolidation
+      expect(inserted.slice(before).map((j) => [j.queue, j.data.geoObjectId ?? j.data.placeId])).toEqual([["research.state", place.placeId]]);
 
       const view = await researchView(tx, place.placeId);
       expect(view.verdict).toMatchObject({ status: "confirmed", independentSources: ["sail-a.example", "sail-b.example"] });
       expect(view.rows.map((r) => r.signalCount)).toEqual([1, 1]);
     }));
 
-  it("starts no follow-up run when a berth drops out of confirmed, but consolidates it", () =>
+  it("starts no follow-up run when a berth drops out of confirmed (and no consolidation)", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx, { name: "Vathi", lon: 30.0, lat: 40.2, status: "confirmed" });
       await tx.update(places).set({ publicId: "sp_test0001" }).where(eq(places.id, place.placeId));
@@ -196,10 +250,55 @@ describe("research.confirm handler", () => {
       await researchConfirmHandler({ runId, stage: RESEARCH_CONFIRM_STAGE, key: "confirm" }, ctxFor(tx, boss));
       expect(await tx.select().from(places).where(eq(places.id, place.placeId))).toMatchObject([{ status: "candidate" }]);
       expect(await tx.select().from(runs).where(eq(runs.scopeId, BERTH_FOLLOWUP_SCOPE))).toHaveLength(0);
-      expect((await tx.select().from(runs)).filter((r) => (r.params as { geoObjectIds?: string[] }).geoObjectIds?.[0] === place.objectId)).toHaveLength(1);
+      expect(await consolidationRunsOf(tx, place.objectId)).toHaveLength(0);
     }));
 
-  it("a starter failure makes the job throw after both starters were tried; the retry starts the follow-up although no transition remains", () =>
+  it("a withdrawal starts a delivery build of its subdivision (F2); a candidate that stays one starts none", () =>
+    withRollback(async (tx) => {
+      const sd = await insertTestSubdivision(tx, "GR-XW1", [29.5, 39.5, 30.5, 41]);
+      const withdrawn = await insertPlace(tx, { name: "Vathi", lon: 30.0, lat: 40.2, status: "confirmed" });
+      const staying = await insertPlace(tx, { name: "Kalo", lon: 30.1, lat: 40.2, status: "candidate" });
+      await tx.update(places).set({ publicId: "sp_test0001" }).where(eq(places.id, withdrawn.placeId));
+      await tx.update(geoObjects).set({ subdivisionId: sd.id }).where(eq(geoObjects.id, withdrawn.objectId));
+      await tx.update(geoObjects).set({ subdivisionId: sd.id }).where(eq(geoObjects.id, staying.objectId));
+      const { boss } = recordingBoss();
+      const runId = await researchRun(tx, [withdrawn.placeId, staying.placeId]);
+      await researchConfirmHandler({ runId, stage: RESEARCH_CONFIRM_STAGE, key: "confirm" }, ctxFor(tx, boss));
+      expect(await tx.select().from(places).where(eq(places.id, withdrawn.placeId))).toMatchObject([{ status: "candidate" }]);
+      const builds = (await tx.select().from(runs)).filter((r) => r.scopeId === "GR-XW1");
+      expect(builds).toHaveLength(1);
+      expect(builds[0]).toMatchObject({ scopeType: "subdivision", triggeredBy: "system" });
+      expect(builds[0]!.params).toMatchObject({ subdivisionKey: "GR-XW1" });
+      // the retry (no transition left) starts it again from the database: the start is derived, not remembered
+      await confirmAndFollowUp(confirmJob(runId), ctxFor(tx, boss), realStarters);
+      expect((await tx.select().from(runs)).filter((r) => r.scopeId === "GR-XW1")).toHaveLength(2);
+    }));
+
+  it("a place that only becomes confirmed starts no delivery build; a failed start does not fail the stage (F2)", () =>
+    withRollback(async (tx) => {
+      const sd = await insertTestSubdivision(tx, "GR-XW2", [29.5, 39.5, 30.5, 41]);
+      const place = await insertPlace(tx, { name: "Vathi", lon: 30.0, lat: 40.2, status: "candidate" });
+      await tx.update(geoObjects).set({ subdivisionId: sd.id }).where(eq(geoObjects.id, place.objectId));
+      const archive = memoryArchive();
+      await evidence(tx, place, "sail-a.example", archive);
+      await evidence(tx, place, "sail-b.example", archive);
+      const { boss } = recordingBoss();
+      const runId = await researchRun(tx, [place.placeId]);
+      await confirmAndFollowUp(confirmJob(runId), ctxFor(tx, boss), realStarters);
+      expect((await tx.select().from(runs)).filter((r) => r.scopeId === "GR-XW2")).toHaveLength(0);
+
+      // a withdrawal whose build cannot be started: logged, the job still ends
+      await tx.update(places).set({ status: "confirmed" }).where(eq(places.id, place.placeId));
+      const gone = await insertPlace(tx, { name: "Kalo", lon: 30.1, lat: 40.2, status: "confirmed" });
+      await tx.update(places).set({ publicId: "sp_test0002" }).where(eq(places.id, gone.placeId));
+      await tx.update(geoObjects).set({ subdivisionId: sd.id }).where(eq(geoObjects.id, gone.objectId));
+      const second = await researchRun(tx, [gone.placeId]);
+      const failing = { ...realStarters, delivery: async () => { throw new Error("no queue"); } };
+      await expect(confirmAndFollowUp(confirmJob(second), ctxFor(tx, boss), failing)).resolves.toBeUndefined();
+      expect(await tx.select().from(places).where(eq(places.id, gone.placeId))).toMatchObject([{ status: "candidate" }]);
+    }));
+
+  it("a starter failure makes the job throw the retry starts the follow-up although no transition remains", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx, { name: "Vathi", lon: 30.0, lat: 40.2, status: "candidate" });
       const archive = memoryArchive();
@@ -208,33 +307,14 @@ describe("research.confirm handler", () => {
       const { boss } = recordingBoss();
       const runId = await researchRun(tx, [place.placeId]);
 
-      const failing = { followup: async () => { throw new Error("boom"); }, consolidation: startConsolidationRun };
+      const failing = { followup: async () => { throw new Error("boom"); }, delivery: startDeliveryRun };
       await expect(confirmAndFollowUp(confirmJob(runId), ctxFor(tx, boss), failing)).rejects.toThrow("boom");
       expect(await tx.select().from(places).where(eq(places.id, place.placeId))).toMatchObject([{ status: "confirmed" }]);
       expect(await tx.select().from(runs).where(eq(runs.scopeId, BERTH_FOLLOWUP_SCOPE))).toHaveLength(0);
-      expect(await consolidationRunsOf(tx, place.objectId)).toHaveLength(1); // the other starter was still tried
 
       // retry: confirmBerths finds nothing to change, the follow-up is derived from the database
       await confirmAndFollowUp(confirmJob(runId), ctxFor(tx, boss), realStarters);
       expect(await tx.select().from(runs).where(eq(runs.scopeId, BERTH_FOLLOWUP_SCOPE))).toHaveLength(1);
-    }));
-
-  it("one non-consolidatable place does not block the consolidation of the others", () =>
-    withRollback(async (tx) => {
-      const good = await insertPlace(tx, { name: "Vathi", lon: 30.0, lat: 40.2, status: "candidate" });
-      const bad = await insertPlace(tx, { name: "Kalo", lon: 30.1, lat: 40.2, status: "candidate" });
-      const archive = memoryArchive();
-      for (const p of [good, bad]) {
-        await evidence(tx, p, `a-${p.placeId}.example`, archive);
-        await evidence(tx, p, `b-${p.placeId}.example`, archive);
-      }
-      await tx.update(geoObjects).set({ validTo: "2020-01-01" }).where(eq(geoObjects.id, bad.objectId));
-      const { boss } = recordingBoss();
-      const runId = await researchRun(tx, [good.placeId, bad.placeId]);
-
-      await confirmAndFollowUp(confirmJob(runId), ctxFor(tx, boss), realStarters);
-      expect(await consolidationRunsOf(tx, good.objectId)).toHaveLength(1);
-      expect(await consolidationRunsOf(tx, bad.objectId)).toHaveLength(0);
     }));
 });
 

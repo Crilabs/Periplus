@@ -1,12 +1,9 @@
 import type { Metadata } from "next";
 import { geoObjectTitle } from "@/lib/domain/geo-view";
-import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
-import { geoFacts, geoMentions } from "@/lib/domain/geo-facts";
 import { geoObjectDetail, type GeoObjectRef } from "@/lib/domain/geo-view";
-import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import {
   GEO_OBJECT_TYPE_LABELS,
@@ -18,11 +15,9 @@ import {
   POI_CATEGORY_LABELS,
   runScopeError,
 } from "../../_components/labels";
-import { MentionsPanel } from "../../_components/mentions-panel";
 import { MiniMap } from "../../_components/mini-map";
 import {
   Badge,
-  Button,
   DescriptionList,
   EmptyState,
   Mono,
@@ -37,9 +32,6 @@ import {
   cx,
 } from "../../_components/ui";
 import { Dialog } from "../../_components/dialog";
-import { recomputeGeoProfileAction } from "../../places/[id]/actions";
-import { FactsTab } from "../../places/[id]/facts-tab";
-import { ProfileTab } from "../../places/[id]/profile-tab";
 
 /** The tab title: the geo object's name (UI-15). */
 export async function generateMetadata({ params }: PageProps<"/geo/[id]">): Promise<Metadata> {
@@ -48,10 +40,6 @@ export async function generateMetadata({ params }: PageProps<"/geo/[id]">): Prom
 }
 
 const SCRIPT_LABELS = { latin: "Lateinisch", greek: "Griechisch" } as const;
-const runsParam = z.enum(["active", "all"]).catch("active");
-const pageParam = z.coerce.number().int().min(1).catch(1);
-const textParam = z.string().max(200).optional().catch(undefined);
-const uuidParam = z.uuid().optional().catch(undefined);
 
 function GeoLink({ o }: { o: GeoObjectRef }) {
   return (
@@ -59,15 +47,6 @@ function GeoLink({ o }: { o: GeoObjectRef }) {
       <TextLink href={`/geo/${o.id}`}>{o.name ?? o.id.slice(0, 8)}</TextLink>{" "}
       <span className="text-xs text-muted">({GEO_OBJECT_TYPE_LABELS[o.type]})</span>
     </>
-  );
-}
-
-function SectionHeading({ children, description }: { children: ReactNode; description?: string }) {
-  return (
-    <div className="mb-3">
-      <h2 className="text-base font-semibold">{children}</h2>
-      {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
-    </div>
   );
 }
 
@@ -79,23 +58,7 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
   const detail = await geoObjectDetail(db, id.data);
   if (!detail) notFound();
   const sp = await searchParams;
-  const runs = runsParam.parse(sp.runs);
-  const page = pageParam.parse(sp.mp);
   const error = runScopeError(sp.error);
-  const attr = textParam.parse(sp.attr);
-  const [mentionPage, facts, profile] = await Promise.all([
-    geoMentions(db, id.data, page),
-    geoFacts(db, id.data, { runs }),
-    profileView(db, id.data),
-  ]);
-  const selected = profile && attr ? await profileAttributeFacts(db, id.data, profile.snapshot.version, attr) : null;
-  const href = (q: { runs?: "active" | "all"; mp?: number; attr?: string | null }) => {
-    const r = q.runs ?? runs;
-    const m = q.mp ?? page;
-    const a = q.attr === undefined ? attr : q.attr;
-    const parts = [r === "all" ? "runs=all" : "", m > 1 ? `mp=${m}` : "", a ? `attr=${encodeURIComponent(a)}` : ""].filter(Boolean);
-    return `/geo/${id.data}${parts.length > 0 ? `?${parts.join("&")}` : ""}`;
-  };
   const { object: o } = detail;
   const externalIds = [
     o.osmId && `OSM ${o.osmId}`,
@@ -136,17 +99,7 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
             )}
           </>
         }
-        description="Ein Geo-Objekt mit Namen, Hierarchie, Erwähnungen in Dokumenten, den Facts daraus und dem Profil."
-        actions={
-          active && (
-            <form action={recomputeGeoProfileAction}>
-              <input type="hidden" name="geoObjectId" value={o.id} />
-              <Button title="Startet einen Konsolidierungslauf für dieses Geo-Objekt: das Profil wird aus den aktuellen Facts neu gebildet.">
-                Profil neu berechnen
-              </Button>
-            </form>
-          )
-        }
+        description="Ein Geo-Objekt mit Namen, Hierarchie und den zugehörigen Orten."
       />
       {error && (
         <Notice tone="danger" className="mb-6">
@@ -154,27 +107,7 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
         </Notice>
       )}
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <div className="min-w-0 space-y-10">
-          <section>
-            <SectionHeading>Profil</SectionHeading>
-            <ProfileTab
-              view={profile}
-              selected={selected}
-              notice={textParam.parse(sp.notice)}
-              noticeRunId={uuidParam.parse(sp.run)}
-              links={{ geoObjectId: o.id, confirm: textParam.parse(sp.confirm), attrHref: (a) => href({ attr: a }) }}
-            />
-          </section>
-
-          <MentionsPanel mentions={mentionPage} page={page} pageHref={(mp) => href({ mp })} />
-
-          <section>
-            <SectionHeading>Facts</SectionHeading>
-            <FactsTab groups={facts} runs={runs} runsHref={(r) => href({ runs: r })} />
-          </section>
-        </div>
-
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,32rem)]">
         <div className="space-y-6">
           <Panel flush className="overflow-hidden [&_[aria-label=Kartenausschnitt]]:h-[18rem]">
             <MiniMap

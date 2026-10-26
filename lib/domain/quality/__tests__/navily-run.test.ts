@@ -4,11 +4,10 @@ import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { comparisonResults, comparisonSet, places, qualitySnapshots, reviewTasks, runs, tiles } from "@/lib/db/schema";
+import { comparisonResults, comparisonSet, places, reviewTasks, tiles } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
-import { QUALITY_MEASURE_STAGE } from "@/lib/pipeline/quality-stages";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
+import { insertBerthState } from "@/test/berth-state";
 import { withRollback } from "@/test/db";
 import { NAVILY_MARKERS, rowsWrittenInTransaction } from "@/test/quality";
 import { insertNamedObject, insertTestSubdivision } from "@/test/text";
@@ -64,27 +63,9 @@ async function scene(tx: Db) {
   const kolona = await addPlace("Kolona", 41.0, 35.2);
   const poros = await addPlace("Poros", 41.0506, 35.2504, "port");
   const agios = await addPlace("Agios", 41.08, 35.22);
-  await insertProfile(tx, kolona.objectId, { "services.water": true, "shelter.N": 0.9 }, { "shelter.N": provenanceEntry("computed") }, { version: 1 });
+  await insertBerthState(tx, kolona.placeId, { "services.water": true, "shelter.N": 0.9 });
   const placeIds = [kolona.placeId, poros.placeId, agios.placeId];
   return { subdivisionKey, kolona, poros, agios, placeIds };
-}
-
-/** A measurement run of the subdivision created at `createdAt`, with one stored subdivision row (so it counts as measured). */
-async function measurementRun(tx: Db, subdivisionKey: string, label: string, createdAt: string): Promise<string> {
-  const [run] = await tx
-    .insert(runs)
-    .values({
-      kind: "stage",
-      scopeType: "subdivision",
-      scopeId: subdivisionKey,
-      stages: [QUALITY_MEASURE_STAGE],
-      params: { subdivisionKey, label, from: "2026-10-01T00:00:00.000Z", to: createdAt },
-      triggeredBy: "test",
-      createdAt: new Date(createdAt),
-    })
-    .returning({ id: runs.id });
-  await tx.insert(qualitySnapshots).values({ runId: run!.id, scopeType: "subdivision", scopeId: subdivisionKey, metric: "coverage", value: 1 });
-  return run!.id;
 }
 
 const resultRows = (tx: Db, placeIds: string[]) => tx.select().from(comparisonResults).where(inArray(comparisonResults.placeId, placeIds));
@@ -103,8 +84,6 @@ describe("runNavilyComparison", () => {
         tasks: 0,
         skippedManual: 0,
         coverage: { spots: 3, matched: 2, ratio: 2 / 3 },
-        snapshotRunId: null,
-        coverageWritten: false,
       });
       expect(await resultRows(tx, placeIds)).toEqual([]);
       expect(await rowsWrittenInTransaction(tx)).toEqual([]);
@@ -229,51 +208,9 @@ describe("runNavilyComparison", () => {
         tasks: 0,
         skippedManual: 0,
         coverage: { spots: 0, matched: 0, ratio: null },
-        snapshotRunId: null,
-        coverageWritten: false,
       });
     }));
 
-  it("coverage_navily needs a measurement run and is written once", () =>
-    withRollback(async (tx) => {
-      const { subdivisionKey } = await scene(tx);
-      const spots = await loadSpots();
-      // without a measurement nothing is written, not even the proposals
-      await expect(runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: true, writeCoverage: true, now: NOW })).rejects.toThrow(
-        `Erst messen (/quality): Landesteil ${subdivisionKey} hat noch keine Messung`,
-      );
-      expect(await rowsWrittenInTransaction(tx)).toEqual([]);
-
-      const older = await measurementRun(tx, subdivisionKey, "Lauf 0", "2026-10-18T08:00:00Z");
-      const newest = await measurementRun(tx, subdivisionKey, "Lauf 1", "2026-10-19T08:00:00Z");
-      const r = await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: false, writeCoverage: true, now: NOW });
-      expect([r.snapshotRunId, r.coverageWritten]).toEqual([newest, true]);
-      const rows = await tx.select().from(qualitySnapshots).where(eq(qualitySnapshots.metric, "coverage_navily"));
-      expect(rows.filter((x) => x.runId === older)).toEqual([]);
-      const mine = rows.filter((x) => x.runId === newest);
-      expect(mine).toHaveLength(1);
-      expect(mine[0]).toMatchObject({ scopeType: "subdivision", scopeId: subdivisionKey, value: 2 / 3, details: { spots: 3, matched: 2 } });
-      // counts only (Grundprinzip 9)
-      expect(Object.keys(mine[0]!.details).sort()).toEqual(["matched", "spots"]);
-
-      const again = await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: false, writeCoverage: true, now: NOW });
-      expect([again.snapshotRunId, again.coverageWritten]).toEqual([newest, false]);
-      expect((await tx.select().from(qualitySnapshots).where(eq(qualitySnapshots.runId, newest))).filter((x) => x.metric === "coverage_navily")).toHaveLength(1);
-    }));
-
-  it("coverage_navily is written in the proposals' transaction: when it fails, no proposal stays (ruling M7-D-R2)", () =>
-    withRollback(async (tx) => {
-      const { subdivisionKey, placeIds } = await scene(tx);
-      const spots = await loadSpots();
-      await measurementRun(tx, subdivisionKey, "Lauf 1", "2026-10-19T08:00:00Z");
-      // a failing coverage write, for this transaction only
-      const fn = sql.raw(`test_fail_coverage_${newId().replaceAll("-", "")}`);
-      await tx.execute(sql`create function ${fn}() returns trigger language plpgsql as $$
-        begin if new.metric = 'coverage_navily' then raise exception 'coverage write failed'; end if; return new; end $$`);
-      await tx.execute(sql`create trigger ${fn} before insert on quality_snapshots for each row execute function ${fn}()`);
-      await expect(runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: true, writeCoverage: true, now: NOW })).rejects.toThrow();
-      expect(await resultRows(tx, placeIds)).toEqual([]);
-    }));
 });
 
 describe("renderNavilyRunSection", () => {
@@ -284,8 +221,6 @@ describe("renderNavilyRunSection", () => {
     tasks: 5,
     skippedManual: 1,
     coverage: { spots: 3, matched: 2, ratio: 2 / 3 },
-    snapshotRunId: null,
-    coverageWritten: false,
   };
 
   it("reports written results and review tasks when proposals were accepted", () => {
@@ -297,28 +232,11 @@ describe("renderNavilyRunSection", () => {
   });
 
   it("without --accept-proposals says that nothing was written", () => {
+    expect(notWrittenNote()).toBe("Nur Bericht – Ergebnisse mit --accept-proposals schreiben");
     const md = renderNavilyRunSection({ ...result, written: 0, tasks: 0, skippedManual: 0, coverage: { spots: 0, matched: 0, ratio: null } }, false);
     expect(md).toContain("Nur Bericht – Ergebnisse mit --accept-proposals schreiben");
     expect(md).toContain("Navily-Abdeckung: 0 von 0 Navily-Orten im Revier (–)");
     expect(md).not.toContain("Ergebnisse geschrieben");
     expect(md).not.toContain("coverage_navily");
-  });
-
-  it("with a stored coverage row and without --accept-proposals it does not claim a report only (ruling M7-D-R2)", () => {
-    const md = renderNavilyRunSection({ ...result, written: 0, tasks: 0, skippedManual: 0, snapshotRunId: newId(), coverageWritten: true }, false);
-    expect(md).not.toContain("Nur Bericht");
-    expect(md).toContain("Vergleichsergebnisse nicht geschrieben – dafür --accept-proposals");
-    // the CLI prints the same line
-    expect(notWrittenNote({ ...result, snapshotRunId: newId(), coverageWritten: false })).toBe("Vergleichsergebnisse nicht geschrieben – dafür --accept-proposals");
-    expect(notWrittenNote({ ...result, snapshotRunId: null })).toBe("Nur Bericht – Ergebnisse mit --accept-proposals schreiben");
-  });
-
-  it("says whether the coverage was stored with the newest measurement", () => {
-    expect(renderNavilyRunSection({ ...result, snapshotRunId: newId(), coverageWritten: true }, false)).toContain(
-      "Navily-Abdeckung zur jüngsten Messung gespeichert (coverage_navily).",
-    );
-    expect(renderNavilyRunSection({ ...result, snapshotRunId: newId(), coverageWritten: false }, false)).toContain(
-      "Die jüngste Messung hat die Navily-Abdeckung schon, nichts geändert.",
-    );
   });
 });

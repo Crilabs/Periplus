@@ -43,7 +43,7 @@ describe("reclassifyPois", () => {
 
       const [bay] = await db.insert(geoObjects).values({ type: "bay", origin: "osm", geom: geomFromGeoJson({ type: "Point", coordinates: [LON, LAT + 0.005] }) }).returning({ id: geoObjects.id });
       await db.insert(places).values({ geoObjectId: bay!.id, kind: "anchorage", status: "candidate", position: geomFromGeoJson({ type: "Point", coordinates: [LON, LAT + 0.005] }) });
-      // ~9 km away: beyond poiRadiusM, but within the highlight reach (spec 16), so its selection is stale too
+      // ~9 km away: beyond poiRadiusM
       const [mid] = await db.insert(geoObjects).values({ type: "bay", origin: "osm", geom: geomFromGeoJson({ type: "Point", coordinates: [LON + 0.1, LAT] }) }).returning({ id: geoObjects.id });
       await db.insert(places).values({ geoObjectId: mid!.id, kind: "anchorage", status: "candidate", position: geomFromGeoJson({ type: "Point", coordinates: [LON + 0.1, LAT] }) });
       const [far] = await db.insert(geoObjects).values({ type: "bay", origin: "osm", geom: geomFromGeoJson({ type: "Point", coordinates: [LON + 1, LAT] }) }).returning({ id: geoObjects.id });
@@ -56,7 +56,7 @@ describe("reclassifyPois", () => {
       const first = await reclassifyPois(db, categories);
       expect(first.cleared).toBeGreaterThanOrEqual(2);
       expect(first.geoObjectIds).toContain(bay!.id);
-      expect(first.geoObjectIds).toContain(mid!.id);
+      expect(first.geoObjectIds).not.toContain(mid!.id);
       expect(first.geoObjectIds).not.toContain(far!.id);
       expect(await categoryOf(db, fuel)).toBeNull();
       expect(await categoryOf(db, pharmacy)).toBeNull();

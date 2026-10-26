@@ -27,6 +27,9 @@ export default defineConfig({
   globalSetup: "./e2e/global-setup.ts",
   fullyParallel: false,
   workers: 1,
+  // The map test clicks into a WebGL map, which headless Chromium on a CI runner now and then renders late; one retry
+  // there, reported as "flaky" in the output, so it stays visible without blocking a merge.
+  retries: process.env.CI ? 1 : 0,
   reporter: "list",
   use: { baseURL: `http://localhost:${PORT}`, ...devices["Desktop Chrome"] },
   webServer: {

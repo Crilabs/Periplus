@@ -2,7 +2,7 @@ import { and, eq, getTableName, inArray, is, isNull, SQL, sql, type AnyColumn } 
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "@/lib/db/client";
 import { geoNames, type NameOrigin, type NameScript } from "@/lib/db/schema";
-import { validAt, validAtAlias } from "@/lib/domain/timeline";
+import { validAt, validAtAlias } from "@/lib/db/valid-at";
 
 /**
  * A name as delivered by an import; `language` is ISO 639-1 or `"und"`.

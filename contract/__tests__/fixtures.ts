@@ -1,7 +1,7 @@
 import type { Spot, SpotsFile } from "@/contract";
 
 /**
- * The example spot of `.idea/datendienst-spec.md` Teil B, adapted to v1: `regionId` and the highlight id are
+ * The example spot of `.idea/datendienst-spec.md` Teil B, adapted to contract 4.0: `regionId` and the highlight id are
  * shortened/illustrative in Teil B and get valid 26-character ULIDs here (Teil B's `hl_…5F` holds an `L`, which is
  * no Crockford base-32 character).
  */
@@ -50,32 +50,57 @@ export const TEIL_B_EXAMPLE: Spot = {
   hazards: [{ kind: "gusts", text: "Fallböen bei Meltemi aus NO" }],
   seasonNote: [{ months: [6, 7, 8, 9], text: "Taverne am Strand geöffnet, Dinghy-Steg" }],
   score: { confidence: 0.72, popularity: 0.55, quietness: 0.8, sourcesCount: 6, lastObserved: "2026-06-14" },
-  highlightIds: ["hl_01J9X4KQ3P2N1M0Z9K8J7H6G5F"],
   // Teil B writes the place id as "ChIJ..."; a real id is URL-safe characters only (contract GOOGLE_PLACE_ID_PATTERN)
   externalRefs: { googlePlaceIds: { food: ["ChIJN1t_tDeuEmsRUsoyG83frY4"] }, osmId: "way/123456789", wikidataId: null },
-  summary: {
-    de: "Tiefe Bucht mit gutem Schutz von West bis Nord, offen nach Südost. Sandgrund mit Seegras, 4 bis 8 m. In der Saison Taverne mit Dinghy-Steg; im Hochsommer abends voll.",
-  },
-  sources: [
-    { url: "https://example-toernbericht.de/saronisch-2025", kind: "tripReport", observedAt: "2025-06-10" },
-    { url: "https://example-revierfuehrer.com/vathi", kind: "pilotGuide", observedAt: "2024-01-01" },
-  ],
   provenance: {
     shelter: { source: "computed", confidence: 0.8, observedAt: "2026-10-01" },
     depth: { source: "text", confidence: 0.7, observedAt: "2025-06-10" },
     "services.taverna": { source: "text", confidence: 0.9, observedAt: "2026-06-14" },
   },
   regionId: "rg_01J9X4KZ0A1B2C3D4E5F6G7H8J",
-  profileVersion: 3,
-  validFrom: "2026-10-15",
+  asOf: "2026-10-15",
+  gaps: ["depth.anchoring"],
+  facts: [
+    {
+      id: "fc_01J9X4P0A1B2C3D4E5F6G7H8J9",
+      subject: { kind: "spot" },
+      text: "Fallböen bei Meltemi aus Nordost.",
+      observedAt: "2025-06-10",
+      tone: "negative",
+      safety: true,
+      mentions: 3,
+    },
+    {
+      id: "fc_01J9X4P0A1B2C3D4E5F6G7H8JA",
+      subject: { kind: "landside", id: "hl_01J9X4KQ3P2N1M0Z9K8J7H6G5F", name: "Taverna Vathi" },
+      text: "Die Taverne am Strand ist von Juni bis September geöffnet.",
+      observedAt: null,
+      tone: "positive",
+      safety: false,
+      mentions: 1,
+    },
+  ],
+  landingPoints: [
+    { kind: "beach", position: { lat: 37.60790, lon: 23.33920 } },
+    { kind: "text", description: "Dinghy-Steg am Ostende des Strandes." },
+  ],
+  nearby: [
+    {
+      id: "hl_01J9X4KQ3P2N1M0Z9K8J7H6G5F",
+      category: "food",
+      name: "Taverna Vathi",
+      position: { lat: 37.6085, lon: 23.3399 },
+      distanceM: 120,
+      access: "foot",
+    },
+  ],
   mergedInto: null,
 };
 
 export function spotsFile(spots: unknown[]): SpotsFile {
   return {
-    schemaVersion: "2.3",
-    subdivision: "sd_01J9X4M0A1B2C3D4E5F6G7H8J9",
-    dataVersion: 1,
+    schemaVersion: "4.0",
+    scope: { type: "subdivision", id: "sd_01J9X4M0A1B2C3D4E5F6G7H8J9", dataVersion: 1 },
     generatedAt: "2026-10-19T08:00:00.000Z",
     spots: spots as Spot[],
   };

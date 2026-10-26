@@ -23,7 +23,6 @@ const config: AppConfig = {
   queues: {},
   budgets: {
     anthropic: { dailyEur: 0.01 },
-    voyage: { dailyEur: 1 },
     dataforseo: { dailyEur: 1 },
     firecrawl: { dailyEur: 1 },
     jina: { dailyEur: 1 },
@@ -40,7 +39,6 @@ const config: AppConfig = {
     cacheWriteFactor: 1.25,
     callTimeoutSeconds: 600,
     batch: { discount: 0.5, pollSeconds: 60, maxHours: 26, maxRequests: 1000, providerTimeoutSeconds: 120, leaseSeconds: 600, clockSkewSeconds: 120, reservationHours: 48, budgetRetrySeconds: 900 },
-    comparison: { models: ["claude-haiku-5-5", "claude-haiku-5-5"] },
   },
 };
 

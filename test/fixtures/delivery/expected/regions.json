@@ -1,7 +1,10 @@
 {
-  "schemaVersion": "2.3",
-  "subdivision": "sd_01J9ZD00000000000000000001",
-  "dataVersion": 1,
+  "schemaVersion": "4.0",
+  "scope": {
+    "type": "subdivision",
+    "id": "sd_01J9ZD00000000000000000001",
+    "dataVersion": 1
+  },
   "generatedAt": "2040-06-01T08:00:00.000Z",
   "regions": [
     {
@@ -61,18 +64,7 @@
       "parentId": "rg_01J9ZD00000000000000000002",
       "spotIds": [
         "sp_01J9ZD00000000000000000001"
-      ],
-      "character": {
-        "de": "Meltemi-exponiert, starker Fährverkehr, Charterbasis."
-      },
-      "facts": {
-        "meltemiExposure": 0.7,
-        "ferryTraffic": "heavy",
-        "charterBase": true,
-        "supplyPort": null
-      },
-      "profileVersion": 1,
-      "validFrom": "2040-06-01"
+      ]
     },
     {
       "id": "rg_01J9ZD00000000000000000002",
@@ -90,9 +82,7 @@
       },
       "radiusNm": 2,
       "parentId": null,
-      "spotIds": [],
-      "profileVersion": 1,
-      "validFrom": "2040-06-01"
+      "spotIds": []
     }
   ]
 }

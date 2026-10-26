@@ -6,7 +6,7 @@ import { getConfig, type ImagesConfig } from "@/lib/config";
 import { deliveries, placeImages } from "@/lib/db/schema";
 import { imageAttributionTexts, imageBlockedBy, imageSources } from "@/lib/domain/images/delivery-gate";
 import { withRollback } from "@/test/db";
-import { breakPackage, HIGHLIGHT_SELECTORS, SPOT_A, validPackage, PREVIOUS } from "@/test/fixtures/delivery/package";
+import { breakPackage, SPOT_A, validPackage, PREVIOUS } from "@/test/fixtures/delivery/package-v4";
 import { seedImage } from "@/test/fixtures/delivery/images";
 import { seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
@@ -55,7 +55,7 @@ describe("images in the package", () => {
       expect(await loadPlaceImages(tx, [f.places.A.geoObjectId], TODAY, imagesCfg)).toEqual(new Map());
     }));
 
-  it("flipping the switch delivers the image and raises profileVersion once", () =>
+  it("flipping the switch delivers the image and makes a new package once", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
@@ -69,7 +69,7 @@ describe("images in the package", () => {
       expect(flipped.report.checks.filter((c) => !c.ok)).toEqual([]);
       const after = spotA(await readJson<SpotsFile>(archive, `${prefixOf(f, 2)}spots.json`), f);
       expect(after.images).toHaveLength(1);
-      expect(after.profileVersion).toBe(before.profileVersion + 1);
+      expect(before.images).toBeUndefined();
 
       // the second build after the flip changes nothing
       const again = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true, imagesCfg: cadastreOn });
@@ -94,12 +94,12 @@ describe("images in the package", () => {
       const [row] = await tx.select().from(deliveries).where(eq(deliveries.id, result.deliveryId));
       expect(row!.fileHashes[file]).toEqual({ sha256: sha256Hex(stored), bytes: stored.byteLength });
       // the package lists it after the contract files: the API links it, the admin page offers its download
-      expect(deliveryFiles(row!)).toEqual(["manifest.json", "spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json", file]);
-      const detail = await deliveryDetail(tx, archive, row!.id);
+      expect(deliveryFiles(row!)).toEqual(["manifest.json", "spots.json", "regions.json", "coast.geojson", "weather-points.json", file]);
+      const detail = await deliveryDetail(tx, row!.id);
       expect(detail!.files.at(-1)).toEqual({ name: file, sha256: sha256Hex(stored), bytes: stored.byteLength });
       const manifest = await readJson<Manifest>(archive, `${prefixOf(f, 1)}manifest.json`);
       expect(manifest.files.at(-1)).toEqual({ name: file, sha256: sha256Hex(stored), bytes: stored.byteLength });
-      expect(manifest.schemaVersion).toBe("2.3");
+      expect(manifest.schemaVersion).toBe("4.0");
       expect(manifest.licenses.map((l) => l.name)).toEqual(expect.arrayContaining(["CC-BY-3.0", "CC-BY-4.0", "Copernicus-DEM"]));
       // the object: schema order, camera from the columns
       const spot = spotA(await readJson<SpotsFile>(archive, `${prefixOf(f, 1)}spots.json`), f);
@@ -115,7 +115,6 @@ describe("images in the package", () => {
           observedAt: "2016-07-01",
           license: "periplus",
           attribution: image.attribution,
-          sourceUrl: null,
           camera: { position: [21.0449, 35.1201], heightM: 260, viewBearingDeg: 281.5, tiltDeg: 18.2, fovDeg: 50 },
         },
       ]);
@@ -181,9 +180,7 @@ describe("image validation", () => {
     validatePackage(pkg, {
       previous: PREVIOUS,
       findCopies: async () => 0,
-      forbiddenSources: [],
       cfg: getConfig().delivery,
-      highlightSelectors: HIGHLIGHT_SELECTORS,
       imageAttribution,
       ...deps,
     });
@@ -198,7 +195,6 @@ describe("image validation", () => {
     observedAt: null,
     license: "periplus",
     attribution,
-    sourceUrl: null,
     camera: null,
   });
   const withImage = (img: ReturnType<typeof image>) => breakPackage(validPackage(), (p) => void (p.files["spots.json"].spots[0]!.images = [img]));

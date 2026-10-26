@@ -2,15 +2,16 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, geoNames, geoObjects, highlightSelections, places, profileSummaries, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
+import { geoNames, geoObjects, placeWebsites, places, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
 import { addNames } from "@/lib/domain/gazetteer/names";
 import { osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { newPublicId } from "@/lib/domain/ids";
-import { insertMention, insertMentionFact, insertExtraction, insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
-import { seedDeliverySubdivision, spotAProvenance, SPOT_A_ATTRIBUTES } from "@/test/fixtures/delivery/subdivision";
+import { getConfig } from "@/lib/config";
+import { signalPage } from "@/test/research-signals";
+import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { spotSchema } from "@/contract/v2";
-import { insertNamedObject, insertTestRun, insertTestSubdivision } from "@/test/text";
+import { insertTestSubdivision } from "@/test/text";
 import { SubdivisionNotFound, arrayParam, loadSubdivisionScope } from "../load";
 import { mapSpot } from "../map-spot";
 
@@ -54,14 +55,15 @@ describe("loadSubdivisionScope", () => {
         name: "Vathi Bay",
         osmId: "way/123456789",
         wikidataId: null,
-        summary: "Tiefe Bucht mit gutem Schutz von West bis Nord, Sandgrund mit Seegras.",
+        anchor: { lon: f.positions.A[0] + 0.0001, lat: f.positions.A[1] - 0.0005, confidence: 0.3 },
       });
-      expect(a.profile).toMatchObject({ version: 1, confidence: 0.72, sourcesCount: 3 });
-      expect(a.profile!.attributes["shelter.NW"]).toBe(0.95);
-      // popularity on the build date: A has the most sources of the subdivision's confirmed places
-      expect(a.popularity).toBe(1);
+      expect(a.state!.core["shelter.NW"]).toMatchObject({ value: 0.95, origin: "computed" });
+      expect(a.state!.core["shelter.N"]).toMatchObject({ value: 0.9, origin: "text", factIds: [f.factId] });
+      expect(a.state!.updatedAt.toISOString()).toBe("2026-10-20T08:00:00.000Z");
+      // the places without a state: the excluded one
+      expect(scope.spots.find((s) => s.publicId === C.publicId)!.state).toBeNull();
       const c = scope.spots.find((s) => s.publicId === C.publicId)!;
-      expect(c).toMatchObject({ status: "no_anchoring", statusReason: `restricted:military:${f.restrictedAreaId}`, popularity: null });
+      expect(c).toMatchObject({ status: "no_anchoring", statusReason: `restricted:military:${f.restrictedAreaId}` });
       expect(scope.subdivision).toMatchObject({ id: f.subdivisionId, publicId: f.subdivisionPublicId, key: "XT-DELIVERY", name: "Testlandesteil" });
       expect(scope.subdivision.names).toEqual([
         { lang: "de", name: "Testlandesteil" },
@@ -80,16 +82,69 @@ describe("loadSubdivisionScope", () => {
         },
       ]);
       expect(scope.tiles).toEqual([
-        { id: f.tileIds[0], lastRunAt: null, profilesAsOf: "2026-10-19" },
-        { id: f.tileIds[1], lastRunAt: null, profilesAsOf: "2026-10-19" },
+        { id: f.tileIds[0], lastRunAt: null, statesAsOf: "2026-10-20" },
+        { id: f.tileIds[1], lastRunAt: null, statesAsOf: "2026-10-19" },
       ]);
-      expect(scope.pois).toEqual([
-        expect.objectContaining({ geoObjectId: f.poiId, publicId: f.poiPublicId, category: "food", name: "Taverna Vathi", sources: [] }),
-      ]);
-      expect(scope.pois[0]!.profile!.attributes["derived.importance"]).toBe(2);
       expect(scope.passages).toEqual([
         expect.objectContaining({ geoObjectId: f.capeId, type: "cape", name: "Akra Test", point: { lon: 21.2, lat: 35.15 } }),
       ]);
+    });
+  });
+
+  it("the state's nearby entries come with the public id, names and position of their geo objects; one without a public id is still loaded", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliverySubdivision(tx);
+      const { A } = f.places;
+      const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
+      const a = scope.spots.find((s) => s.publicId === A.publicId)!;
+      expect(a.nearbyObjects).toEqual([
+        { geoObjectId: f.poiId, publicId: f.poiPublicId, name: "Taverna Vathi", names: expect.any(Array), position: { lon: f.positions.T[0], lat: f.positions.T[1] } },
+      ]);
+      await tx.update(geoObjects).set({ publicId: null }).where(eq(geoObjects.id, f.poiId));
+      const without = (await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx))).spots.find((s) => s.publicId === A.publicId)!;
+      expect(without.nearbyObjects).toEqual([expect.objectContaining({ geoObjectId: f.poiId, publicId: null })]);
+      // an ended object is not loaded at all
+      await tx.execute(sql`update geo_objects set valid_from = current_date - 5, valid_to = current_date - 1 where id = ${f.poiId}`);
+      const ended = (await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx))).spots.find((s) => s.publicId === A.publicId)!;
+      expect(ended.nearbyObjects).toEqual([]);
+    });
+  });
+
+  it("ownWebsiteDomain is the registrable domain of the newest place website, only when it is bound (F1)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliverySubdivision(tx);
+      const { A, M } = f.places;
+      const domains = async () => {
+        const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
+        return [A, M].map((p) => scope.spots.find((s) => s.publicId === p.publicId)!.ownWebsiteDomain);
+      };
+      expect(await domains()).toEqual([null, null]);
+      const site = (p: typeof A, url: string, bound: boolean, createdAt: string) =>
+        tx.insert(placeWebsites).values({ placeId: p.placeId, geoObjectId: p.geoObjectId, url, urlNormalized: url, origin: "osm", bound, createdAt: new Date(createdAt) });
+      await site(A, "https://www.marina-a.example/en/", true, "2026-10-01T08:00:00Z");
+      await site(M, "https://marina-m.example/", false, "2026-10-01T08:00:00Z");
+      expect(await domains()).toEqual(["marina-a.example", null]);
+      // the newest row counts: a later unbound one withdraws the binding
+      await site(A, "https://other.example/", false, "2026-10-02T08:00:00Z");
+      expect(await domains()).toEqual([null, null]);
+    });
+  });
+
+  it("independentSources counts the confirmation's sources: two pages of one domain are one", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliverySubdivision(tx);
+      const { A, M } = f.places;
+      const config = getConfig();
+      const place = { placeId: A.placeId, objectId: A.geoObjectId };
+      await signalPage(tx, config, place, { domain: "guide-one.example", quote: "We anchored in the northern corner of the bay overnight" });
+      await signalPage(tx, config, place, { domain: "guide-one.example", quote: "Another crew dropped the hook near the beach at sunset" });
+      const count = async () => {
+        const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
+        return [A, M].map((p) => scope.spots.find((s) => s.publicId === p.publicId)!.independentSources);
+      };
+      expect(await count()).toEqual([1, 0]);
+      await signalPage(tx, config, place, { domain: "guide-two.example", quote: "Completely different words about a quiet night at anchor" });
+      expect(await count()).toEqual([2, 0]);
     });
   });
 
@@ -97,21 +152,25 @@ describe("loadSubdivisionScope", () => {
     await withRollback(async (tx) => {
       const f = await seedDeliverySubdivision(tx);
       const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
-      const results = new Map(scope.spots.map((s) => [s.publicId, mapSpot(s, { regionId: null, highlightIds: [], cfg })]));
+      const results = new Map(scope.spots.map((s) => [s.publicId, mapSpot(s, { regionId: null, cfg })]));
       const spot = (id: string | null) => {
         const r = results.get(id!)!;
         if (!("spot" in r)) throw new Error(`omitted ${r.omitted}`);
         return r.spot;
       };
-      expect(results.get(f.places.B.publicId!)).toEqual({ omitted: "shelter_incomplete" });
-      expect(spot(f.places.C.publicId).exclude).toEqual({ excluded: true, reason: "military", detail: "Militärisches Sperrgebiet" });
+      expect(results.get(f.places.B.publicId!)).toEqual({ omitted: "incomplete_core" });
+      expect(spot(f.places.C.publicId).exclude).toEqual({ excluded: true, reason: "military", detail: "Militärisches Sperrgebiet (ausgeschlossen – keine Schutzwerte)" });
       expect(spot(f.places.M.publicId)).toMatchObject({ kind: "marina", berth: { status: "seasonFull", months: [7, 8] } });
       const a = spot(f.places.A.publicId);
-      // the version of the fact was fetched (observed) on 2026-10-19
-      expect(a.sources).toEqual([{ url: f.documentUrl, kind: "tripReport", observedAt: "2026-10-19" }]);
+      expect(a.nearby).toEqual([expect.objectContaining({ id: f.poiPublicId, category: "food", distanceM: 1852, access: "foot" })]);
+      expect(a.services?.taverna).toBe("seasonal");
       for (const id of [f.places.A, f.places.C, f.places.M].map((p) => p.publicId)) {
-        expect(spotSchema.safeParse({ ...spot(id), profileVersion: 1, validFrom: "2026-10-19" }).error?.issues, id!).toBeUndefined();
+        const r = results.get(id!)!;
+        if (!("spot" in r)) throw new Error("omitted");
+        expect(spotSchema.safeParse({ ...r.spot, asOf: r.asOf }).error?.issues, id!).toBeUndefined();
       }
+      expect((results.get(f.places.A.publicId!) as { asOf: string }).asOf).toBe("2026-10-20");
+      expect((results.get(f.places.C.publicId!) as { asOf: string | null }).asOf).toBeNull();
     });
   });
 
@@ -153,8 +212,8 @@ describe("loadSubdivisionScope", () => {
       for (const p of [f.places.M, f.places.C]) await tx.update(places).set({ status: "candidate", publicId: null }).where(eq(places.id, p.placeId));
       const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
       expect(scope.tiles).toEqual([
-        { id: f.tileIds[0], lastRunAt: ranAt.toISOString(), profilesAsOf: expect.any(String) },
-        { id: f.tileIds[1], lastRunAt: null, profilesAsOf: null },
+        { id: f.tileIds[0], lastRunAt: ranAt.toISOString(), statesAsOf: "2026-10-20" },
+        { id: f.tileIds[1], lastRunAt: null, statesAsOf: null },
       ]);
       expect(scope.spots.map((s) => s.publicId)).toEqual([f.places.A.publicId, f.places.B.publicId].sort());
     });
@@ -187,53 +246,6 @@ describe("loadSubdivisionScope", () => {
     });
   });
 
-  it("spot sources are the documents of the provenance facts, newest observation per url, no quote", async () => {
-    await withRollback(async (tx) => {
-      const f = await seedDeliverySubdivision(tx);
-      const { A } = f.places;
-      // The fact's version states 2025-06-10; a newer version of the same document is classified as a pilot guide.
-      await tx.execute(sql`update document_versions v set classified_observed_at = '2025-06-10' from facts f join mentions m on m.id = f.mention_id where f.id = ${f.factId} and v.id = m.document_version_id`);
-      const m = await insertMention(tx, A.geoObjectId, { documentId: f.documentId, observedAt: "2026-05-02" });
-      await tx.execute(sql`update document_versions set classified_doc_type = 'pilot_guide', classified_observed_at = '2026-05-03' where id = ${m.versionId}`);
-      const newer = await insertMentionFact(tx, A.geoObjectId, m, await insertExtraction(tx, A.geoObjectId, m), { attribute: "holding", value: "good" });
-      // A fact of another document that no provenance cites stays out.
-      const uncited = await insertMention(tx, A.geoObjectId, { observedAt: "2026-07-01" });
-      await insertMentionFact(tx, A.geoObjectId, uncited, await insertExtraction(tx, A.geoObjectId, uncited));
-      const provenance = spotAProvenance(f.factId);
-      provenance["holding"] = provenanceEntry("text", { factIds: [newer], observedAt: "2026-05-03" });
-      await insertProfile(tx, A.geoObjectId, SPOT_A_ATTRIBUTES, provenance, { version: 2 });
-
-      const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
-      const a = scope.spots.find((s) => s.publicId === A.publicId)!;
-      expect(a.profile!.version).toBe(2);
-      expect(a.sources).toEqual([{ url: f.documentUrl, docType: "pilot_guide", observedAt: "2026-05-03" }]);
-      expect(JSON.stringify(a.sources)).not.toMatch(/good holding in sand/);
-      // the summary belongs to version 1, not to the latest version 2 (ruling M6-P9)
-      expect(a.summary).toBeNull();
-    });
-  });
-
-  it("a regenerated ok summary of the same prompt version replaces the older one (ruling M6-H-R1)", async () => {
-    await withRollback(async (tx) => {
-      const f = await seedDeliverySubdivision(tx);
-      const { A } = f.places;
-      const [old] = await tx.select().from(profileSummaries).where(eq(profileSummaries.geoObjectId, A.geoObjectId));
-      await tx.insert(profileSummaries).values({
-        geoObjectId: A.geoObjectId,
-        profileVersion: 1,
-        text: "Neu geschriebene Zusammenfassung der Bucht.",
-        status: "ok",
-        attempts: 1,
-        model: "test",
-        promptVersion: old!.promptVersion,
-        runId: await insertTestRun(tx),
-        createdAt: new Date(old!.createdAt.getTime() + 60_000),
-      });
-      const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
-      expect(scope.spots.find((s) => s.publicId === A.publicId)!.summary).toBe("Neu geschriebene Zusammenfassung der Bucht.");
-    });
-  });
-
   it("regions carry centre, radius in nm and the ancestor chain", async () => {
     await withRollback(async (tx) => {
       const f = await seedDeliverySubdivision(tx);
@@ -255,9 +267,8 @@ describe("loadSubdivisionScope", () => {
       expect(island.radiusNm).toBeLessThan(8);
       expect(Number(island.radiusNm.toFixed(1))).toBe(island.radiusNm);
       expect(island.areaKm2).toBeGreaterThan(100);
-      expect(island.profile!.attributes).toMatchObject({ meltemi_exposure: 0.7, ferry_traffic: "high", charter_bases: ["X"] });
       const archipelago = scope.regions.find((r) => r.publicId === f.archipelagoPublicId)!;
-      expect(archipelago).toMatchObject({ polygon: null, radiusNm: cfg.regions.pointRadiusNm, areaKm2: null, parentGeoObjectIds: [f.regionId], profile: null });
+      expect(archipelago).toMatchObject({ polygon: null, radiusNm: cfg.regions.pointRadiusNm, areaKm2: null, parentGeoObjectIds: [f.regionId] });
     });
   });
 
@@ -318,9 +329,9 @@ describe("loadSubdivisionScope", () => {
         { lang: "el", name: "Όρμος Βαθύ", script: "greek" },
         { lang: "el-Latn", name: transliteration, script: "latin" },
       ]);
-      const mapped = mapSpot(a, { regionId: null, highlightIds: [], cfg });
+      const mapped = mapSpot(a, { regionId: null, cfg });
       if (!("spot" in mapped)) throw new Error(`omitted ${mapped.omitted}`);
-      expect(spotSchema.safeParse({ ...mapped.spot, profileVersion: 1, validFrom: "2026-10-19" }).error?.issues).toBeUndefined();
+      expect(spotSchema.safeParse({ ...mapped.spot, asOf: mapped.asOf }).error?.issues).toBeUndefined();
       const island = scope.regions.find((r) => r.publicId === f.islandPublicId)!;
       expect(island.name).toBe("Nisida");
       expect(island.names).toEqual([
@@ -385,43 +396,6 @@ describe("loadSubdivisionScope", () => {
     });
   });
 
-  it("leaves out a POI of no subdivision, even one linked to a scope tile", async () => {
-    await withRollback(async (tx) => {
-      const f = await seedDeliverySubdivision(tx);
-      const outside = await insertNamedObject(tx, { type: "poi", names: [{ name: "Taverna Fern" }], lon: 21.6, lat: 35.1, category: "food", tiles: [f.outsideTileId] });
-      await tx.update(geoObjects).set({ publicId: newPublicId("hl") }).where(eq(geoObjects.id, outside));
-      // linked to a scope tile, but it belongs to no subdivision (`subdivision_id` null); A even selects it
-      await tx.insert(tileGeoObjects).values({ tileId: f.tileIds[1], geoObjectId: outside });
-      await tx.insert(highlightSelections).values({ placeGeoObjectId: f.places.A.geoObjectId, poiGeoObjectId: outside, category: "food", rank: 2, distanceKm: 40, profileVersion: 1 });
-      const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
-      expect(scope.pois.map((p) => p.geoObjectId)).toEqual([f.poiId]);
-    });
-  });
-
-  it("loads only the POIs a counting place of the subdivision selected, with the selecting places (spec 16)", async () => {
-    await withRollback(async (tx) => {
-      const f = await seedDeliverySubdivision(tx);
-      const today = await dbToday(tx);
-      const [lon, lat] = f.positions.T;
-      const poi = async (name: string) => {
-        const id = await insertNamedObject(tx, { type: "poi", names: [{ name }], lon, lat: lat - 0.01, category: "culture", tiles: [f.tileIds[0]], subdivisionId: f.subdivisionId });
-        await tx.update(geoObjects).set({ publicId: newPublicId("hl") }).where(eq(geoObjects.id, id));
-        return id;
-      };
-      const unselected = await poi("Kastro");
-      const byRejected = await poi("Moni");
-      await tx.insert(highlightSelections).values({ placeGeoObjectId: f.places.B.geoObjectId, poiGeoObjectId: byRejected, category: "culture", rank: 1, distanceKm: 3, profileVersion: 1 });
-      await tx.update(places).set({ status: "rejected" }).where(eq(places.id, f.places.B.placeId));
-
-      const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, today);
-      expect(scope.pois.map((p) => p.geoObjectId)).toEqual([f.poiId]);
-      expect(scope.pois.map((p) => p.geoObjectId)).not.toContain(unselected);
-      const selectedBy = [...scope.pois[0]!.selectedBy].sort((a, b) => a.distanceKm - b.distanceKm);
-      expect(selectedBy.map((s) => s.placeGeoObjectId)).toEqual([f.places.A.geoObjectId, f.places.M.geoObjectId]);
-      expect(selectedBy[0]!.distanceKm).toBeCloseTo(1.85, 1);
-    });
-  });
-
   it("follows a merge to a target of no subdivision or one that ended (Task 9 checks it is delivered)", async () => {
     await withRollback(async (tx) => {
       const f = await seedDeliverySubdivision(tx);
@@ -463,35 +437,6 @@ describe("loadSubdivisionScope", () => {
       expect(a.names).toContainEqual({ lang: "de", name: "Vathi-Bucht", script: "latin" });
       const now = (await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx))).spots.find((s) => s.publicId === f.places.A.publicId)!;
       expect(now.name).toBe("Vathi Bay");
-    });
-  });
-
-  it("list attributes cite the facts of their delivered entries only; gone documents are marked gone", async () => {
-    await withRollback(async (tx) => {
-      const f = await seedDeliverySubdivision(tx);
-      const { A } = f.places;
-      const fact = async (observedAt: string) => {
-        const m = await insertMention(tx, A.geoObjectId, { observedAt });
-        return { id: await insertMentionFact(tx, A.geoObjectId, m, await insertExtraction(tx, A.geoObjectId, m), { attribute: "hazards", value: [] }), documentId: m.documentId };
-      };
-      const kept = await fact("2026-03-01");
-      const removed = await fact("2026-04-01");
-      const provenance = spotAProvenance(f.factId);
-      // the flat support still holds the fact of an entry a review removed
-      provenance["hazards"] = provenanceEntry("text", {
-        factIds: [kept.id, removed.id],
-        entryFactIds: { rock: [kept.id, "computation:01a15602-0000-7000-8000-0000000000ff"] },
-      });
-      await insertProfile(tx, A.geoObjectId, SPOT_A_ATTRIBUTES, provenance, { version: 2 });
-      const urls = async () => {
-        const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
-        return scope.spots.find((s) => s.publicId === A.publicId)!.sources.map((s) => (s.gone ? `gone:${s.url}` : s.url)).sort();
-      };
-      const urlOf = async (documentId: string) => (await tx.select({ url: documents.url }).from(documents).where(eq(documents.id, documentId)))[0]!.url;
-      expect(await urls()).toEqual([f.documentUrl, await urlOf(kept.documentId)].sort());
-      await tx.update(documents).set({ status: "gone" }).where(eq(documents.id, f.documentId));
-      // still loaded for the forbidden-domain check (final review M-1); mapSources never lists it
-      expect(await urls()).toEqual([await urlOf(kept.documentId), `gone:${f.documentUrl}`].sort());
     });
   });
 

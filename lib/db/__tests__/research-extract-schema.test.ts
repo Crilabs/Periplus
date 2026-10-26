@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { berthFacts, berthSignals, researchUnits } from "@/lib/db/schema";
@@ -34,7 +35,20 @@ describe("research extract schema", () => {
       const s = await seed(tx);
       const again = () =>
         tx.insert(researchUnits).values({ documentVersionId: s.versionId, placeId: s.placeId, model: "m", promptVersion: 1, status: "pending", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 0 } });
-      expect(await rejectionMessage(tx, again)).toContain("research_units_version_place_model_prompt_unique");
+      expect(await rejectionMessage(tx, again)).toContain("research_units_version_place_model_prompt_kind_unique");
+    }));
+
+  it("defaults a unit to kind berth and allows a landside unit beside it for the same version, place, model and prompt", () =>
+    withRollback(async (tx) => {
+      const s = await seed(tx);
+      const [berth] = await tx.select({ kind: researchUnits.kind }).from(researchUnits).where(eq(researchUnits.id, s.unitId));
+      expect(berth!.kind).toBe("berth");
+      await tx
+        .insert(researchUnits)
+        .values({ documentVersionId: s.versionId, placeId: s.placeId, model: "m", promptVersion: 1, kind: "landside", status: "pending", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 0 } });
+      const again = () =>
+        tx.insert(researchUnits).values({ documentVersionId: s.versionId, placeId: s.placeId, model: "m", promptVersion: 1, kind: "landside", status: "pending", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 0 } });
+      expect(await rejectionMessage(tx, again)).toContain("research_units_version_place_model_prompt_kind_unique");
     }));
 
   const fact = (s: Awaited<ReturnType<typeof seed>>, extra: object) => ({

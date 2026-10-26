@@ -11,7 +11,7 @@ import { documentVersions, observedAtBasisEnum, serpQueries, serpResults } from 
  * - page_assessments: what the model found on one archived page version (kind, first-hand, berths named).
  */
 
-export const researchPurposeEnum = pgEnum("research_purpose", ["positive", "negative"]);
+export const researchPurposeEnum = pgEnum("research_purpose", ["positive", "negative", "landside"]);
 export const pageKindEnum = pgEnum("page_kind", [
   "trip_report",
   "pilot_guide",

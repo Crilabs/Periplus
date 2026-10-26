@@ -1,14 +1,15 @@
 import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
-import type { HighlightBody, RegionBody, SpotBody } from "@/contract";
+import type { RegionBody, SpotBody } from "@/contract/v2";
 import type { Db } from "@/lib/db/client";
 import type { DeliveredObjectType } from "@/lib/db/schema/deliveries";
 import { canonicalJson } from "@/lib/domain/facts/schema";
 
 /*
- * Contract versions (spec 08 "profileVersion im Vertrag = Version des Vertragsobjekts … steigt nur, wenn sich das
- * gelieferte Objekt ändert"): a version is keyed by the hash of the serialized contract object without its version
- * fields. Spot and highlight versions count per public id across subdivisions, region versions per subdivision (ruling M6-P13).
+ * Internal object versions (contract 4.0 has no version fields in its objects; the count is kept in `delivered_objects`
+ * so the data version rises only when the content changed, and for the place page's history): a version is keyed by the
+ * hash of the contract body (a spot without `asOf`). Spot versions count per public id across subdivisions, region
+ * versions per subdivision (ruling M6-P13).
  */
 
 /** A contract object of the next package before it gets its version. */
@@ -16,7 +17,7 @@ export type ObjectDraft = {
   type: DeliveredObjectType;
   id: string;
   geoObjectId: string | null;
-  body: SpotBody | HighlightBody | RegionBody;
+  body: SpotBody | RegionBody;
 };
 
 /**
@@ -60,8 +61,7 @@ export function withoutNulls(v: unknown): unknown {
 }
 
 /**
- * sha256 hex of the canonical JSON of a contract body (the version fields are never part of it), `null` and absent
- * fields alike.
+ * sha256 hex of the canonical JSON of a contract body (never with `asOf`), `null` and absent fields alike.
  */
 export function contentHash(body: object): string {
   return createHash("sha256").update(canonicalJson(withoutNulls(body)), "utf8").digest("hex");

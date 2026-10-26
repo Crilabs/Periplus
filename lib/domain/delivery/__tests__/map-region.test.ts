@@ -1,14 +1,12 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { regionSchema } from "@/contract/v2";
+import { regionSchema } from "@/contract/v3_0";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { withRollback } from "@/test/db";
 import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { loadSubdivisionScope } from "../load";
-import { assignRegions, mapRegion, namedRegions, REGION_TYPE, regionCharacter, regionIdAt, undeliveredSafety } from "../map-region";
-import { weatherPointId } from "../weather-points";
+import { assignRegions, mapRegion, namedRegions, REGION_TYPE, regionIdAt } from "../map-region";
 import type { RegionSource } from "../types";
 
 const cfg = loadConfig("config").delivery;
@@ -19,23 +17,6 @@ const square = (w: number, s: number, e: number, n: number): GeoJSON.Polygon => 
   type: "Polygon",
   coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]],
 });
-
-function profile(attributes: Record<string, unknown>): ProfileSnapshot {
-  return {
-    version: 1,
-    validFrom: "2026-10-19",
-    attributes,
-    provenance: {},
-    conflicts: [],
-    gaps: [],
-    sourcesCount: 1,
-    documentsCount: 1,
-    confidence: null,
-    contentHash: "h",
-    rulesVersion: "test",
-    factSchemaVersion: "v2",
-  };
-}
 
 function region(n: number, o: Partial<RegionSource> = {}): RegionSource {
   return {
@@ -49,8 +30,6 @@ function region(n: number, o: Partial<RegionSource> = {}): RegionSource {
     radiusNm: 2,
     areaKm2: null,
     parentGeoObjectIds: [],
-    profile: null,
-    sources: [],
     ...o,
   };
 }
@@ -126,29 +105,28 @@ describe("mapRegion", () => {
   ]);
 
   it("region parent is the nearest delivered ancestor, else null", () => {
-    expect(mapRegion(island, { regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBe(archipelago.publicId);
+    expect(mapRegion(island, { regionPublicIds: publicIds, spotIds: [] }).parentId).toBe(archipelago.publicId);
     // an ancestor not in the package (ended, no region kind, an administrative unit) is skipped
     const deep = region(4, { parentGeoObjectIds: ["ended", "g2", "admin"] });
-    expect(mapRegion(deep, { regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBe(archipelago.publicId);
-    expect(mapRegion(archipelago, { regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBeNull();
-    expect(mapRegion(region(5, { parentGeoObjectIds: ["ended", "admin"] }), { regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBeNull();
+    expect(mapRegion(deep, { regionPublicIds: publicIds, spotIds: [] }).parentId).toBe(archipelago.publicId);
+    expect(mapRegion(archipelago, { regionPublicIds: publicIds, spotIds: [] }).parentId).toBeNull();
+    expect(mapRegion(region(5, { parentGeoObjectIds: ["ended", "admin"] }), { regionPublicIds: publicIds, spotIds: [] }).parentId).toBeNull();
   });
 
   it("coast_section maps to type coast", () => {
     expect(REGION_TYPE.coast_section).toBe("coast");
     expect(REGION_TYPE.island).toBe("island");
-    expect(mapRegion(region(6, { type: "coast_section" }), { regionPublicIds: publicIds, spotIds: [], cfg }).type).toBe("coast");
+    expect(mapRegion(region(6, { type: "coast_section" }), { regionPublicIds: publicIds, spotIds: [] }).type).toBe("coast");
   });
 
-  it("maps facts, character, rounding, sorted spot ids and a radius of at least 0.1 nm", () => {
+  it("maps rounding, sorted spot ids and a radius of at least 0.1 nm", () => {
     const src = region(1, {
       polygon: square(21.05, 35.05, 21.2, 35.15),
       center: { lon: 21.1234567, lat: 35.1234544 },
       radiusNm: 0.04,
       names: [{ lang: "en", name: "Nisida" }],
-      profile: profile({ meltemi_exposure: 0.7, ferry_traffic: "moderate", charter_bases: ["X"], supply_ports: [] }),
     });
-    const body = mapRegion(src, { regionPublicIds: publicIds, spotIds: [id("sp", 9), id("sp", 1)], cfg });
+    const body = mapRegion(src, { regionPublicIds: publicIds, spotIds: [id("sp", 9), id("sp", 1)] });
     expect(body).toMatchObject({
       id: id("rg", 1),
       name: "Region 1",
@@ -156,37 +134,17 @@ describe("mapRegion", () => {
       center: { lon: 21.12346, lat: 35.12345 },
       radiusNm: 0.1,
       spotIds: [id("sp", 1), id("sp", 9)],
-      facts: { meltemiExposure: 0.7, ferryTraffic: "light", charterBase: true, supplyPort: false },
-      character: { de: "Meltemi-exponiert, Charterbasis." },
     });
     expect(body.polygon).toEqual(src.polygon);
     expect(regionSchema.safeParse({ ...body, profileVersion: 1, validFrom: "2026-10-19" }).error?.issues).toBeUndefined();
   });
 
-  it("ferry traffic none/low/high maps to none/light/heavy; missing facts are null, no facts omit the field", () => {
-    const ferry = (v: string) =>
-      mapRegion(region(1, { profile: profile({ ferry_traffic: v }) }), { regionPublicIds: publicIds, spotIds: [], cfg }).facts;
-    expect(ferry("none")).toEqual({ meltemiExposure: null, ferryTraffic: "none", charterBase: null, supplyPort: null });
-    expect(ferry("low")?.ferryTraffic).toBe("light");
-    expect(ferry("high")?.ferryTraffic).toBe("heavy");
-    const bare = mapRegion(region(1), { regionPublicIds: publicIds, spotIds: [], cfg });
+  it("a region has no facts and no character (no profiles any more), no polygon or names unless known", () => {
+    const bare = mapRegion(region(1), { regionPublicIds: publicIds, spotIds: [] });
     expect(bare).not.toHaveProperty("facts");
     expect(bare).not.toHaveProperty("character");
     expect(bare).not.toHaveProperty("polygon");
     expect(bare).not.toHaveProperty("names");
-  });
-
-  it("character: 'Meltemi-exponiert, starker Fährverkehr, Charterbasis.'", () =>
-    expect(regionCharacter({ meltemiExposure: 0.7, ferryTraffic: "heavy", charterBase: true, supplyPort: false }, cfg)).toBe(
-      "Meltemi-exponiert, starker Fährverkehr, Charterbasis.",
-    ));
-
-  it("character: the sheltered side, no ferries and a supply port; nothing → null", () => {
-    expect(regionCharacter({ meltemiExposure: 0.3, ferryTraffic: "none", charterBase: false, supplyPort: true }, cfg)).toBe(
-      "Vor dem Meltemi geschützt, kein Fährverkehr, Versorgungshafen.",
-    );
-    expect(regionCharacter({ meltemiExposure: 0.5, ferryTraffic: "light", charterBase: null, supplyPort: null }, cfg)).toBeNull();
-    expect(regionCharacter(undefined, cfg)).toBeNull();
   });
 
   it("a region without a valid name is left out with a warning", () => {
@@ -204,27 +162,6 @@ async function dbToday(tx: Db): Promise<string> {
   return rows[0]!.today;
 }
 
-describe("undeliveredSafety (final review I-3)", () => {
-  it("reports every restricted zone of a region and every hazard of a passage, which no contract field carries", () => {
-    const withZones = region(1, {
-      profile: profile({ restricted_zones: [{ kind: "firing", name: "Kalami" }, { kind: "protected", name: null }], meltemi_exposure: 0.7 }),
-    });
-    const cape = {
-      geoObjectId: "01a15602-0000-7000-8000-0000000000c1",
-      type: "cape" as const,
-      name: "Akra Test",
-      point: { lon: 21.2, lat: 35.15 },
-      profile: profile({ hazards: [{ kind: "shoal", name: "Xera" }, { kind: "fish_farm", name: null }], sea_state: "rough" }),
-    };
-    expect(undeliveredSafety([withZones, region(2)], [cape, { ...cape, geoObjectId: "x", profile: null }])).toEqual([
-      { file: "regions.json", id: id("rg", 1), message: "Sperrgebiet laut Text nicht geliefert: Schießgebiet Kalami" },
-      { file: "regions.json", id: id("rg", 1), message: "Sperrgebiet laut Text nicht geliefert: Schutzgebiet" },
-      { file: "weather-points.json", id: weatherPointId(cape.geoObjectId, "cape"), message: "Gefahr laut Text nicht geliefert (Akra Test): Untiefe Xera" },
-      { file: "weather-points.json", id: weatherPointId(cape.geoObjectId, "cape"), message: "Gefahr laut Text nicht geliefert (Akra Test): Fischfarm" },
-    ]);
-  });
-});
-
 describe("regions of the delivery fixture", () => {
   it("map from the loader to contract regions: the island under the archipelago, the archipelago at the top (its parent is the admin region)", async () => {
     await withRollback(async (tx) => {
@@ -235,15 +172,13 @@ describe("regions of the delivery fixture", () => {
       const { regionIdBySpot, spotIdsByRegion } = assignRegions(spots, regions, MARGIN);
       const publicIds = new Map(regions.map((r) => [r.geoObjectId, r.publicId]));
       const bodies = regions.map((r) =>
-        mapRegion(r, { regionPublicIds: publicIds, spotIds: spotIdsByRegion.get(r.publicId) ?? [], cfg }),
+        mapRegion(r, { regionPublicIds: publicIds, spotIds: spotIdsByRegion.get(r.publicId) ?? [] }),
       );
       const islandBody = bodies.find((b) => b.id === f.islandPublicId)!;
       const archipelagoBody = bodies.find((b) => b.id === f.archipelagoPublicId)!;
       expect(islandBody).toMatchObject({
         type: "island",
         parentId: f.archipelagoPublicId,
-        facts: { meltemiExposure: 0.7, ferryTraffic: "heavy", charterBase: true, supplyPort: null },
-        character: { de: "Meltemi-exponiert, starker Fährverkehr, Charterbasis." },
       });
       // A lies in the bay notch, outside the island's land polygon but within memberMarginNm of it (ruling M6-C-R1)
       expect(regionIdBySpot.get(f.places.A.publicId!)).toBe(f.islandPublicId);

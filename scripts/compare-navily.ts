@@ -18,20 +18,19 @@ import { notWrittenNote, renderNavilyRunSection, runNavilyComparison } from "../
 // Grundprinzip 9: the Navily file is read at runtime from the given path only; nothing of it is stored or printed.
 
 const USAGE =
-  "usage: compare-navily.ts --subdivision <key> [--navily <path>] [--accept-proposals] [--coverage] [--out <file>] (or NAVILY_SPOTS_PATH)";
+  "usage: compare-navily.ts --subdivision <key> [--navily <path>] [--accept-proposals] [--out <file>] (or NAVILY_SPOTS_PATH)";
 
-export type CompareArgs = { subdivision: string; navily: string; out: string; acceptProposals: boolean; coverage: boolean };
+export type CompareArgs = { subdivision: string; navily: string; out: string; acceptProposals: boolean };
 
-const SWITCHES = { "--accept-proposals": "acceptProposals", "--coverage": "coverage" } as const;
+const SWITCHES = { "--accept-proposals": "acceptProposals" } as const;
 
 /**
  * `--subdivision` is required; the Navily path comes from `--navily`, else `NAVILY_SPOTS_PATH`; `--out` defaults to the dated
- * pilot report; `--accept-proposals` (no value) records the assistant's proposals; `--coverage` (no value) stores the
- * Navily coverage with the subdivision's newest measurement.
+ * pilot report; `--accept-proposals` (no value) records the assistant's proposals.
  */
 export function parseArgs(argv: string[], env: Record<string, string | undefined>, today: Date): CompareArgs {
   const values: Record<string, string> = {};
-  const switches = { acceptProposals: false, coverage: false };
+  const switches = { acceptProposals: false };
   let i = 0;
   while (i < argv.length) {
     const flag = argv[i]!;
@@ -74,7 +73,6 @@ async function main(): Promise<void> {
       subdivisionKey: args.subdivision,
       spots,
       acceptProposals: args.acceptProposals,
-      writeCoverage: args.coverage,
       now,
     });
     const report = renderReport({
@@ -91,13 +89,10 @@ async function main(): Promise<void> {
     process.stdout.write(`report: ${args.out}\n`);
     process.stdout.write(`places in comparison set: ${verdicts.length}, compared with geometry: ${compared}\n`);
     process.stdout.write(`navily coverage: ${run.coverage.matched} of ${run.coverage.spots} spots in the subdivision matched\n`);
-    if (run.snapshotRunId) {
-      process.stdout.write(`navily coverage ${run.coverageWritten ? "stored with" : "already stored with"} measurement run ${run.snapshotRunId}\n`);
-    }
     process.stdout.write(
       args.acceptProposals
         ? `results written: ${run.written}, review tasks: ${run.tasks}, kept manual outcomes: ${run.skippedManual}\n`
-        : `${notWrittenNote(run)}\n`,
+        : `${notWrittenNote()}\n`,
     );
     if (compared < cfg.minPlaces) {
       process.stderr.write(`only ${compared} places with geometry compared, ${cfg.minPlaces} required\n`);

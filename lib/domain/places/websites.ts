@@ -2,7 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { placeWebsites } from "@/lib/db/schema";
-import { isIgnoredDomain } from "@/lib/domain/discovery/proposals";
+import { isIgnoredDomain } from "@/lib/domain/sources/type-hints";
 import { isForbiddenUrl } from "@/lib/domain/sources/forbidden-domains";
 
 export type PlaceWebsiteRow = typeof placeWebsites.$inferSelect;

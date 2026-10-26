@@ -3,12 +3,8 @@ import { index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, u
 import { newId } from "@/lib/domain/ids";
 
 export const reviewKindEnum = pgEnum("review_kind", [
-  "source_approval",
   "place_candidate",
-  "conflict",
   "failed_job",
-  "coast_tile_without_area",
-  "uncertain_change",
   "comparison_deviation",
   "place_image",
   "research_conflict",
@@ -32,7 +28,6 @@ export const reviewTasks = pgTable("review_tasks", {
   uniqueIndex("review_tasks_open_subject_unique").on(t.kind, t.subjectId).where(sql`${t.status} = 'open'`),
 ]);
 
-/** Append-only (forbid_mutation trigger). */
 export const reviewDecisions = pgTable("review_decisions", {
   id: uuid("id").primaryKey().$defaultFn(newId),
   taskId: uuid("task_id")

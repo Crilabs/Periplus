@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { berthFacts, berthStates, berthSignals, documents, geoObjects, pageAssessments, placeWebsites, places, researchFetches, researchHits, researchUnits, serpQueries } from "@/lib/db/schema";
 import type { BerthStateFact, BerthStateLanding, BerthStateOrigin } from "@/lib/db/schema/research-state";
@@ -15,6 +15,7 @@ import { factAttributeLabel, formatFactValue, POI_CATEGORY_LABELS } from "@/lib/
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { activeRouteExtractor } from "./assign";
 import { activeExtractor, decideBerth, loadEvidence, type Verdict } from "./confirmation";
+import { activeLandsideExtractor } from "./landside-extraction";
 
 export type SignalRow = {
   kind: BerthSignalKind;
@@ -120,6 +121,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
 
   // pages linked otherwise: a route stop to the place, else a research unit of it; the current version where it has one
   const extractor = activeExtractor(cfg);
+  const landside = activeLandsideExtractor(cfg);
   const route = activeRouteExtractor(cfg);
   const hitUrls = new Set(hits.map((h) => h.url));
   const { rows: linkedRows } = await db.execute<{ url: string; document_id: string; version_id: string; link: "neighbour" | "route" }>(sql`
@@ -129,7 +131,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
       where rs.place_id = ${placeId} and rs.model = ${route.model} and rs.prompt_version = ${route.promptVersion}
       union all
       select u.document_version_id, 'neighbour' from research_units u
-      where u.place_id = ${placeId} and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
+      where u.place_id = ${placeId} and u.kind = 'berth' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
     ) x
     join document_versions v on v.id = x.version_id
     join documents d on d.id = v.document_id
@@ -160,6 +162,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
 
   const unitOf = and(
     eq(researchUnits.id, berthSignals.unitId),
+    eq(researchUnits.kind, "berth"),
     eq(researchUnits.model, extractor.model),
     eq(researchUnits.promptVersion, extractor.promptVersion),
     eq(researchUnits.status, "done"),
@@ -198,7 +201,14 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
           .from(berthFacts)
           .innerJoin(
             researchUnits,
-            and(eq(researchUnits.id, berthFacts.unitId), eq(researchUnits.model, extractor.model), eq(researchUnits.promptVersion, extractor.promptVersion), eq(researchUnits.status, "done")),
+            and(
+              eq(researchUnits.id, berthFacts.unitId),
+              eq(researchUnits.status, "done"),
+              or(
+                and(eq(researchUnits.kind, "berth"), eq(researchUnits.model, extractor.model), eq(researchUnits.promptVersion, extractor.promptVersion)),
+                and(eq(researchUnits.kind, "landside"), eq(researchUnits.model, landside.model), eq(researchUnits.promptVersion, landside.promptVersion)),
+              ),
+            ),
           )
           .where(and(eq(berthFacts.placeId, placeId), inArray(berthFacts.documentVersionId, versionIds)))
           .orderBy(asc(berthFacts.observedAt), asc(berthFacts.id));
@@ -273,6 +283,10 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
 export type StateCoreRow = { attribute: string; label: string; value: string; origin: BerthStateOrigin; confidence: number; observedAt: string | null };
 export type StateNearbyRow = { geoObjectId: string; name: string | null; category: PoiCategory; categoryLabel: string; distanceM: number; access: "foot" | "transport" };
 
+/** Where a state fact comes from: a page about the berth itself or a landside page (unit kind `berth` / `landside`); `null` when no unit is known. */
+export type StateFactOrigin = "berth" | "landside" | null;
+export type StateFactRow = BerthStateFact & { origin: StateFactOrigin };
+
 /** The state of a confirmed berth as the tab „Stand“ shows it: formatted core values with their origin, gaps, facts, landing points and reachable things. */
 export type BerthStateView = {
   status: PlaceStatus;
@@ -280,10 +294,36 @@ export type BerthStateView = {
   runId: string | null;
   core: StateCoreRow[];
   gaps: Array<{ attribute: string; label: string }>;
-  facts: BerthStateFact[];
+  facts: StateFactRow[];
   landing: BerthStateLanding[];
   nearby: StateNearbyRow[];
 };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The origin of each stored fact by the kind of the unit of the facts it stands for (`memberIds`, else its own id):
+ * `berth` as soon as one member comes from a berth page (a berth page is evidence, a landside page only adds), else `landside`.
+ */
+async function factOrigins(db: Db, facts: BerthStateFact[]): Promise<Map<string, StateFactOrigin>> {
+  const members = new Map(facts.map((f) => [f.factId, f.memberIds ?? [f.factId]]));
+  const ids = [...new Set([...members.values()].flat().filter((id) => UUID.test(id)))];
+  const kinds = new Map<string, string>();
+  if (ids.length > 0) {
+    const rows = await db
+      .select({ id: berthFacts.id, kind: researchUnits.kind })
+      .from(berthFacts)
+      .innerJoin(researchUnits, eq(researchUnits.id, berthFacts.unitId))
+      .where(inArray(berthFacts.id, ids));
+    for (const r of rows) kinds.set(r.id, r.kind);
+  }
+  const origins = new Map<string, StateFactOrigin>();
+  for (const [factId, memberIds] of members) {
+    const own = memberIds.flatMap((id) => (kinds.has(id) ? [kinds.get(id)!] : []));
+    origins.set(factId, own.length === 0 ? null : own.includes("berth") ? "berth" : "landside");
+  }
+  return origins;
+}
 
 /** The state row of a place with its values formatted and the reachable objects named; null while no state was built. */
 export async function berthStateView(db: Db, placeId: string): Promise<BerthStateView | null> {
@@ -302,13 +342,16 @@ export async function berthStateView(db: Db, placeId: string): Promise<BerthStat
   const ids = [...new Set(state.nearby.map((n) => n.geoObjectId))];
   const names = ids.length === 0 ? [] : await db.select({ id: geoObjects.id, name: displayNameSql(geoObjects.id) }).from(geoObjects).where(inArray(geoObjects.id, ids));
   const nameOf = new Map(names.map((n) => [n.id, n.name]));
+  const origins = await factOrigins(db, state.facts);
   return {
     status: row.status,
     updatedAt: state.updatedAt,
     runId: state.runId,
     core,
     gaps: state.gaps.map((attribute) => ({ attribute, label: factAttributeLabel(attribute) })),
-    facts: [...state.facts].sort((a, b) => (a.observedAt < b.observedAt ? 1 : a.observedAt > b.observedAt ? -1 : a.factId < b.factId ? -1 : 1)),
+    facts: state.facts
+      .map((f): StateFactRow => ({ ...f, origin: origins.get(f.factId) ?? null }))
+      .sort((a, b) => (a.observedAt < b.observedAt ? 1 : a.observedAt > b.observedAt ? -1 : a.factId < b.factId ? -1 : 1)),
     landing: state.landing,
     nearby: state.nearby.map((n) => ({ ...n, name: nameOf.get(n.geoObjectId) ?? null, categoryLabel: POI_CATEGORY_LABELS[n.category] })),
   };

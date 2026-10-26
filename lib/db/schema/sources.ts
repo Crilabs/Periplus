@@ -1,22 +1,18 @@
 import { sql } from "drizzle-orm";
 import {
-  bigint,
   boolean,
   check,
   date,
   index,
   integer,
   jsonb,
-  numeric,
   pgEnum,
   pgTable,
-  primaryKey,
   real,
   text,
   timestamp,
   uniqueIndex,
   uuid,
-  vector,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { newId } from "@/lib/domain/ids";
@@ -25,12 +21,10 @@ import { runs } from "./ops";
 
 /*
  * Sources and archive (spec 05).
- * - sources, documents are stable: never deleted (forbid_delete), end via valid_to; core-column changes write
- *   <table>_history (record_history); updated_at maintained by set_updated_at.
- * - document_versions is append-only except the classified_* columns (ruling M4-P11, 0024); chunks is append-only except embedding and
- *   embedding_model (forbid_mutation('embedding,embedding_model')).
- * - text_shingles, crawl_frontier are working state.
- * Triggers and history tables: drizzle/0017_sources_triggers.sql.
+ * - document_versions is the append-only archive (forbid_mutation, drizzle/0017 and 0024; only the classified_* columns
+ *   may change, ruling M4-P11). Since N6 (design 7.2) sources and documents carry no delete or history protection;
+ *   updated_at is maintained by set_updated_at. Chunks, crawl front, link graph and converter comparison
+ *   went with the old pipeline (drizzle/0080_drop_old_pipeline.sql).
  */
 
 export const docTypeEnum = pgEnum("doc_type", [
@@ -49,7 +43,6 @@ export const changeRateEnum = pgEnum("change_rate", ["high", "normal", "static"]
 export const sourceOriginEnum = pgEnum("source_origin", ["serp", "linkgraph", "whitelist", "manual", "place_website", "research"]);
 export const documentStatusEnum = pgEnum("document_status", ["active", "gone"]);
 export const observedAtBasisEnum = pgEnum("observed_at_basis", ["explicit", "published", "fetched"]);
-export const frontierStatusEnum = pgEnum("frontier_status", ["queued", "fetched", "skipped", "failed"]);
 
 export const DOC_TYPES = docTypeEnum.enumValues;
 export type DocType = (typeof docTypeEnum.enumValues)[number];
@@ -59,7 +52,6 @@ export type ChangeRate = (typeof changeRateEnum.enumValues)[number];
 export type SourceOrigin = (typeof sourceOriginEnum.enumValues)[number];
 export type DocumentStatus = (typeof documentStatusEnum.enumValues)[number];
 export type ObservedAtBasis = (typeof observedAtBasisEnum.enumValues)[number];
-export type FrontierStatus = (typeof frontierStatusEnum.enumValues)[number];
 
 const validFrom = () => date("valid_from").notNull().default(sql`current_date`);
 const validTo = () => date("valid_to");
@@ -168,72 +160,6 @@ export const documentVersions = pgTable(
   (t) => [uniqueIndex("document_versions_document_id_content_hash_unique").on(t.documentId, t.contentHash)],
 );
 
-/** Dimension = `config/embeddings.json` `dimension`; checked at worker start. */
-export const EMBEDDING_DIMENSION = 1024;
-
-export const chunks = pgTable(
-  "chunks",
-  {
-    id: uuid("id").primaryKey().$defaultFn(newId),
-    documentVersionId: uuid("document_version_id")
-      .notNull()
-      .references(() => documentVersions.id),
-    ordinal: integer("ordinal").notNull(),
-    text: text("text").notNull(),
-    /** The chunker's `textNormalized`: case and accents kept (ruling M3-C-R4), folded at comparison time; search key (trigram index). */
-    textNormalized: text("text_normalized").notNull(),
-    textHash: text("text_hash").notNull(),
-    heading: text("heading"),
-    // UTF-16 code unit offsets (JS string indices) into the normalized Markdown: slice in JS, never in SQL.
-    charStart: integer("char_start").notNull(),
-    charEnd: integer("char_end").notNull(),
-    wordCount: integer("word_count").notNull(),
-    embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSION }),
-    embeddingModel: text("embedding_model"),
-    /** Unchanged chunk taken over from the previous version. */
-    carriedFromChunkId: uuid("carried_from_chunk_id").references((): AnyPgColumn => chunks.id),
-    createdAt: createdAt(),
-  },
-  (t) => [
-    uniqueIndex("chunks_document_version_id_ordinal_unique").on(t.documentVersionId, t.ordinal),
-    index("chunks_text_hash_idx").on(t.textHash),
-    index("chunks_text_normalized_trgm").using("gin", t.textNormalized.op("gin_trgm_ops")),
-    index("chunks_embedding_hnsw").using("hnsw", t.embedding.op("vector_cosine_ops")),
-  ],
-);
-
-/** Working state: shingle hashes per chunk for near-duplicate detection. */
-export const textShingles = pgTable(
-  "text_shingles",
-  {
-    shingleHash: bigint("shingle_hash", { mode: "bigint" }).notNull(),
-    chunkId: uuid("chunk_id")
-      .notNull()
-      .references(() => chunks.id),
-  },
-  (t) => [primaryKey({ columns: [t.shingleHash, t.chunkId] }), index("text_shingles_chunk_id_idx").on(t.chunkId)],
-);
-
-/** Working state: URLs discovered per source and their crawl status. */
-export const crawlFrontier = pgTable(
-  "crawl_frontier",
-  {
-    id: uuid("id").primaryKey().$defaultFn(newId),
-    sourceId: uuid("source_id")
-      .notNull()
-      .references(() => sources.id),
-    url: text("url").notNull(),
-    urlNormalized: text("url_normalized").notNull(),
-    depth: integer("depth").notNull().default(0),
-    status: frontierStatusEnum("status").notNull().default("queued"),
-    reason: text("reason"),
-    discoveredAt: timestamp("discovered_at", { withTimezone: true }).notNull().defaultNow(),
-    lastRunId: uuid("last_run_id").references(() => runs.id),
-    updatedAt: updatedAt(),
-  },
-  (t) => [uniqueIndex("crawl_frontier_source_id_url_normalized_unique").on(t.sourceId, t.urlNormalized)],
-);
-
 export const serpLevelEnum = pgEnum("serp_level", ["area", "tile", "place", "place_website", "research"]);
 export type SerpLevel = (typeof serpLevelEnum.enumValues)[number];
 
@@ -281,63 +207,6 @@ export const serpResults = pgTable(
     snippet: text("snippet").notNull(),
   },
   (t) => [index("serp_results_domain_idx").on(t.domain), index("serp_results_serp_query_id_idx").on(t.serpQueryId)],
-);
-
-/** Working state: outgoing links per approved source, target registrable domain and crawl run (link graph). */
-export const outlinks = pgTable(
-  "outlinks",
-  {
-    fromSourceId: uuid("from_source_id")
-      .notNull()
-      .references(() => sources.id),
-    /** Registrable domain (Public Suffix List, private suffixes included). */
-    toDomain: text("to_domain").notNull(),
-    count: integer("count").notNull().default(0),
-    runId: uuid("run_id")
-      .notNull()
-      .references(() => runs.id),
-  },
-  (t) => [
-    primaryKey({ columns: [t.fromSourceId, t.toDomain, t.runId] }),
-    index("outlinks_to_domain_idx").on(t.toDomain),
-  ],
-);
-
-export const converterNameEnum = pgEnum("converter_name", ["jina", "firecrawl", "local"]);
-
-/** Working state: the pages of the converter comparison (spec 05: 50 pages from 10 sources). */
-export const converterSamples = pgTable("converter_samples", {
-  id: uuid("id").primaryKey().$defaultFn(newId),
-  sourceId: uuid("source_id")
-    .notNull()
-    .references(() => sources.id),
-  url: text("url").notNull(),
-  urlNormalized: text("url_normalized").notNull().unique(),
-  createdAt: createdAt(),
-});
-
-/** Working state: one converter's Markdown of a sample page (`comparison/converters/<sampleId>/<converter>.md`) and its rating. */
-export const converterOutputs = pgTable(
-  "converter_outputs",
-  {
-    id: uuid("id").primaryKey().$defaultFn(newId),
-    sampleId: uuid("sample_id")
-      .notNull()
-      .references(() => converterSamples.id),
-    converter: converterNameEnum("converter").notNull(),
-    /** Null when the conversion failed (`error`). */
-    mdKey: text("md_key"),
-    chars: integer("chars").notNull().default(0),
-    durationMs: integer("duration_ms").notNull().default(0),
-    costEur: numeric("cost_eur", { precision: 12, scale: 6 }).notNull().default("0"),
-    error: text("error"),
-    /** `{ mainContent: boolean; boilerplateRemoved: boolean; tablesKept: boolean | null }` */
-    rating: jsonb("rating"),
-    ratedBy: text("rated_by"),
-    ratedAt: timestamp("rated_at", { withTimezone: true }),
-    createdAt: createdAt(),
-  },
-  (t) => [uniqueIndex("converter_outputs_sample_id_converter_unique").on(t.sampleId, t.converter)],
 );
 
 export const placeWebsiteOriginEnum = pgEnum("place_website_origin", ["osm", "wikidata", "serp"]);

@@ -99,59 +99,17 @@ const stable: Record<string, StableCase> = {
 };
 
 describe("geo schema", () => {
-  it.each(Object.keys(stable))("%s rejects DELETE", (table) =>
-    withRollback(async (tx) => {
-      const id = await stable[table]!.insert(tx);
-      const message = await rejectionMessage(tx, (t) =>
-        t.execute(sql`delete from ${sql.identifier(table)} where id = ${id}`),
-      );
-      expect(message).toMatch(new RegExp(`${table} rows are never deleted`));
-    }),
-  );
-
-  it.each(Object.keys(stable))("%s: a core change writes exactly one history row, a non-core change none", (table) =>
+  it.each(Object.keys(stable))("%s can be changed and deleted again (no delete guard, no history since N6)", (table) =>
     withRollback(async (tx) => {
       const { insert, coreChange, otherChange } = stable[table]!;
       const id = await insert(tx);
-      const count = async () =>
-        (await tx.execute<{ n: number }>(
-          sql`select count(*)::int as n from ${sql.identifier(`${table}_history`)} where row_id = ${id}`,
-        )).rows[0]!.n;
       const update = (set: string) => tx.execute(sql`update ${sql.identifier(table)} set ${sql.raw(set)} where id = ${id}`);
       await update(otherChange);
-      expect(await count()).toBe(0);
       await update(coreChange);
-      expect(await count()).toBe(1);
+      await tx.execute(sql`delete from ${sql.identifier(table)} where id = ${id}`);
+      expect((await tx.execute<{ n: number }>(sql`select count(*)::int as n from ${sql.identifier(table)} where id = ${id}`)).rows[0]!.n).toBe(0);
     }),
   );
-
-  it.each(Object.keys(stable))("%s_history rejects UPDATE and DELETE", (table) =>
-    withRollback(async (tx) => {
-      const { insert, coreChange } = stable[table]!;
-      const id = await insert(tx);
-      await tx.execute(sql`update ${sql.identifier(table)} set ${sql.raw(coreChange)} where id = ${id}`);
-      const history = sql.identifier(`${table}_history`);
-      expect(await rejectionMessage(tx, (t) => t.execute(sql`update ${history} set old_row = '{}'::jsonb`))).toMatch(
-        /append-only|not allowed|forbid/i,
-      );
-      expect(await rejectionMessage(tx, (t) => t.execute(sql`delete from ${history}`))).toMatch(
-        /append-only|not allowed|forbid/i,
-      );
-    }),
-  );
-
-  it("geo_objects history keeps the old tags and the old geom as GeoJSON", () =>
-    withRollback(async (tx) => {
-      const id = await insertGeoObject(tx);
-      await tx.update(geoObjects).set({ tags: { natural: "bay" } }).where(eq(geoObjects.id, id));
-      await tx.update(geoObjects).set({ geom: point(23.5, 37.5) }).where(eq(geoObjects.id, id));
-      const history = await tx.execute<{ old_row: { geom: unknown; tags: unknown } }>(
-        sql`select old_row from geo_objects_history where row_id = ${id}`,
-      );
-      expect(history.rows).toHaveLength(1);
-      expect(history.rows[0]!.old_row.tags).toEqual({ natural: "bay" });
-      expect(history.rows[0]!.old_row.geom).toMatchObject({ type: "Point", coordinates: [23.4, 37.4] });
-    }));
 
   it("places.tile_id follows position, including a point exactly on a tile edge", () =>
     withRollback(async (tx) => {

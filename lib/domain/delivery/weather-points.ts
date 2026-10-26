@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
-import type { WeatherPoint } from "@/contract";
+import type { WeatherPoint } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";

@@ -1,13 +1,9 @@
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
-import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { createLogger } from "@/lib/logger";
-import { startConsolidationRun } from "./consolidation/run";
-import { startUploadFetchRun } from "./fetch/run";
 import { startGeometryRun } from "./geometry-run";
 import { startImageRun } from "./images-run";
 import type { ImageView } from "./images/generate";
-import { startTextRun } from "./text/run";
 import { RunScopeNotReady, type RunScopeReason } from "./tile-scope";
 
 /*
@@ -38,67 +34,9 @@ async function followUp(what: string, context: Record<string, unknown>, start: (
   }
 }
 
-/** A consolidation run of the objects (their profiles again; with `stagesOnly` e.g. only the summary). */
-export function consolidateAfter(
-  db: Db,
-  boss: BossGetter,
-  input: { geoObjectIds: string[]; stagesOnly?: string[]; triggeredBy: string },
-): Promise<FollowUp> {
-  return followUp("consolidation", { geoObjectIds: input.geoObjectIds }, async () =>
-    startConsolidationRun(db, await boss(), {
-      scope: { geoObjectIds: input.geoObjectIds },
-      triggeredBy: input.triggeredBy,
-      ...(input.stagesOnly ? { stagesOnly: input.stagesOnly } : {}),
-    }),
-  );
-}
-
-/**
- * The rematch after a "Neuer Name" decision (`create_place`, `assign_name`): a text run over the current versions that
- * named it. A version that is no longer current by now is taken in by the next text run of its tile.
- */
-export function rematchAfter(db: Db, boss: BossGetter, input: { documentVersionIds: string[]; triggeredBy: string }): Promise<FollowUp> {
-  return followUp("rematch", { documentVersionIds: input.documentVersionIds }, async () =>
-    startTextRun(db, await boss(), { documentVersionIds: input.documentVersionIds, rematch: true, triggeredBy: input.triggeredBy }),
-  );
-}
-
 /** A geometry run for one place, after its anchor position was set. */
 export function geometryAfter(db: Db, boss: BossGetter, input: { placeId: string; triggeredBy: string }): Promise<FollowUp> {
   return followUp("geometry", { placeId: input.placeId }, async () => startGeometryRun(db, await boss(), { placeId: input.placeId }, input.triggeredBy));
-}
-
-/**
- * After „Position korrigieren“ (ruling M6-H-R1): a geometry run for the place recomputes shelter and depths and
- * consolidates; when it does not start (no geometry inputs, or the queue), a consolidation run takes the new position
- * into the profile instead.
- */
-export async function afterPositionChange(
-  db: Db,
-  boss: BossGetter,
-  input: { placeId: string; geoObjectId: string; triggeredBy: string },
-): Promise<FollowUp> {
-  const geometry = await geometryAfter(db, boss, input);
-  if (geometry.status === "started") return geometry;
-  return consolidateAfter(db, boss, { geoObjectIds: [input.geoObjectId], triggeredBy: input.triggeredBy });
-}
-
-/**
- * After „Mit Ort zusammenlegen“ (ruling M6-P15): consolidates the merged object in place, which only waits for a
- * consolidation of it still running and dismisses the open tasks that one opened after the merge locked its tasks
- * (`object_ended`; a run's scope refuses a merged object), then a consolidation run for the surviving object.
- */
-export async function afterPlaceMerge(
-  db: Db,
-  boss: BossGetter,
-  input: { keepGeoObjectId: string; dropGeoObjectId: string; triggeredBy: string },
-): Promise<FollowUp> {
-  try {
-    await consolidateGeo(db, input.dropGeoObjectId);
-  } catch (e) {
-    createLogger("follow-up").error({ geoObjectId: input.dropGeoObjectId, err: e }, "merged object not settled after a place merge");
-  }
-  return consolidateAfter(db, boss, { geoObjectIds: [input.keepGeoObjectId], triggeredBy: input.triggeredBy });
 }
 
 /**
@@ -113,9 +51,4 @@ export function imageRunAfter(
   return followUp("image", { geoObjectId: input.geoObjectId, slot: input.view.slot }, async () =>
     startImageRun(db, await boss(), { geoObjectId: input.geoObjectId, view: input.view, force: input.force }, input.triggeredBy),
   );
-}
-
-/** The upload run of an archived PDF (convert, chunk, embed). Uploading the same file again starts it again. */
-export function uploadFetchAfter(db: Db, boss: BossGetter, input: { documentId: string; triggeredBy: string }): Promise<FollowUp> {
-  return followUp("upload", { documentId: input.documentId }, async () => startUploadFetchRun(db, await boss(), input.documentId, input.triggeredBy));
 }

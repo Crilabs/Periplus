@@ -24,6 +24,24 @@
     ]
   },
   "maxHitsPerCandidate": 40,
+  "landside": {
+    "templates": [
+      { "template": "{subject} things to do", "lang": "en" },
+      { "template": "{subject} taverna", "lang": "en" },
+      { "template": "{subject} beach", "lang": "en" },
+      { "template": "{subject} Sehenswürdigkeiten", "lang": "de" },
+      { "template": "{subject} cosa vedere", "lang": "it" }
+    ],
+    "maxSubjectsPerPlace": 5,
+    "maxHitsPerSubject": 10,
+    "settlementMaxM": 10000,
+    "boatKeywords": [
+      "anchor", "anchors", "anchored", "anchoring", "anchorage", "anchorages", "moor", "moored", "mooring", "moorings", "buoy", "buoys", "berth", "berths", "berthed",
+      "Anker", "Ankern", "geankert", "Ankerplatz", "Boje", "Bojen", "Liegeplatz", "Liegeplätze", "Festmachen",
+      "ancora", "ancorare", "ancorato", "ancoraggio", "ormeggio", "ormeggiare", "boa", "boe",
+      "αγκυροβόλιο", "αγκυροβόλια", "αγκυροβολώ", "μουριάζω"
+    ]
+  },
   "refetchDays": 90,
   "assessWords": 6000,
   "skipDomains": ["navily.com", "google.com", "youtube.com", "facebook.com", "instagram.com", "pinterest.com", "tripadvisor.*", "booking.com", "amazon.com", "getyourguide.com", "rome2rio.com", "alamy.com"],
@@ -42,7 +60,7 @@
     "corridorAloneConfirms": false,
     "copyMinSharedWords": 12
   },
-  "gate": { "subdivision": "GR-I", "thresholds": [2, 3, 4, 5], "released": false, "chosenThreshold": null, "maxPositionDeviationM": 150, "minConfirmed": 25 },
+  "gate": { "subdivision": "GR-I", "thresholds": [2, 3, 4, 5], "released": false, "chosenThreshold": null, "maxPositionDeviationM": 150, "shelterErrorMin": 0.7, "minConfirmed": 25, "minCoverage": 0.5 },
   "discovery": { "corridorBufferKm": 3, "minNameSimilarity": 0.8, "vetoSimilarity": 0.4, "maxLegKm": 25, "maxLegDays": 3, "corroboratingDomains": 2 },
   "state": { "landingRadiusM": 600, "shoreMaxM": 1000, "footMaxM": 1500, "detourFactor": 1.4, "transportMaxM": 15000, "transportCategories": ["culture", "town", "nature", "beach"], "transportMinSitelinks": 5, "alwaysCategories": ["food", "supply", "bakery", "beach", "transport"], "textConfidence": 0.8, "transportKeywords": ["bus", "taxi", "ferry", "bahn", "fähre", "λεωφορείο", "ταξί", "φέρι", "πλοίο"] }
 }

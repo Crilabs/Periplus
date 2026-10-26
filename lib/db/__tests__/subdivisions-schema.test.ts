@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects, runs, subdivisions } from "@/lib/db/schema";
@@ -56,23 +56,11 @@ async function insertSubdivision(tx: Db, patch: Partial<typeof subdivisions.$inf
 }
 
 describe("subdivisions schema", () => {
-  it("rejects DELETE", async () => {
-    await withRollback(async (tx) => {
-      const id = await insertSubdivision(tx);
-      const message = await rejectionMessage(tx, (sp) => sp.delete(subdivisions).where(eq(subdivisions.id, id)));
-      expect(message).toContain("subdivisions rows are never deleted");
-    });
-  });
-
-  it("update writes subdivisions_history", async () => {
+  it("can be updated and deleted (no delete guard, no history since N6)", async () => {
     await withRollback(async (tx) => {
       const id = await insertSubdivision(tx);
       await tx.update(subdivisions).set({ status: "excluded", statusReason: "test" }).where(eq(subdivisions.id, id));
-      const rows = await tx.execute<{ old_row: { status: string } }>(
-        sql`select old_row from subdivisions_history where row_id = ${id}`,
-      );
-      expect(rows.rows).toHaveLength(1);
-      expect(rows.rows[0]!.old_row.status).toBe("active");
+      await tx.delete(subdivisions).where(eq(subdivisions.id, id));
     });
   });
 

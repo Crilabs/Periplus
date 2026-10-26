@@ -1,15 +1,17 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { getConfig, type AppConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { listApiClients } from "@/lib/domain/api-clients";
+import { listMcpTokens } from "@/lib/domain/mcp-tokens";
 import { loadAreaFiles } from "@/lib/domain/areas/file";
-import { activationOf, consolidationConfigFor, extractionVersion } from "@/lib/domain/consolidation/active-rules";
+import { consolidationConfigFor } from "@/lib/domain/rules/active";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { countryName } from "@/lib/domain/subdivisions/view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../_components/dialog";
-import { GEO_OBJECT_TYPE_LABELS, METRIC_LABELS } from "../_components/labels";
+import { GEO_OBJECT_TYPE_LABELS } from "../_components/labels";
 import {
   Badge,
   Button,
@@ -27,6 +29,8 @@ import {
   trClass,
 } from "../_components/ui";
 import { revokeApiClientAction } from "./actions";
+import { revokeMcpTokenAction } from "./mcp-actions";
+import { McpTokenForm } from "./mcp-token-form";
 
 export const metadata: Metadata = { title: "Einstellungen" };
 
@@ -48,17 +52,8 @@ const CONSOLIDATION_GROUPS: Record<Exclude<keyof AppConfig["consolidation"], "ve
   poiConfidence: "Konfidenz Highlight",
   confidence: "Konfidenz",
   conflict: "Konflikt",
-  change: "Änderung",
   expiry: "Ablauf",
-  profileConfidence: "Profil-Konfidenz",
-  profileConfidenceGroups: "Profil-Konfidenz: Attribute je Gruppe",
-  quietness: "Ruhe",
-  importance: "Bedeutung",
-  highlights: "Highlights je Ort",
-  severity: "Schwere",
   gaps: "Lücken",
-  followup: "Folgeaufträge",
-  summary: "Zusammenfassung",
 };
 
 /** Parameter groups of the delivery configuration, in display order. */
@@ -68,19 +63,12 @@ const DELIVERY_GROUPS: Record<Exclude<keyof AppConfig["delivery"], "schemaVersio
   coast: "Küste",
   regions: "Regionen",
   weather: "Wetterpunkte",
-  highlights: "Highlights",
+  radius: "Umkreis-Lieferung",
+  popularity: "Beliebtheit (Nachbarschaft)",
   validation: "Validierung",
-  severity: "Schwere",
   api: "API",
   confirmation: "Bestätigung nach Beleg",
 };
-
-/** A target of `config/quality.json` in German: shares as percent, cost in euro, review effort in minutes. */
-function targetText(metric: keyof AppConfig["quality"]["targets"], value: number): string {
-  if (metric === "cost_per_place") return value.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
-  if (metric === "review_minutes_per_100") return `${value.toLocaleString("de-DE")} Min.`;
-  return value.toLocaleString("de-DE", { style: "percent", maximumFractionDigits: 1 });
-}
 
 /** Flattens parameters to `a.b: value` pairs for a read-only table cell. */
 function parameterText(value: unknown, prefix = ""): string[] {
@@ -92,10 +80,16 @@ function parameterText(value: unknown, prefix = ""): string[] {
 }
 
 export default async function Page({ searchParams }: PageProps<"/settings">) {
-  await requireAdmin();
+  const claims = await requireAdmin();
   const revoked = (await searchParams).notice === "api_client_revoked";
   const db = getDb();
   const apiClients = await listApiClients(db);
+  const mcpTokens = await listMcpTokens(db, claims.sub);
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
+  const proto = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  const mcpUrl = `${proto}://${host}/api/mcp`;
+  const now = new Date();
   const { gazetteer, ...configured } = getConfig();
   const subdivisionsCfg = configured.subdivisions;
   const areasCfg = configured.areas;
@@ -118,15 +112,9 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
       Object.entries(areasCfg.aliases).map(([from, to]) => `${from} → ${to}`).join(", ") || "keine",
     ],
   ];
-  // the active rules version: the newest released activation, else active.json (ruling M7-P10)
-  const consolidation = await consolidationConfigFor(db);
-  const rulesActivation = await activationOf(db, "consolidation_rules", consolidation.version);
+  const consolidation = consolidationConfigFor();
   const rest = { ...configured, consolidation };
-  const { geometry, factSchema, fetch, embeddings, models, delivery, quality, images } = rest;
-  const extractFacts = models.tasks["extract-facts"];
-  const extractionApproval = extractFacts
-    ? await activationOf(db, "extraction", extractionVersion({ model: extractFacts.model, promptVersion: extractFacts.promptVersion }))
-    : null;
+  const { geometry, factSchema, fetch, models, delivery, quality, images } = rest;
   const exceptions = Object.entries(fetch.converterBySource);
   const archiveRows: [string, string][] = [
     [
@@ -139,7 +127,6 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
       "PDF-Extraktor",
       `${fetch.pdf.extractor}${fetch.pdf.modelFallback ? `, Claude für unlesbare Seiten (höchstens ${fetch.pdf.maxModelPagesPerDocument} je Dokument)` : ""}`,
     ],
-    ["Einbettungsmodell", `${embeddings.provider} ${embeddings.model}, Dimension ${embeddings.dimension}`],
   ];
   const geometryRows: [string, string][] = [
     ["Regelversion", geometry.rulesVersion],
@@ -206,17 +193,6 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
     ["Ausgabe", `JPEG ${images.output.jpegQuality}, Lizenz ${images.output.license}, ${images.output.credit}`],
   ];
   const qualityRows: [string, string][] = [
-    ...(Object.keys(quality.targets) as (keyof typeof quality.targets)[]).map((metric): [string, string] => {
-      const t = quality.targets[metric];
-      const bound = t.direction === "min" ? "mindestens" : "höchstens";
-      const parts = [
-        t.pilot === null ? "kein Pilotziel" : `${bound} ${targetText(metric, t.pilot)} im Pilot`,
-        t.full === null ? "kein Ziel im Vollbetrieb" : `${bound} ${targetText(metric, t.full)} im Vollbetrieb`,
-      ];
-      return [METRIC_LABELS[metric], parts.join(", ")];
-    }),
-    ["Review-Aufwand zweiter Lauf (Pilot)", `unter ${quality.secondRunReviewMinutesMax} Min.`],
-    ["Orte je Kachel", `${quality.placesPerTile.min}–${quality.placesPerTile.max}`],
     [
       "Vergleichssatz",
       `${quality.comparisonSet.pilotSize} Orte im Pilot, ${quality.comparisonSet.perSubdivisionMin}–${quality.comparisonSet.perSubdivisionMax} je weiterem Landesteil`,
@@ -386,7 +362,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
 
         <Panel
           title="Konsolidierung"
-          description="Regeln, nach denen aus einzelnen Facts die Profile der Orte werden: Aktualität, Gewichte, Konfidenz, Konflikte, Lücken."
+          description="Regeln, nach denen aus den Funden der Recherche die Kernwerte eines Liegeplatzes werden: Aktualität, Gewichte, Konfidenz, Konflikte, Lücken."
           actions={
             <Dialog trigger="Alle Parameter" triggerSize="sm" title="Konsolidierung" description={`Regelversion ${consolidation.version}`} wide>
               <Pairs rows={consolidationRows} mono />
@@ -396,12 +372,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
           <Pairs
             rows={[
               ["Regelversion", consolidation.version],
-              [
-                "Aktiv durch",
-                rulesActivation
-                  ? `Aktivierung am ${fmt.dateTime(rulesActivation.activatedAt)} von ${rulesActivation.activatedBy} (Qualität → Regression)`
-                  : "config/consolidation/active.json",
-              ],
+              ["Aktiv durch", "config/consolidation/active.json"],
               ["Regeln", Object.keys(consolidation.rules).join(", ")],
             ]}
           />
@@ -438,6 +409,66 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
           />
         </Panel>
       </div>
+
+      <Panel
+        id="mcp"
+        title="Claude Code (MCP)"
+        description="Persönliche Tokens für den Periplus-MCP-Server: Claude Code liest damit Produktionsdaten in deinem Namen (Läufe, Plätze, Kosten, Lieferungen, Lese-SQL), schreibt aber nichts. Ein Token gilt 30, 90 oder 365 Tage; höchstens 10 aktive. Anleitung: docs/mcp.md."
+        className="mt-6"
+        flush
+      >
+        <McpTokenForm mcpUrl={mcpUrl} />
+        {mcpTokens.length > 0 && (
+          <Table>
+            <thead>
+              <tr>
+                <th className={thClass}>Name</th>
+                <th className={thClass}>Präfix</th>
+                <th className={thClass}>Status</th>
+                <th className={thClass}>Gültig bis</th>
+                <th className={thClass}>Zuletzt benutzt</th>
+                <th className={thClass}>
+                  <span className="sr-only">Aktion</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {mcpTokens.map((t) => {
+                const active = !t.revokedAt && t.expiresAt > now;
+                return (
+                  <tr key={t.id} className={trClass}>
+                    <td className={cx(tdClass, "font-medium")}>{t.name}</td>
+                    <td className={tdClass}>
+                      <Mono>{t.prefix}…</Mono>
+                    </td>
+                    <td className={tdClass}>
+                      {t.revokedAt ? <Badge>Widerrufen</Badge> : active ? <Badge tone="ok">Aktiv</Badge> : <Badge>Abgelaufen</Badge>}
+                    </td>
+                    <td className={cx(tdClass, "whitespace-nowrap")}>{fmt.date(t.expiresAt)}</td>
+                    <td className={cx(tdClass, "whitespace-nowrap")}>{t.lastUsedAt ? fmt.date(t.lastUsedAt) : "nie"}</td>
+                    <td className={cx(tdClass, "text-right")}>
+                      {active && (
+                        <Dialog
+                          trigger="Widerrufen"
+                          triggerVariant="danger"
+                          triggerSize="sm"
+                          title={`Token „${t.name}“ widerrufen?`}
+                          description="Claude Code mit diesem Token bekommt ab sofort 401. Für weiteren Zugang ein neues Token anlegen und neu einrichten."
+                        >
+                          <form action={revokeMcpTokenAction} className="flex justify-end">
+                            <input type="hidden" name="id" value={t.id} />
+                            <Button variant="danger">Endgültig widerrufen</Button>
+                          </form>
+                        </Dialog>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        )}
+      </Panel>
 
       <Panel
         id="api-clients"
@@ -504,7 +535,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
 
       <Panel
         title="Modelle je Aufgabe"
-        description={`Welches Modell und welche Prompt-Version jede KI-Aufgabe nutzt. Batches: Rabatt ${models.batch.discount}, Abfrage alle ${models.batch.pollSeconds} s, Abbruch nach ${models.batch.maxHours} h, höchstens ${models.batch.maxRequests} Anfragen je Batch. Modellvergleich: ${models.comparison.models.join(", ")}.`}
+        description={`Welches Modell und welche Prompt-Version jede KI-Aufgabe nutzt. Batches: Rabatt ${models.batch.discount}, Abfrage alle ${models.batch.pollSeconds} s, Abbruch nach ${models.batch.maxHours} h, höchstens ${models.batch.maxRequests} Anfragen je Batch.`}
         className="mt-6"
         flush
       >
@@ -538,19 +569,6 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
                   {t.decision
                     ? `${t.decision.status === "decided" ? "Entschieden" : "Vorläufig"}: ${t.decision.note}`
                     : "–"}
-                  {task === "extract-facts" && (
-                    <div className="mt-1" data-testid="extraction-approval">
-                      {extractionApproval ? (
-                        <Badge tone="ok" title={`am ${fmt.dateTime(extractionApproval.activatedAt)} von ${extractionApproval.activatedBy}`}>
-                          freigegeben
-                        </Badge>
-                      ) : (
-                        <Badge tone="warn" title="Keine Aktivierung dieser Konfiguration auf der Qualitätsseite (Regression)">
-                          ohne Freigabe
-                        </Badge>
-                      )}
-                    </div>
-                  )}
                 </td>
               </tr>
             ))}

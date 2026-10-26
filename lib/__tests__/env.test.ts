@@ -39,11 +39,6 @@ describe("parseEnv", () => {
     expect(parseEnv({ ...validSource, S3_WRITE_PREFIX: "" }).S3_WRITE_PREFIX).toBeUndefined();
   });
 
-  it("keeps PERIPLUS_SIMULATION optional", () => {
-    expect(parseEnv(validSource).PERIPLUS_SIMULATION).toBeUndefined();
-    expect(parseEnv({ ...validSource, PERIPLUS_SIMULATION: "test/revisit/scenario.json" }).PERIPLUS_SIMULATION).toBe("test/revisit/scenario.json");
-  });
-
   it("rejects a SESSION_SECRET shorter than 32 chars without echoing the value", () => {
     expect(() => parseEnv({ ...validSource, SESSION_SECRET: "short-secret-value" })).toThrow(
       /SESSION_SECRET/,

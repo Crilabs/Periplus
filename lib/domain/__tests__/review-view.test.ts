@@ -19,8 +19,6 @@ import { createReviewTask } from "@/lib/domain/review";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
 import { listOpenTasks, nextTaskHref, reviewCounts, reviewTaskDetail, reviewTaskTitle } from "@/lib/domain/review-view";
 import { placeTitle } from "@/lib/domain/geo-view";
-import { suggestedKindForHint } from "@/lib/domain/review-decisions";
-import { insertComputation, insertPlace as insertTestPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 
 // Synthetic data in open sea outside the pilot box 23.0-23.75 E x 37.0-38.0 N, at a spot no other test uses.
@@ -95,93 +93,6 @@ describe("review view", () => {
       expect([...distances].sort((a, b) => a - b)).toEqual(distances);
 
       expect(await reviewTaskDetail(tx, "0190a6c2-7a1b-7c3d-8e4f-0123456789ab")).toBeNull();
-    }));
-
-  it("reviewTaskDetail shows a source proposal with hits, link graph, languages, robots and suggestion", () =>
-    withRollback(async (tx) => {
-      const insertSource = async () => {
-        const domain = `${newId()}.test.invalid`;
-        const [row] = await tx
-          .insert(sources)
-          .values({
-            domain,
-            name: domain,
-            type: "trip_report",
-            weight: 0.6,
-            crawlRules: DEFAULT_CRAWL_RULES,
-            languages: ["en", "de"],
-            origin: "serp",
-          })
-          .returning({ id: sources.id });
-        return { id: row!.id, domain };
-      };
-      const source = await insertSource();
-      const domain = source.domain;
-      const hit = {
-        url: `https://${domain}/blog/a`,
-        keyword: "hydra anchorage",
-        languageCode: "en",
-        rank: 3,
-        title: "Hydra",
-        snippet: "Anchoring off Hydra",
-      };
-      const robots = { status: "parsed", disallowAll: false, blockedStartUrls: [], crawlDelaySec: 5, sitemaps: 1 };
-      const suggestion = {
-        type: "pilot_guide",
-        weight: 0.9,
-        changeRate: "static",
-        crawlRules: { ...DEFAULT_CRAWL_RULES, allow: ["^/blog/"] },
-      };
-      const { id } = await createReviewTask(tx, {
-        kind: "source_approval",
-        subjectType: "source",
-        subjectId: source.id,
-        context: { hits: [hit], hitCount: 14, linkingSources: 2, languages: ["en", "de"], robots, suggestion },
-      });
-
-      const detail = await reviewTaskDetail(tx, id);
-      expect(detail?.subject).toMatchObject({
-        type: "source",
-        source: { id: source.id, domain, status: "proposed" },
-        hits: [hit],
-        hitCount: 14,
-        linkingSources: 2,
-        languages: ["en", "de"],
-        robots,
-        // The form defaults are the source's current values; the proposal's own suggestion stays visible (UI-1).
-        suggestion: { type: "trip_report", weight: 0.6, changeRate: "normal", crawlRules: DEFAULT_CRAWL_RULES },
-        originalSuggestion: suggestion,
-        editedSinceProposal: true,
-      });
-
-      // Without (valid) context the suggestion is the source's current values and there is no original.
-      const { id: bare } = await createReviewTask(tx, {
-        kind: "source_approval",
-        subjectType: "source",
-        subjectId: (await insertSource()).id,
-        context: { hits: "nope" },
-      });
-      expect((await reviewTaskDetail(tx, bare))?.subject).toMatchObject({
-        type: "source",
-        hits: [],
-        hitCount: 0,
-        linkingSources: 0,
-        robots: null,
-        suggestion: { type: "trip_report", weight: 0.6, changeRate: "normal", crawlRules: DEFAULT_CRAWL_RULES },
-        originalSuggestion: null,
-        editedSinceProposal: false,
-      });
-    }));
-
-  it("reviewTaskDetail of a source task whose source does not exist is missing", () =>
-    withRollback(async (tx) => {
-      const { id } = await createReviewTask(tx, {
-        kind: "source_approval",
-        subjectType: "source",
-        subjectId: newId(),
-        context: {},
-      });
-      expect((await reviewTaskDetail(tx, id))?.subject).toEqual({ type: "missing" });
     }));
 
   it("a restricted-area review of a confirmed place shows the reason and every area with kind, reference and source (UI-4, GR-5)", () =>
@@ -268,27 +179,10 @@ describe("review view", () => {
         before: high.id,
       });
       expect(next.map((t) => t.id)).toEqual([low.id]);
-      expect(first.map((t) => t.evaluation)).toEqual([false, false]);
-
-      // a deviation of an evaluation run is marked as such in the queue
-      const evaluation = await createReviewTask(tx, {
-        kind: "comparison_deviation",
-        subjectType: "place",
-        subjectId: `${a}:evaluation`,
-        context: { name: "A", evaluationRunId: crypto.randomUUID() },
-        priority: 2_000_000_002,
-      });
-      const marked = await listOpenTasks(tx, { kind: "comparison_deviation", limit: 1 });
-      expect(marked.map((t) => [t.id, t.evaluation])).toEqual([[evaluation.id, true]]);
     }, { isolationLevel: "repeatable read" }));
 
-  it("the list names each task's subject: domain, place, object with attribute, pair, queue; the evaluation filter splits deviations (UI-6)", () =>
+  it("the list names each task's subject: place, pair, queue, comparison attribute (UI-6)", () =>
     withRollback(async (tx) => {
-      const domain = `${newId()}.test.invalid`;
-      const [source] = await tx
-        .insert(sources)
-        .values({ domain, name: domain, type: "trip_report", weight: 0.6, crawlRules: DEFAULT_CRAWL_RULES, origin: "serp" })
-        .returning({ id: sources.id });
       const placeId = await insertPlace(tx, "Listed Bay", 0.03);
       const otherId = await insertPlace(tx, "Other Bay", 0.031);
       const object = async (id: string) => (await tx.select({ g: places.geoObjectId }).from(places).where(sql`id = ${id}`))[0]!.g;
@@ -297,54 +191,23 @@ describe("review view", () => {
       const task = (kind: (typeof reviewKindEnum.enumValues)[number], subjectType: string, subjectId: string, context: Record<string, unknown>, n: number) =>
         createReviewTask(tx, { kind, subjectType, subjectId, context, priority: top - n });
       const ids = [
-        (await task("source_approval", "source", source!.id, {}, 0)).id,
-        (await task("conflict", "profile_attribute", `${await object(placeId)}:seabed`, { key: "k" }, 1)).id,
-        (await task("place_candidate", "place", placeId, { reason: "restricted" }, 2)).id,
-        (await task("place_candidate", "geo_object_pair", `${g1}:${g2}`, {}, 3)).id,
-        (await task("failed_job", "job", newId(), { queue: "fetch.url" }, 4)).id,
-        (await task("comparison_deviation", "comparison", `${placeId}:depth:x`, { placeId, attribute: "depth" }, 5)).id,
-        (await task("comparison_deviation", "comparison", `${placeId}:depth:y`, { placeId, attribute: "depth", evaluationRunId: newId() }, 6)).id,
+        (await task("place_candidate", "place", placeId, { reason: "restricted" }, 0)).id,
+        (await task("place_candidate", "geo_object_pair", `${g1}:${g2}`, {}, 1)).id,
+        (await task("failed_job", "job", newId(), { queue: "research.fetch" }, 2)).id,
+        (await task("comparison_deviation", "comparison", `${placeId}:depth:x`, { placeId, attribute: "depth" }, 3)).id,
       ];
       const rows = await listOpenTasks(tx, { limit: ids.length });
       expect(rows.map((r) => r.id)).toEqual(ids);
       const pair = [g1, g2].map((g) => (g === (rows[1]!.subjectId.slice(0, 36)) ? "Listed Bay" : "Other Bay")).join(" / ");
-      expect(rows.map((r) => [r.name, r.attribute, r.evaluation])).toEqual([
-        [domain, null, false],
-        ["Listed Bay", "Grund", false],
-        ["Listed Bay", null, false],
-        [pair, null, false],
-        ["fetch.url", null, false],
-        ["Listed Bay", "depth", false],
-        ["Listed Bay", "depth", true],
+      expect(rows.map((r) => [r.name, r.attribute])).toEqual([
+        ["Listed Bay", null],
+        [pair, null],
+        ["research.fetch", null],
+        ["Listed Bay", "depth"],
       ]);
-
-      const regular = await listOpenTasks(tx, { kind: "comparison_deviation", evaluation: "none", limit: 1 });
-      expect(regular.map((r) => r.id)).toEqual([ids[5]]);
-      const evaluationOnly = await listOpenTasks(tx, { kind: "comparison_deviation", evaluation: "only", limit: 1 });
-      expect(evaluationOnly.map((r) => r.id)).toEqual([ids[6]]);
-      // „Nächste“ after a regular deviation skips the evaluation deviation behind it
-      const afterRegular = await nextTaskHref(tx, ids[5]!);
-      expect(afterRegular).not.toBe(`/review/${ids[6]}`);
+      // „Nächste“ after the last task of its kind goes back to the list
+      expect(await nextTaskHref(tx, ids[3]!)).not.toBe(`/review/${ids[0]}`);
     }, { isolationLevel: "repeatable read" }));
-
-  it("a place candidate's task shows the object's facts so far, newest per attribute with source and count (UI-13)", () =>
-    withRollback(async (tx) => {
-      const place = await insertTestPlace(tx, { lon: 26.36, lat: 34.36, name: "Facts Bay", status: "candidate" });
-      await insertComputation(tx, place.objectId, "depth", { depth: { min: 4, max: 8 } }, { createdAt: new Date("2026-09-01T10:00:00Z") });
-      await insertComputation(tx, place.objectId, "depth", { depth: { min: 5, max: 9 } }, { createdAt: new Date("2026-10-01T10:00:00Z") });
-      const { id } = await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: place.placeId, context: {} });
-      const subject = (await reviewTaskDetail(tx, id))!.subject;
-      if (subject.type !== "place") throw new Error(subject.type);
-      const depth = subject.facts.find((f) => f.attribute === "depth");
-      expect(depth).toMatchObject({ count: 2, newest: { value: { min: 5, max: 9 }, origin: "computed", source: null } });
-    }));
-
-  it("„Ort anlegen“ of a new name starts with the kind its hint suggests (UI-13)", () => {
-    expect(suggestedKindForHint("harbour")).toBe("port");
-    expect(suggestedKindForHint("marina")).toBe("marina");
-    expect(suggestedKindForHint("bay")).toBe("anchorage");
-    expect(suggestedKindForHint(null)).toBe("anchorage");
-  });
 
   it("a task's and a place's page titles name the subject (UI-15)", () =>
     withRollback(async (tx) => {

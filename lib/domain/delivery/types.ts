@@ -1,29 +1,17 @@
-import type {
-  ChangesFile,
-  CoastCollection,
-  HighlightsFile,
-  Manifest,
-  RegionsFile,
-  SpotsFile,
-  WeatherPointsFile,
-} from "@/contract";
-import type { GeoObjectType, PlaceKind, PlaceStatus, HighlightCategory } from "@/lib/db/schema/geo";
-import type { DocType } from "@/lib/db/schema/sources";
-import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
+import type { CoastCollection, Manifest, RegionsFile, SpotsFile, WeatherPointsFile } from "@/contract/v2";
+import type { GeoObjectType, PlaceKind, PlaceStatus} from "@/lib/db/schema/geo";
+import type { berthStates } from "@/lib/db/schema/research-state";
 
 /*
- * What a delivery build reads for one subdivision (spec 08, spec 14): the delivered objects with their latest profiles,
- * names and the documents behind them. Loaded by `loadSubdivisionScope` (load.ts), mapped to the contract by the
+ * What a delivery build reads for one subdivision (spec 08, spec 14): the delivered objects with their berth states
+ * and names. Loaded by `loadSubdivisionScope` (load.ts), mapped to the contract by the
  * `map-*.ts` modules. Content belongs to the subdivision by `geo_objects.subdivision_id`, never by tile label.
  */
 
-export type LonLat = { lon: number; lat: number };
+/** A row of `berth_states`. */
+export type BerthStateRow = typeof berthStates.$inferSelect;
 
-/**
- * A document behind an object's profile: its URL, effective type and newest observation date (never a quote). `gone`:
- * the document is gone; it is never listed in `sources`, but still checked against `forbiddenDomains` (final review M-1).
- */
-export type SourceRefRow = { url: string; docType: DocType; observedAt: string; gone?: boolean };
+export type LonLat = { lon: number; lat: number };
 
 /**
  * A current image of a place that may be delivered (`loadPlaceImages`): every source of its render has its delivery
@@ -63,35 +51,27 @@ export type SpotSource = {
   names: SpotName[];
   osmId: string | null;
   wikidataId: string | null;
-  profile: ProfileSnapshot | null;
-  /** The `ok` summary of the latest profile version (highest prompt version), ruling M6-P9. */
-  summary: string | null;
-  /** `popularityForSubdivision` on the build date; null for a place outside its map (ruling M6-P8). */
-  popularity: number | null;
-  sources: SourceRefRow[];
+  /** The berth state (plan N4a); null for a place without one (an excluded place, or a confirmed one the research has not reached). */
+  state: BerthStateRow | null;
+  /** The independent sources behind the confirmation, counted as the confirmation rule does (`decideBerth`); 0 without evidence. */
+  independentSources: number;
+  /** `score.popularity`: `independentSources` log-normalised within the fixed neighbourhood (spec 18), 0-1; 0 without a value. */
+  popularity: number;
+  /** Registrable domain of the place's current website when it is bound (`place_websites`); null without one. Only a contact url of this domain is delivered. */
+  ownWebsiteDomain: string | null;
+  /** The computed anchor position of the place (`places.anchor_position`) with the configured confidence; null without one. */
+  anchor: { lon: number; lat: number; confidence: number } | null;
+  /** The geo objects the state's `nearby` entries point at (public id, names, position); an entry whose object is missing here is not delivered. */
+  nearbyObjects: NearbyObject[];
   /** The deliverable current images, best first (rank, sort order, slot). */
   images: DeliverableImage[];
 };
+
+/** A thing on land a state's `nearby` entry points at, as loaded from `geo_objects`; `publicId` null when it has none (contract 4.0, E1). */
+export type NearbyObject = { geoObjectId: string; publicId: string | null; name: string; names: SpotName[]; position: LonLat };
 
 /** A place merged into another: its public id and the final target's (ruling M6-P14). */
 export type MergedSpot = { publicId: string; mergedIntoPublicId: string };
-
-export type PoiSource = {
-  geoObjectId: string;
-  publicId: string;
-  category: HighlightCategory;
-  name: string;
-  position: LonLat;
-  osmId: string | null;
-  wikidataId: string | null;
-  profile: ProfileSnapshot | null;
-  summary: string | null;
-  sources: SourceRefRow[];
-  /** The deliverable current images, best first (rank, sort order, slot). */
-  images: DeliverableImage[];
-  /** The places selecting the POI as a highlight (spec 16), with the selection's distance; by place geo object id. */
-  selectedBy: Array<{ placeGeoObjectId: string; distanceKm: number }>;
-};
 
 export type RegionSource = {
   geoObjectId: string;
@@ -106,9 +86,6 @@ export type RegionSource = {
   areaKm2: number | null;
   /** Ancestors via `parent_id`, nearest first. */
   parentGeoObjectIds: string[];
-  profile: ProfileSnapshot | null;
-  /** The documents behind the profile; only checked against `forbiddenDomains` (final review I-2), never delivered. */
-  sources: SourceRefRow[];
 };
 
 export type PassageSource = {
@@ -116,8 +93,6 @@ export type PassageSource = {
   type: "cape" | "strait" | "channel";
   name: string;
   point: LonLat;
-  /** The latest profile: its text-only safety values have no contract field and are reported as not delivered. */
-  profile: ProfileSnapshot | null;
 };
 
 export type SubdivisionScope = {
@@ -133,24 +108,21 @@ export type SubdivisionScope = {
   };
   /** The sailing areas (Reviere) linked to the scope tiles (`tile_geo_objects`), by public id; information only. */
   areas: Array<{ publicId: string; key: string; names: ObjectName[] }>;
-  /** The scope tiles (`subdivisionTileIds`) with their state; a tile without a run has no `lastRunAt` and no profiles. */
-  tiles: Array<{ id: string; lastRunAt: string | null; profilesAsOf: string | null }>;
+  /** The scope tiles (`subdivisionTileIds`) with their state; a tile without a run has no `lastRunAt` and no states. */
+  tiles: Array<{ id: string; lastRunAt: string | null; statesAsOf: string | null }>;
   spots: SpotSource[];
   merged: MergedSpot[];
-  pois: PoiSource[];
   regions: RegionSource[];
   passages: PassageSource[];
 };
 
-/** A package as built and validated (spec 08): the manifest and its files; `changes.json` from the second delivery on. */
+/** A package as built and validated (contract 4.0): the manifest and its files; no highlights, no change feed. */
 export type DeliveryPackage = {
   manifest: Manifest;
   files: {
     "spots.json": SpotsFile;
-    "highlights.json": HighlightsFile;
     "regions.json": RegionsFile;
     "coast.geojson": CoastCollection;
     "weather-points.json": WeatherPointsFile;
-    "changes.json"?: ChangesFile;
   };
 };

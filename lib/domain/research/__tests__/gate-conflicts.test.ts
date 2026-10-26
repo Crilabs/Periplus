@@ -82,8 +82,7 @@ describe("deciding a conflict", () => {
       await syncConflictTasks(tx, [place.placeId], 2, [place.placeId]);
       const [task] = await tasksOf(tx, place.placeId);
 
-      const result = await decideReviewTask(tx, { taskId: task!.id, decision: { action: "not_berth" }, decidedBy: "admin@test.invalid" });
-      expect(result.consolidate).toEqual({ geoObjectId: place.objectId });
+      await decideReviewTask(tx, { taskId: task!.id, decision: { action: "not_berth" }, decidedBy: "admin@test.invalid" });
       const [row] = await tx.select().from(places).where(eq(places.id, place.placeId));
       expect(row).toMatchObject({ status: "rejected", statusReason: NOT_BERTH_REASON });
       expect(NOT_BERTH_REASON).toBe("Kein Liegeplatz laut Prüfung (Navily-Test)");
@@ -114,8 +113,7 @@ describe("deciding a conflict", () => {
       const place = await placeOf(tx);
       await syncConflictTasks(tx, [place.placeId], 2, [place.placeId]);
       const [task] = await tasksOf(tx, place.placeId);
-      const result = await decideReviewTask(tx, { taskId: task!.id, decision: { action: "berth" }, decidedBy: "admin@test.invalid" });
-      expect(result.consolidate).toBeNull();
+      await decideReviewTask(tx, { taskId: task!.id, decision: { action: "berth" }, decidedBy: "admin@test.invalid" });
       expect((await tx.select().from(places).where(eq(places.id, place.placeId)))[0]).toMatchObject({ status: "candidate", statusReason: null });
     }));
 

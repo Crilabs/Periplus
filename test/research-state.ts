@@ -3,6 +3,7 @@ import { berthFacts, documents, pageAssessments, researchUnits, type PageKind } 
 import type { AppConfig } from "@/lib/config";
 import { activeAssessor } from "@/lib/domain/research/assessment";
 import { activeExtractor } from "@/lib/domain/research/confirmation";
+import { activeLandsideExtractor } from "@/lib/domain/research/landside-extraction";
 import { newId } from "@/lib/domain/ids";
 import { insertTestRun, insertTestVersion } from "@/test/text";
 
@@ -11,7 +12,7 @@ export async function seedPage(
   tx: Db,
   config: AppConfig,
   placeId: string,
-  o: { domain?: string; host?: string; model?: string; status?: "done" | "failed"; generated?: boolean; pageKind?: PageKind } = {},
+  o: { domain?: string; host?: string; model?: string; status?: "done" | "failed"; generated?: boolean; pageKind?: PageKind; kind?: "berth" | "landside"; promptVersion?: number } = {},
 ) {
   const { sourceId } = await insertTestVersion(tx, ["y"]);
   const url = `https://${o.host ?? `www.${o.domain ?? "guide.example"}`}/${newId()}`;
@@ -25,10 +26,11 @@ export async function seedVersion(
   config: AppConfig,
   placeId: string,
   documentId: string,
-  o: { model?: string; status?: "done" | "failed"; generated?: boolean; pageKind?: PageKind } = {},
+  o: { model?: string; status?: "done" | "failed"; generated?: boolean; pageKind?: PageKind; kind?: "berth" | "landside"; promptVersion?: number } = {},
 ) {
   const { model, promptVersion } = activeAssessor(config);
-  const ex = activeExtractor(config);
+  const kind = o.kind ?? "berth";
+  const ex = kind === "landside" ? activeLandsideExtractor(config) : activeExtractor(config);
   const v = await insertTestVersion(tx, ["x"], { documentId });
   await tx.insert(pageAssessments).values({
     documentVersionId: v.versionId, model, promptVersion, pageKind: o.pageKind ?? "trip_report", firstHand: true, generated: o.generated ?? false,
@@ -36,7 +38,7 @@ export async function seedVersion(
   });
   const [u] = await tx
     .insert(researchUnits)
-    .values({ documentVersionId: v.versionId, placeId, model: o.model ?? ex.model, promptVersion: ex.promptVersion, status: o.status ?? "done", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 0 } })
+    .values({ documentVersionId: v.versionId, placeId, kind, model: o.model ?? ex.model, promptVersion: o.promptVersion ?? ex.promptVersion, status: o.status ?? "done", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 0 } })
     .returning({ id: researchUnits.id });
   return { unitId: u!.id, versionId: v.versionId };
 }

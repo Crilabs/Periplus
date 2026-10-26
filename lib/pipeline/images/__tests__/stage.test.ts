@@ -10,21 +10,12 @@ import { createReviewTask } from "@/lib/domain/review";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { createRun } from "@/lib/domain/runs";
 import { STAGES } from "@/lib/jobs/stages";
-import { consolidateGeoJob, consolidationGeoJobs } from "@/lib/pipeline/consolidation/geo";
-import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
-import {
-  CONSOLIDATION_GEO_STAGE,
-  CONSOLIDATION_STAGES,
-  CONSOLIDATION_SUMMARY_STAGE,
-  GEOMETRY_CONSOLIDATION_STAGES,
-} from "@/lib/pipeline/consolidation/stages";
-import { consolidateAfter } from "@/lib/pipeline/follow-ups";
+import { startBerthFollowupRun } from "@/lib/pipeline/berth-followup-run";
 import { generatePlaceImage, keyDone, type ImageView } from "@/lib/pipeline/images/generate";
 import { setImageModelFactory } from "@/lib/pipeline/images/model";
 import { imageJobs, imageTargets, nextViewSlot } from "@/lib/pipeline/images/stage";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
 import { startImageRun } from "@/lib/pipeline/images-run";
-import { TEXT_RUN_STAGES } from "@/lib/pipeline/text/run";
 import { chromiumInstalled } from "@/test/browser";
 import { withRollback } from "@/test/db";
 import {
@@ -42,8 +33,7 @@ import {
 import { memoryArchive } from "@/test/s3";
 
 /*
- * Stage `images.place`: which places a run targets (plan), the run integration (the stage ends text, geometry and
- * consolidation runs) and one end-to-end run with the real renderer in headless Chromium.
+ * Stage `images.place`: which places a run targets (plan), the run integration (the follow-up run of confirmed berths ends with it) and one end-to-end run with the real renderer in headless Chromium.
  */
 
 const cfg = getConfig();
@@ -394,47 +384,33 @@ describe("image runs", () => {
     });
   });
 
-  it("text run, geometry run and consolidateAfter run list images.place last; regenerate_summary run does not", async () => {
-    expect(CONSOLIDATION_STAGES.at(-1)).toBe(IMAGES_STAGE);
-    expect(GEOMETRY_CONSOLIDATION_STAGES.at(-1)).toBe(IMAGES_STAGE);
-    expect(TEXT_RUN_STAGES.at(-1)).toBe(IMAGES_STAGE);
+  it("a run without an images scope plans no target, whatever profiles or consolidations exist (no profile read)", async () => {
     expect(STAGES[IMAGES_STAGE]).toMatchObject({ name: IMAGES_STAGE, queue: "images.place" });
     await withRollback(async (tx) => {
       const sd = await insertImageSubdivision(tx);
       const spot = await insertSpot(tx, sd.id);
-      const { boss } = recordingBoss();
-      const after = await consolidateAfter(tx, async () => boss, { geoObjectIds: [spot.objectId], triggeredBy: "admin" });
-      expect(after.status).toBe("started");
-      const run = await getRun(tx, (after as { runId: string }).runId);
-      expect(run!.stages.at(-1)).toBe(IMAGES_STAGE);
-
-      const summary = await startConsolidationRun(tx, boss, { scope: { geoObjectIds: [spot.objectId] }, triggeredBy: "admin", stagesOnly: [CONSOLIDATION_SUMMARY_STAGE], regenerateSummary: true });
-      expect((await getRun(tx, summary.id))!.stages).toEqual([CONSOLIDATION_SUMMARY_STAGE]);
+      const run = await createRun(tx, { kind: "stage", scope: { type: "place", id: spot.placeId }, stages: [IMAGES_STAGE], params: { geoObjectIds: [spot.objectId], stagesOnly: [IMAGES_STAGE] }, triggeredBy: "test" });
+      expect(await imageTargets(tx, { id: run.id, params: { geoObjectIds: [spot.objectId], stagesOnly: [IMAGES_STAGE] } })).toEqual([]);
     });
   });
 });
 
 describe.skipIf(!chromiumInstalled())("images.place end to end", () => {
   it(
-    "newly confirmed marina gets a place_image task through its consolidation run",
+    "newly confirmed marina gets a place_image task through the follow-up run",
     async () => {
       await withRollback(async (tx) => {
         const sd = await insertImageSubdivision(tx);
         const spot = await insertSpot(tx, sd.id, { status: "candidate" });
         const { id: taskId } = await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: spot.placeId, context: {} });
-        const decided = await decideReviewTask(tx, { taskId, decision: { action: "confirm", kind: "marina" }, decidedBy: "admin" });
-        expect(decided.consolidate?.geoObjectId).toBe(spot.objectId);
+        await decideReviewTask(tx, { taskId, decision: { action: "confirm", kind: "marina" }, decidedBy: "admin" });
 
         const { boss } = recordingBoss();
-        const after = await consolidateAfter(tx, async () => boss, { geoObjectIds: [spot.objectId], triggeredBy: "admin" });
-        const runId = (after as { runId: string }).runId;
-        const [row] = await tx.select({ stages: runs.stages, params: runs.params }).from(runs).where(sql`${runs.id} = ${runId}`);
-        expect(row!.stages[0]).toBe(CONSOLIDATION_GEO_STAGE);
-        expect(row!.stages.at(-1)).toBe(IMAGES_STAGE);
+        const started = await startBerthFollowupRun(tx, boss, [spot.placeId], "system");
+        const runId = started!.id;
+        const [row] = await tx.select({ params: runs.params }).from(runs).where(sql`${runs.id} = ${runId}`);
         const run = { id: runId, params: row!.params as Record<string, unknown> };
 
-        // the stages in order, without the queue: consolidation first, then the image plan and its job
-        for (const job of await consolidationGeoJobs(tx, run)) await consolidateGeoJob(tx, { ...job, runId });
         const jobs = await imageJobs(tx, run);
         expect(jobs).toEqual([{ key: `${spot.objectId}:title`, geoObjectId: spot.objectId, view: TITLE }]);
 

@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import type { SpotsFile } from "@/contract";
+import type { SpotsFile } from "@/contract/v3_0";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, places, reviewDecisions, reviewTasks } from "@/lib/db/schema";
@@ -27,9 +27,6 @@ const ADMIN = "admin@test.invalid";
  */
 const seed = (tx: Db): Promise<DeliveryFixture> => seedDeliverySubdivision(tx);
 
-const openTask = (tx: Db, kind: "conflict" | "uncertain_change", geoObjectId: string, attribute: string) =>
-  createReviewTask(tx, { kind, subjectType: "profile_attribute", subjectId: `${geoObjectId}:${attribute}`, context: { key: `${attribute}:k`, geoObjectId } });
-
 const refusal = async (p: Promise<unknown>) => {
   try {
     await p;
@@ -54,13 +51,10 @@ const placeRow = async (tx: Db, id: string) => (await tx.select().from(places).w
 const geoRow = async (tx: Db, id: string) => (await tx.select().from(geoObjects).where(eq(geoObjects.id, id)))[0]!;
 
 describe("mergePlaceInto", () => {
-  it("merges a confirmed place into another: place and geo object merged, its open profile tasks dismissed, the decision recorded", () =>
+  it("merges a confirmed place into another: place and geo object merged, its open place tasks dismissed, the decision recorded", () =>
     withRollback(async (tx) => {
       const f = await seed(tx);
       const { A, M } = f.places;
-      const conflict = await openTask(tx, "conflict", A.geoObjectId, "holding");
-      const uncertain = await openTask(tx, "uncertain_change", A.geoObjectId, "capacity");
-      const keepTask = await openTask(tx, "conflict", M.geoObjectId, "holding");
       // a restricted-area review on the confirmed place itself (UI-5): no decision could close it after the merge
       const placeTask = await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: A.placeId, context: { reason: "restricted" } });
 
@@ -68,7 +62,7 @@ describe("mergePlaceInto", () => {
       expect(result).toEqual({
         keepGeoObjectId: M.geoObjectId,
         dropGeoObjectId: A.geoObjectId,
-        dismissedTaskIds: [...[conflict.id, uncertain.id].sort(), placeTask.id],
+        dismissedTaskIds: [placeTask.id],
       });
       expect((await tx.select().from(reviewTasks).where(eq(reviewTasks.id, placeTask.id)))[0]).toMatchObject({
         status: "dismissed",
@@ -84,12 +78,6 @@ describe("mergePlaceInto", () => {
       expect((await geoRow(tx, M.geoObjectId)).osmId).toBe((await geoRow(tx, A.geoObjectId)).osmId);
       const mNames = await tx.select({ name: geoNames.name }).from(geoNames).where(eq(geoNames.geoObjectId, M.geoObjectId));
       expect(mNames.map((n) => n.name)).toContain("Vathi Bay");
-
-      const tasks = await tx.select().from(reviewTasks).where(eq(reviewTasks.subjectId, `${A.geoObjectId}:holding`));
-      expect(tasks).toEqual([expect.objectContaining({ status: "dismissed", context: expect.objectContaining({ dismissedReason: "object_ended" }) })]);
-      expect((await tx.select().from(reviewTasks).where(eq(reviewTasks.id, uncertain.id)))[0]!.status).toBe("dismissed");
-      // the surviving object's tasks stay open
-      expect((await tx.select().from(reviewTasks).where(eq(reviewTasks.id, keepTask.id)))[0]!.status).toBe("open");
 
       const [audit] = await tx
         .select({ task: reviewTasks, decision: reviewDecisions })

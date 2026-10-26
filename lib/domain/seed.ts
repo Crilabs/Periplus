@@ -4,7 +4,7 @@ import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, places, type GeoObjectType, type PlaceKind } from "@/lib/db/schema";
 import { exclusionFor, exclusionReason, restrictionHits } from "@/lib/domain/geometry/restrictions";
 import { createReviewTask } from "@/lib/domain/review";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 
 /** Geo object types that are always place candidates. */
 const CANDIDATE_TYPES: GeoObjectType[] = ["bay", "harbour"];

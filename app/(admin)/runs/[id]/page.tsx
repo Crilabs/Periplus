@@ -3,23 +3,14 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 import type { RunStageStatus } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
-import { consolidationBlocked } from "@/lib/domain/consolidation/targets";
-import { extractionRunsOfRun, type ExtractionRunRow } from "@/lib/domain/extraction/run-view";
 import { failedJobsOfRun } from "@/lib/domain/jobs-view";
 import { getRun, type RunStageView, type RunView } from "@/lib/domain/runs";
 import { QUEUES } from "@/lib/jobs/queues";
-import { CONSOLIDATION_GEO_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../../_components/auto-refresh";
 import { Dialog } from "../../_components/dialog";
 import {
-  CONSOLIDATION_SKIP_REASON_LABELS,
-  EXTRACTION_BLOCK_REASON_LABELS,
-  EXTRACTION_PURPOSE_LABELS,
-  EXTRACTION_RUN_STATUS_LABELS,
-  QUOTE_FAILURE_LABELS,
   RUN_KIND_LABELS,
-  RUN_NOTICE_LABELS,
   SCOPE_TYPE_LABELS,
   STAGE_LABELS,
   STAGE_STATUS_LABELS,
@@ -34,18 +25,16 @@ import {
   fmt,
   Mono,
   Notice,
-  numClass,
   PageHeader,
   Panel,
   Stat,
   Table,
   tdClass,
   thClass,
-  TextLink,
   trClass,
   type Tone,
 } from "../../_components/ui";
-import { catchUpConsolidationAction, endRunAction, recheckExtractionRunAction, retryJobAction } from "./actions";
+import { endRunAction, retryJobAction } from "./actions";
 
 /** The tab title: the run's short id (UI-15). */
 export async function generateMetadata({ params }: PageProps<"/runs/[id]">): Promise<Metadata> {
@@ -55,13 +44,6 @@ export async function generateMetadata({ params }: PageProps<"/runs/[id]">): Pro
 const isRetryable = (queue: string) => (QUEUES as readonly string[]).includes(queue);
 
 const STAGE_STATUS_TONES: Record<RunStageStatus, Tone> = { pending: "neutral", running: "accent", finished: "ok" };
-
-const EXTRACTION_STATUS_TONES: Record<ExtractionRunRow["status"], Tone> = {
-  running: "accent",
-  finished: "ok",
-  blocked: "danger",
-  failed: "danger",
-};
 
 /** Small amounts keep four decimals so cent fractions of single model calls stay visible. */
 const eur = (n: number) => fmt.eur(n, n > 0 && n < 0.01 ? 4 : 2);
@@ -95,23 +77,13 @@ function StageProgress({ stage }: { stage: RunStageView }) {
   );
 }
 
-export default async function Page({ params, searchParams }: PageProps<"/runs/[id]">) {
+export default async function Page({ params }: PageProps<"/runs/[id]">) {
   await requireAdmin();
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) notFound();
   const db = getDb();
-  const [run, failedJobs, extractionRuns] = await Promise.all([
-    getRun(db, id.data),
-    failedJobsOfRun(db, id.data),
-    extractionRunsOfRun(db, id.data),
-  ]);
+  const [run, failedJobs] = await Promise.all([getRun(db, id.data), failedJobsOfRun(db, id.data)]);
   if (!run) notFound();
-  const { notice } = await searchParams;
-  const noticeText = typeof notice === "string" && Object.hasOwn(RUN_NOTICE_LABELS, notice) ? RUN_NOTICE_LABELS[notice] : null;
-  const skip = run.consolidationSkip;
-  // While the run is still extracting its extraction runs are open, which is no block yet; a stored skip is one.
-  const settled = skip !== null || (run.status !== "queued" && run.status !== "running");
-  const blocked = settled && run.stages.some((s) => s.stage === CONSOLIDATION_GEO_STAGE) && (await consolidationBlocked(db, run.id));
   const open = run.status === "queued" || run.status === "running";
   const now = new Date();
   const totals = run.stages.reduce(
@@ -152,18 +124,6 @@ export default async function Page({ params, searchParams }: PageProps<"/runs/[i
                   {
                     label: "Stufen",
                     value: <Mono>{run.stages.map((s) => s.stage).join(" → ") || "–"}</Mono>,
-                  },
-                  extractionRuns.length > 0 && {
-                    label: "Extraktionsläufe",
-                    value: (
-                      <ul className="space-y-0.5">
-                        {extractionRuns.map((r) => (
-                          <li key={r.id}>
-                            <Mono>{r.id}</Mono>
-                          </li>
-                        ))}
-                      </ul>
-                    ),
                   },
                   failedJobs.length > 0 && {
                     label: "Fehlgeschlagene Jobs",
@@ -217,46 +177,14 @@ export default async function Page({ params, searchParams }: PageProps<"/runs/[i
       />
 
       <div className="space-y-3">
-        {blocked && (
-          <Notice tone="danger" title="Konsolidierung gesperrt: Belegtreue unter 100 %">
-            Nicht jedes Zitat eines Extraktionslaufs wurde im Text gefunden, oder ein Extraktionslauf ist noch nicht
-            geprüft. Bis dahin konsolidiert dieser Lauf nichts. Unter „Extraktionsläufe“ die Belegtreue
-            neu prüfen.
-          </Notice>
-        )}
-        {noticeText && <Notice tone="warn">{noticeText}</Notice>}
         {run.failureReason && (
           <Notice tone="danger" title="Lauf fehlgeschlagen">
             <span className="break-words">{run.failureReason}</span>
           </Notice>
         )}
-        {skip && (
-          <Notice
-            tone="warn"
-            title={`Konsolidierung übersprungen: ${CONSOLIDATION_SKIP_REASON_LABELS[skip.reason]}`}
-            actions={
-              !skip.catchUpRunId && (
-                <form action={catchUpConsolidationAction}>
-                  <input type="hidden" name="runId" value={run.id} />
-                  <Button type="submit" size="sm">
-                    Konsolidierung nachholen
-                  </Button>
-                </form>
-              )
-            }
-          >
-            <span title={fmt.dateTime(new Date(skip.at))}>Am {fmt.dateTime(new Date(skip.at))}.</span>{" "}
-            {skip.catchUpRunId && (
-              <>
-                Nachgeholt in{" "}
-                <TextLink href={`/runs/${skip.catchUpRunId}`}>Lauf {skip.catchUpRunId.slice(0, 8)}</TextLink>.
-              </>
-            )}
-          </Notice>
-        )}
       </div>
 
-      <div className={cx("grid gap-3 sm:grid-cols-2 xl:grid-cols-4", (blocked || noticeText || run.failureReason || skip) && "mt-6")}>
+      <div className={cx("grid gap-3 sm:grid-cols-2 xl:grid-cols-4", run.failureReason && "mt-6")}>
         <Stat
           label="Fortschritt"
           value={`${finishedStages} / ${run.stages.length}`}
@@ -332,8 +260,6 @@ export default async function Page({ params, searchParams }: PageProps<"/runs/[i
         </Panel>
       </div>
 
-      {extractionRuns.length > 0 && <ExtractionRuns rows={extractionRuns} />}
-
       <Panel
         title="Fehlgeschlagene Jobs"
         description="Jobs, die nach allen automatischen Wiederholungen gescheitert sind. „Erneut“ stellt einen Job wieder in die Warteschlange."
@@ -392,93 +318,3 @@ export default async function Page({ params, searchParams }: PageProps<"/runs/[i
     </>
   );
 }
-
-const pct = (ratio: number) => `${(ratio * 100).toLocaleString("de-DE", { maximumFractionDigits: 4 })} %`;
-const count = (n: number | null) => (n === null ? "–" : fmt.int(n));
-
-/** One row per extraction run: model, purpose, facts, rejected quotes, Belegtreue and status (blocked in red). */
-function ExtractionRuns({ rows }: { rows: ExtractionRunRow[] }) {
-  return (
-    <Panel
-      title="Extraktionsläufe"
-      description="Belegtreue: Anteil der Facts, deren wörtliches Zitat im Text gefunden wurde. Unter 100 % ist der Extraktionslauf gesperrt und wird nicht konsolidiert."
-      className="mt-6"
-      flush
-    >
-      <Table>
-        <thead>
-          <tr>
-            <th className={thClass}>Aufgabe</th>
-            <th className={thClass}>Modell</th>
-            <th className={thClass}>Zweck</th>
-            <th className={`${thClass} text-right`}>Facts</th>
-            <th className={`${thClass} text-right`} title="Facts, deren Zitat schon beim Empfang nicht im Text stand (nicht gespeichert)">
-              Verworfene Zitate
-            </th>
-            <th className={`${thClass} text-right`}>Belegtreue</th>
-            <th className={`${thClass} text-right`}>Kosten</th>
-            <th className={thClass}>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.id} className={trClass}>
-              <td className={tdClass}>{r.task === "extract-route" ? "Routen" : "Facts"}</td>
-              <td className={tdClass}>
-                <Mono>{r.model}</Mono>
-                <div className="text-xs text-muted">
-                  Prompt v{r.promptVersion}, Schema {r.factSchemaVersion}
-                </div>
-              </td>
-              <td className={tdClass}>{EXTRACTION_PURPOSE_LABELS[r.purpose]}</td>
-              <td className={cx(tdClass, numClass)}>
-                {count(r.items)}
-                {r.task === "extract-route" && r.items !== null ? " Stopps" : ""}
-              </td>
-              <td className={cx(tdClass, numClass)}>{count(r.rejectedQuotes)}</td>
-              <td className={cx(tdClass, numClass)}>
-                {r.quoteCheck ? (
-                  <>
-                    <span className={r.quoteCheck.verified < r.quoteCheck.facts ? "text-danger" : undefined}>
-                      {pct(r.quoteCheck.ratio)}
-                    </span>{" "}
-                    <span className="text-xs text-muted">
-                      ({r.quoteCheck.verified}/{r.quoteCheck.facts})
-                    </span>
-                    {r.quoteCheck.failures.length > 0 && (
-                      <span className="block text-xs whitespace-normal text-danger">
-                        {r.quoteCheck.failures
-                          .slice(0, 3)
-                          .map((f) => QUOTE_FAILURE_LABELS[f.reason] ?? f.reason)
-                          .join(", ")}
-                        {r.quoteCheck.failures.length > 3 ? ` … (${r.quoteCheck.failures.length})` : ""}
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-muted">noch nicht geprüft</span>
-                )}
-              </td>
-              <td className={cx(tdClass, numClass)}>{r.costEur === null ? "–" : eur(r.costEur)}</td>
-              <td className={tdClass}>
-                <Badge tone={EXTRACTION_STATUS_TONES[r.status]}>{EXTRACTION_RUN_STATUS_LABELS[r.status]}</Badge>
-                {r.blockedReason && (
-                  <span className="mt-1 block max-w-56 text-xs text-muted">{EXTRACTION_BLOCK_REASON_LABELS[r.blockedReason]}</span>
-                )}
-                {r.status === "blocked" && (
-                  <form action={recheckExtractionRunAction} className="mt-2">
-                    <input type="hidden" name="extractionRunId" value={r.id} />
-                    <Button type="submit" size="sm">
-                      Belegtreue neu prüfen
-                    </Button>
-                  </form>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </Table>
-    </Panel>
-  );
-}
-

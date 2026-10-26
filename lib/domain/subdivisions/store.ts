@@ -286,11 +286,22 @@ export function retiredAreaKeyMessage(key: string): string {
 export async function requireSubdivision(db: Db, key: string, opts: { allowExcluded?: boolean } = {}): Promise<SubdivisionRef> {
   const sub = await subdivisionByKey(db, key);
   if (sub) {
-    if (sub.status === "excluded" && !opts.allowExcluded) throw new Error(`Landesteil ${key} ist ausgeschlossen`);
+    if (sub.status === "excluded" && !opts.allowExcluded) throw new SubdivisionRefused("excluded", `Landesteil ${key} ist ausgeschlossen`);
     return sub;
   }
-  if (Object.hasOwn(getConfig().subdivisions.retiredAreaKeys, key)) throw new Error(retiredAreaKeyMessage(key));
-  throw new Error(`Unbekannter Landesteil ${key}`);
+  if (Object.hasOwn(getConfig().subdivisions.retiredAreaKeys, key)) throw new SubdivisionRefused("retired_area_key", retiredAreaKeyMessage(key));
+  throw new SubdivisionRefused("unknown", `Unbekannter Landesteil ${key}`);
+}
+
+/** Why `requireSubdivision` refused a key; the message is the German text named there. */
+export class SubdivisionRefused extends Error {
+  constructor(
+    readonly reason: "unknown" | "retired_area_key" | "excluded",
+    message: string,
+  ) {
+    super(message);
+    this.name = "SubdivisionRefused";
+  }
 }
 
 /** Keys of the valid, active subdivisions that have at least one valid tile labelled with them, in key order. */

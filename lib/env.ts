@@ -20,18 +20,22 @@ const envSchema = z.object({
   JINA_API_KEY: z.string().min(1).optional(),
   FIRECRAWL_API_KEY: z.string().min(1).optional(),
   CONTACT_EMAIL: z.string().min(1),
+  /** Password of the database role `periplus_mcp_reader` (MCP tool `sql`, runbook „MCP“); unset: the tool is off. */
+  MCP_READER_PASSWORD: z.string().min(1).optional(),
+  /** The production MCP endpoint and a token for it (`research:gate --via-mcp`, local only); unset on the server. */
+  PERIPLUS_MCP_URL: z.string().min(1).optional(),
+  PERIPLUS_MCP_TOKEN: z.string().min(1).optional(),
   /** The Navily spot file, read at runtime only (Grundprinzip 9); unset: comparisons by hand only. */
   NAVILY_SPOTS_PATH: z.string().min(1).optional(),
   /**
-   * Archive writes go under this prefix, reads try it first and fall back to the plain key (a simulation's own
-   * objects never mix with the recorded ones). Required with `PERIPLUS_SIMULATION`.
+   * Archive writes go under this prefix, reads try it first and fall back to the plain key.
    */
   S3_WRITE_PREFIX: z
     .string()
     .regex(S3_WRITE_PREFIX_PATTERN, "must be lower-case segments ending in /, e.g. sim/2026-10-20/")
     .optional(),
-  /** Path of the revisit scenario: this process runs a simulated revisit (only against `periplus_sim` or `*_test`). */
-  PERIPLUS_SIMULATION: z.string().min(1).optional(),
+  /** The commit the image was built from (build arg in CI); unset locally. */
+  GIT_SHA: z.string().optional(),
   /** `playwright`: the worker renders pages in headless Chromium when a crawl rule asks for it; `off`: never. */
   PERIPLUS_RENDERER: z.enum(["playwright", "off"]).default("playwright"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),

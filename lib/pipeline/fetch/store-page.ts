@@ -9,7 +9,7 @@ import { ensureDocument, storeFetched, type StoreOutcome } from "@/lib/domain/do
 import { structuredToMarkdown } from "@/lib/domain/documents/structured";
 import type { Source } from "@/lib/domain/sources/store";
 import { registrableDomain } from "@/lib/domain/sources/urls";
-import { decodeHtml, formatOf, type FetchUrlDeps } from "./url";
+import { decodeHtml, formatOf, type FetchUrlDeps } from "./page";
 
 /** A fetched page body with what the answer said about it, ready to be converted and stored. */
 export type FetchedPage = {
@@ -109,7 +109,6 @@ export async function convertAndStore(
       lastModified: page.lastModified,
       runId: ctx.runId,
     },
-    cfg.chunk,
   );
   return { kind: "stored", documentId, versionId: stored.versionId, outcome: stored.outcome, html, pageUrl };
 }

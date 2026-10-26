@@ -31,12 +31,8 @@ import {
   trClass,
 } from "../../_components/ui";
 import {
-  consolidateTileAction,
-  discoveryForTileAction,
   geometryTileAction,
-  reprocessTileAction,
   seedTileAction,
-  textRunTileAction,
 } from "./actions";
 
 /** The tab title: the tile id (UI-15). */
@@ -71,36 +67,9 @@ const TILE_RUNS: Array<{ name: string; description: string; action: (input: Form
   {
     name: "Geometrie",
     description:
-      "Berechnet für die Orte der Kachel Fetch, Schutz je Sektor, Öffnung zur See und Schwell, danach Profil und Zusammenfassung. Braucht Tiefendaten und Landpolygone.",
+      "Berechnet für die Orte der Kachel Fetch, Schutz je Sektor, Öffnung zur See und Schwell. Braucht Tiefendaten und Landpolygone.",
     action: geometryTileAction,
     button: "Geometrie",
-  },
-  {
-    name: "Quellenfindung",
-    description: "Sucht in den Sprachen des Reviers nach Quellen zur Kachel und legt Quellenvorschläge zur Prüfung an.",
-    action: discoveryForTileAction,
-    button: "Quellenfindung",
-  },
-  {
-    name: "Texte auswerten",
-    description:
-      "Wertet die Texte aus, die Objekte der Kachel erwähnen, dazu die noch offenen Versionen ihrer Quellen, und konsolidiert das Ergebnis.",
-    action: textRunTileAction,
-    button: "Texte auswerten",
-  },
-  {
-    name: "Reprozessieren",
-    description:
-      "Extrahiert jede Erwähnung der Kachel erneut mit dem aktuell konfigurierten Modell, Prompt und Fact-Schema; die alten Facts bleiben.",
-    action: reprocessTileAction,
-    button: "Reprozessieren (Stufen 6–7)",
-  },
-  {
-    name: "Konsolidieren",
-    description:
-      "Berechnet Profile und Zusammenfassungen der gültigen Objekte der Kachel aus den vorhandenen Facts neu und stößt für dünn belegte Orte eine gezielte Quellensuche an.",
-    action: consolidateTileAction,
-    button: "Konsolidieren",
   },
 ];
 

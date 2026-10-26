@@ -24,11 +24,6 @@ async function validObject(tx: Db, configKey: string) {
   return rows[0]!;
 }
 
-async function historyCount(tx: Db, id: string): Promise<number> {
-  const { rows } = await tx.execute<{ n: number }>(sql`select count(*)::int as n from geo_objects_history where row_id = ${id}`);
-  return rows[0]!.n;
-}
-
 async function validNames(tx: Db, id: string) {
   return tx
     .select({ name: geoNames.name, language: geoNames.language, origin: geoNames.origin, isPreferred: geoNames.isPreferred })
@@ -71,9 +66,7 @@ describe("syncCoastSections", () => {
       expect(isPublicId(section.publicId!, "rg")).toBe(true);
       expect((await validNames(tx, section.id)).filter((n) => n.origin === "manual").map((n) => n.language).sort()).toEqual(["de", "el", "en"]);
 
-      const history = await historyCount(tx, section.id);
       expect(await syncCoastSections(tx, "GR-I")).toEqual(first);
-      expect(await historyCount(tx, section.id)).toBe(history);
     });
   });
 
@@ -86,7 +79,6 @@ describe("syncCoastSections", () => {
       const after = await validObject(tx, "XT-COAST/north");
       expect(after).toMatchObject({ id: ids.get("XT-COAST/north"), publicId: before.publicId });
       expect(after.geom).not.toEqual(before.geom);
-      expect(await historyCount(tx, after.id)).toBe(1);
     });
   });
 

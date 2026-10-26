@@ -61,7 +61,8 @@ describe("research config", () => {
 
   it("loads the gate and rejects a released gate without a chosen threshold among the thresholds", () => {
     const c = getConfig().research;
-    expect(c.gate).toEqual({ subdivision: "GR-I", thresholds: [2, 3, 4, 5], released: false, chosenThreshold: null, maxPositionDeviationM: 150, minConfirmed: 25 });
+    expect(c.gate).toEqual({ subdivision: "GR-I", thresholds: [2, 3, 4, 5], released: false, chosenThreshold: null, maxPositionDeviationM: 150, shelterErrorMin: 0.7, minConfirmed: 25, minCoverage: 0.5 });
+    for (const minCoverage of [-0.1, 1.5]) expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, minCoverage } }).success, String(minCoverage)).toBe(false);
     for (const minConfirmed of [0, 1.5]) expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, minConfirmed } }).success, String(minConfirmed)).toBe(false);
     for (const chosenThreshold of [null, 9]) {
       expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, released: true, chosenThreshold } }).success).toBe(false);
@@ -136,5 +137,29 @@ describe("research config", () => {
 
   it("accepts the shipped config", () => {
     expect(researchSchema.safeParse(valid()).success).toBe(true);
+  });
+
+  it("loads the landside start values and rejects a template without {subject} or an unknown language", () => {
+    const c = getConfig().research;
+    expect(c.landside.maxSubjectsPerPlace).toBe(5);
+    expect(c.landside.maxHitsPerSubject).toBe(10);
+    expect(c.landside.settlementMaxM).toBe(10000);
+    expect(c.landside.boatKeywords).toEqual(expect.arrayContaining(["anchored", "Anker", "buoy"]));
+    const noWords = valid();
+    noWords.landside.boatKeywords = [];
+    expect(researchSchema.safeParse(noWords).success).toBe(false);
+    expect(c.landside.templates.map((t) => t.template)).toEqual([
+      "{subject} things to do",
+      "{subject} taverna",
+      "{subject} beach",
+      "{subject} Sehenswürdigkeiten",
+      "{subject} cosa vedere",
+    ]);
+    const bad = valid();
+    bad.landside.templates.push({ template: "things to do", lang: "en" });
+    expect(researchSchema.safeParse(bad).success).toBe(false);
+    const lang = valid();
+    lang.landside.templates.push({ template: "{subject} x", lang: "nl" });
+    expect(researchSchema.safeParse(lang).success).toBe(false);
   });
 });

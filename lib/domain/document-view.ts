@@ -1,9 +1,8 @@
 import { diffLines } from "diff";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
 import {
-  chunks,
   documents,
   documentVersions,
   sources,
@@ -22,9 +21,6 @@ export type DocumentVersionRow = {
   publishedAt: string | null;
   observedAt: string;
   basis: ObservedAtBasis;
-  /** Chunks of the version, and how many of them were carried from the previous version. */
-  chunks: number;
-  carried: number;
   simulated: boolean;
   contentType: string | null;
 };
@@ -44,7 +40,7 @@ export type DocumentDetail = {
   versions: DocumentVersionRow[];
 };
 
-/** A document with its source and its versions (newest first, with chunk counts); null when unknown. */
+/** A document with its source and its versions (newest first); null when unknown. */
 export async function documentDetail(db: Db, id: string): Promise<DocumentDetail | null> {
   const [row] = await db
     .select({
@@ -73,9 +69,6 @@ export async function documentDetail(db: Db, id: string): Promise<DocumentDetail
       basis: documentVersions.observedAtBasis,
       simulated: documentVersions.simulated,
       contentType: documentVersions.contentType,
-      // Spelled out: in a one-table select drizzle leaves column names unqualified, which the subquery would bind to c.
-      chunks: sql<number>`(select count(*)::int from chunks c where c.document_version_id = document_versions.id)`,
-      carried: sql<number>`(select count(*)::int from chunks c where c.document_version_id = document_versions.id and c.carried_from_chunk_id is not null)`,
     })
     .from(documentVersions)
     .where(eq(documentVersions.documentId, id))
@@ -84,12 +77,7 @@ export async function documentDetail(db: Db, id: string): Promise<DocumentDetail
   return {
     document,
     source,
-    versions: versions.map(({ contentHash, ...v }) => ({
-      ...v,
-      hash8: contentHash.slice(0, 8),
-      chunks: Number(v.chunks),
-      carried: Number(v.carried),
-    })),
+    versions: versions.map(({ contentHash, ...v }) => ({ ...v, hash8: contentHash.slice(0, 8) })),
   };
 }
 
@@ -123,45 +111,15 @@ async function markdownOf(archive: Archive, version: VersionKeys): Promise<strin
   return bytes ? new TextDecoder().decode(bytes) : null;
 }
 
-export type VersionChunk = {
-  ordinal: number;
-  heading: string | null;
-  wordCount: number;
-  carried: boolean;
-  embedded: boolean;
-  /** UTF-16 offsets into `markdown`. */
-  charStart: number;
-  charEnd: number;
-};
-
 /**
- * The archived (normalised) Markdown of a version and its chunks by ordinal; null when the version does not belong
- * to the document or its Markdown is missing from the archive.
+ * The archived (normalised) Markdown of a version, read from the archive (no chunks: N6); null when the version does
+ * not belong to the document or its Markdown is missing from the archive.
  */
-export async function versionContent(
-  db: Db,
-  archive: Archive,
-  documentId: string,
-  versionId: string,
-): Promise<{ markdown: string; chunks: VersionChunk[] } | null> {
+export async function versionContent(db: Db, archive: Archive, documentId: string, versionId: string): Promise<{ markdown: string } | null> {
   const version = await documentVersion(db, documentId, versionId);
   if (!version) return null;
   const markdown = await markdownOf(archive, version);
-  if (markdown === null) return null;
-  const rows = await db
-    .select({
-      ordinal: chunks.ordinal,
-      heading: chunks.heading,
-      wordCount: chunks.wordCount,
-      carried: sql<boolean>`${chunks.carriedFromChunkId} is not null`,
-      embedded: sql<boolean>`${chunks.embedding} is not null`,
-      charStart: chunks.charStart,
-      charEnd: chunks.charEnd,
-    })
-    .from(chunks)
-    .where(eq(chunks.documentVersionId, versionId))
-    .orderBy(asc(chunks.ordinal));
-  return { markdown, chunks: rows };
+  return markdown === null ? null : { markdown };
 }
 
 export type DiffLine = { kind: "same" | "added" | "removed"; text: string };

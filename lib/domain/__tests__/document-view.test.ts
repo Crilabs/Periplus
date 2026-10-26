@@ -1,14 +1,11 @@
-import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { chunks, sources } from "@/lib/db/schema";
+import { sources } from "@/lib/db/schema";
 import { documentDetail, versionContent, versionDiff } from "@/lib/domain/document-view";
 import { ensureDocument, storeFetched, type FetchedContent } from "@/lib/domain/documents/store";
 import { newId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
-
-const cfg = { targetWords: 500, maxWords: 800, maxOverlapWords: 200 };
 
 const sentence = (topic: string, n: number) =>
   Array.from({ length: n }, (_, i) => `The ${topic} anchorage offers sand and weed at five metres, line ${i}.`).join(" ");
@@ -54,12 +51,12 @@ const lines = (changed?: string) =>
   Array.from({ length: 20 }, (_, i) => (i === 9 && changed ? changed : `Line ${i + 1}`)).join("\n\n");
 
 describe("documentDetail", () => {
-  it("lists the versions newest first with chunk counts", () =>
+  it("lists the versions newest first", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
       const { documentId, sourceId, domain, url } = await newDocument(tx);
-      const first = await storeFetched(tx, archive, documentId, content(guide("east"), at(0)), cfg);
-      const second = await storeFetched(tx, archive, documentId, content(guide("changed east"), at(10)), cfg);
+      const first = await storeFetched(tx, archive, documentId, content(guide("east"), at(0)));
+      const second = await storeFetched(tx, archive, documentId, content(guide("changed east"), at(10)));
 
       const detail = (await documentDetail(tx, documentId))!;
       expect(detail.document).toMatchObject({ id: documentId, url, status: "active", currentVersionId: second.versionId });
@@ -71,8 +68,6 @@ describe("documentDetail", () => {
         language: "en",
         publishedAt: "2026-05-01",
         basis: "published",
-        chunks: 4,
-        carried: 3,
         simulated: false,
       });
       expect(detail.versions[0]!.hash8).toMatch(/^[0-9a-f]{8}$/);
@@ -81,23 +76,15 @@ describe("documentDetail", () => {
 });
 
 describe("versionContent", () => {
-  it("returns the markdown and the chunks of a version; a version of another document is null", () =>
+  it("reads the markdown of a version from the archive, without chunks; a version of another document is null", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
       const { documentId } = await newDocument(tx);
       const other = await newDocument(tx);
-      const v = await storeFetched(tx, archive, documentId, content(guide("east"), at(0)), cfg);
-      const foreign = await storeFetched(tx, archive, other.documentId, content(guide("west"), at(0)), cfg);
-      const [firstChunk] = await tx.select({ id: chunks.id }).from(chunks).where(eq(chunks.documentVersionId, v.versionId)).orderBy(chunks.ordinal);
-      await tx.update(chunks).set({ embedding: Array.from({ length: 1024 }, () => 0.1), embeddingModel: "voyage-3.5" }).where(eq(chunks.id, firstChunk!.id));
+      const v = await storeFetched(tx, archive, documentId, content(guide("east"), at(0)));
+      const foreign = await storeFetched(tx, archive, other.documentId, content(guide("west"), at(0)));
 
-      const result = (await versionContent(tx, archive, documentId, v.versionId))!;
-      expect(result.markdown).toContain("## East bay");
-      expect(result.chunks.map((c) => c.ordinal)).toEqual([0, 1, 2, 3]);
-      expect(result.chunks[0]).toMatchObject({ embedded: true, carried: false });
-      expect(result.chunks[2]).toMatchObject({ heading: expect.stringContaining("East bay"), embedded: false });
-      for (const c of result.chunks) expect(result.markdown.slice(c.charStart, c.charEnd).length).toBeGreaterThan(0);
-
+      expect(await versionContent(tx, archive, documentId, v.versionId)).toEqual({ markdown: expect.stringContaining("## East bay") });
       expect(await versionContent(tx, archive, documentId, foreign.versionId)).toBeNull();
       expect(await versionContent(tx, archive, documentId, newId())).toBeNull();
     }));
@@ -109,9 +96,9 @@ describe("versionDiff", () => {
       const archive = memoryArchive();
       const { documentId } = await newDocument(tx);
       const other = await newDocument(tx);
-      const from = await storeFetched(tx, archive, documentId, content(lines(), at(0)), cfg);
-      const to = await storeFetched(tx, archive, documentId, content(lines("Line ten, changed"), at(10)), cfg);
-      const foreign = await storeFetched(tx, archive, other.documentId, content(lines(), at(0)), cfg);
+      const from = await storeFetched(tx, archive, documentId, content(lines(), at(0)));
+      const to = await storeFetched(tx, archive, documentId, content(lines("Line ten, changed"), at(10)));
+      const foreign = await storeFetched(tx, archive, other.documentId, content(lines(), at(0)));
 
       const diff = (await versionDiff(tx, archive, documentId, from.versionId, to.versionId))!;
       expect(diff.filter((d) => d.kind === "removed")).toEqual([{ kind: "removed", text: "Line 10" }]);

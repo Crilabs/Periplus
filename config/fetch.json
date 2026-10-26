@@ -12,7 +12,6 @@
   "goneAfter": 2,
   "trackingParams": ["utm_*", "fbclid", "gclid", "msclkid", "mc_cid", "mc_eid"],
   "languages": { "deu": "de", "eng": "en", "ell": "el", "ita": "it", "hrv": "hr", "fra": "fr" },
-  "chunk": { "targetWords": 500, "maxWords": 800, "maxOverlapWords": 200 },
   "pdf": {
     "extractor": "pdftotext",
     "modelFallback": true,

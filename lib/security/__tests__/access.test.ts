@@ -41,17 +41,17 @@ describe("decideAccess", () => {
     expect(decideAccess({ pathname: "/nope", session: claims, hasBearer: false })).toEqual({ action: "allow" });
   });
 
-  it("denies /api/v1/ping without bearer with 401 and unknown api route with 404", () => {
-    expect(decideAccess({ pathname: "/api/v1/ping", session: null, hasBearer: false })).toEqual({
+  it("denies /api/v4/ping without bearer with 401 and unknown api route with 404", () => {
+    expect(decideAccess({ pathname: "/api/v4/ping", session: null, hasBearer: false })).toEqual({
       action: "deny",
       status: 401,
     });
-    expect(decideAccess({ pathname: "/api/v1/ping", session: null, hasBearer: true })).toEqual({ action: "allow" });
-    expect(decideAccess({ pathname: "/api/v1/unknown", session: null, hasBearer: true })).toEqual({
+    expect(decideAccess({ pathname: "/api/v4/ping", session: null, hasBearer: true })).toEqual({ action: "allow" });
+    expect(decideAccess({ pathname: "/api/v4/unknown", session: null, hasBearer: true })).toEqual({
       action: "deny",
       status: 404,
     });
-    expect(decideAccess({ pathname: "/api/v1/unknown", session: null, hasBearer: false })).toEqual({
+    expect(decideAccess({ pathname: "/api/v4/unknown", session: null, hasBearer: false })).toEqual({
       action: "deny",
       status: 401,
     });
@@ -73,7 +73,7 @@ describe("decideAccess", () => {
   });
 
   it("never treats a session as API credentials", () => {
-    expect(decideAccess({ pathname: "/api/v1/ping", session: claims, hasBearer: false })).toEqual({
+    expect(decideAccess({ pathname: "/api/v4/ping", session: claims, hasBearer: false })).toEqual({
       action: "deny",
       status: 401,
     });

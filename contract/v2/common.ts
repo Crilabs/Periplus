@@ -6,22 +6,20 @@ import { z } from "zod";
  * schemas carry everything else.
  */
 
-/** The files of a package, in manifest order; `changes.json` from the second delivery on. */
+/** The files of a package, in manifest order (contract 4.0: no highlights, no change feed). */
 export const CONTRACT_FILES = [
   "manifest.json",
   "spots.json",
-  "highlights.json",
   "regions.json",
   "coast.geojson",
   "weather-points.json",
-  "changes.json",
 ] as const;
 export type ContractFile = (typeof CONTRACT_FILES)[number];
 
 const ULID = "[0-9A-HJKMNP-TV-Z]{26}";
 
 /** A public id `<prefix>_<ulid>` (Crockford base 32). */
-export const publicId = (prefix: "sp" | "hl" | "rg" | "ar" | "sd") =>
+export const publicId = (prefix: "sp" | "hl" | "rg" | "ar" | "sd" | "fc") =>
   z.string().regex(new RegExp(`^${prefix}_${ULID}$`), `must be ${prefix}_<ulid>`);
 export const weatherPointId = z.string().regex(new RegExp(`^wp_${ULID}$`), "must be wp_<ulid>");
 
@@ -66,16 +64,6 @@ const canonicalSources = PROVENANCE_SOURCES.map(
 export const combinedSource = z
   .string()
   .regex(new RegExp(`^(?:${canonicalSources})$`), "must be distinct provenance sources joined with + in contract order");
-export const sourceKind = z.enum([
-  "pilotGuide",
-  "tripReport",
-  "forum",
-  "marina",
-  "authority",
-  "dataset",
-  "travelGuide",
-  "other",
-]);
 /**
  * A public web link: http or https only (an internal `upload://` document or a `javascript:` link never leaves
  * Periplus). The pattern carries the rule into the JSON schema; the refine applies it to the raw string in zod too,
@@ -85,22 +73,10 @@ export const httpUrl = z
   .url({ protocol: /^https?$/ })
   .refine((v) => /^https?:\/\//.test(v), "must be an http(s) URL")
   .meta({ pattern: "^https?://" });
-/** A source for display: URL and kind only, never a passage. */
-export const sourceRef = z.strictObject({ url: httpUrl, kind: sourceKind, observedAt: isoDate });
 export const textDe = z.strictObject({ de: z.string().min(1) });
 export const highlightCategory = z.enum(["food", "supply", "beach", "nature", "active", "culture", "town", "quiet"]);
-
-/** Version of the contract object (not of the internal profile) and the date it holds from. */
-export const versionFields = {
-  profileVersion: z
-    .number()
-    .int()
-    .min(1)
-    .describe(
-      "Version of the contract object; rises only when the delivered object changes. Compare versions within one subdivision's feed only: an object moved to another subdivision keeps counting there, and the old subdivision's removal may carry a higher version than the new subdivision's live object",
-    ),
-  validFrom: isoDate,
-};
+/** What can be reachable on land from a spot (contract 4.0): the highlight categories plus bakery and transport. */
+export const nearbyCategory = z.enum([...highlightCategory.options, "bakery", "transport"]);
 
 /** GeoJSON position `[lon, lat]`. */
 const position = z.tuple([longitude, latitude]);
@@ -117,10 +93,20 @@ export const geoMultiLineString = z.strictObject({
 });
 export const areal = z.discriminatedUnion("type", [geoPolygon, geoMultiPolygon]);
 
+/** The 16 hex characters of a radius package's key (spec 18). */
+export const RADIUS_KEY_PATTERN = /^[0-9a-f]{16}$/;
+export const radiusKey = z.string().regex(RADIUS_KEY_PATTERN, "must be 16 lower-case hex characters");
+
+/** What an object file belongs to (since contract 3.0): a subdivision at a data version, or a radius package by its key. */
+export const fileScope = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("subdivision"), id: publicId("sd"), dataVersion: z.number().int().min(1) }),
+  z.strictObject({ type: z.literal("radius"), key: radiusKey }),
+]);
+export type FileScope = z.infer<typeof fileScope>;
+
 /** Envelope of every object file of a package (all but manifest and coast). */
 export const fileEnvelope = {
-  schemaVersion: z.literal("2.3"),
-  subdivision: publicId("sd"),
-  dataVersion: z.number().int().min(1),
+  schemaVersion: z.literal("4.0"),
+  scope: fileScope,
   generatedAt: isoDateTime,
 };

@@ -1,14 +1,15 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { createConverters } from "@/lib/adapters/fetch";
+import { createConverters, type RenderPage } from "@/lib/adapters/fetch";
+import { getRenderer } from "@/lib/adapters/fetch/browser";
 import { getCrawlTransport } from "@/lib/adapters/fetch/guarded";
 import { getTransport } from "@/lib/adapters/http";
 import { runPdftotext } from "@/lib/adapters/pdf";
 import { getArchive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
 import { runs } from "@/lib/db/schema";
-import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
-import { getEnv } from "@/lib/env";
+import { consolidationConfigFor } from "@/lib/domain/rules/active";
+import { getEnv, type Env } from "@/lib/env";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { assessPages, planResearchAssess, RESEARCH_ASSESS_QUEUE, RESEARCH_ASSESS_STAGE } from "@/lib/pipeline/research/assess";
@@ -24,10 +25,31 @@ import {
   RESEARCH_ROUTES_STAGE,
 } from "@/lib/pipeline/research/routes";
 import { fetchResearchPage, planResearchFetch, RESEARCH_FETCH_STAGE } from "@/lib/pipeline/research/fetch";
-import { buildBerthState, bundleFactsJob, planResearchState, RESEARCH_STATE_QUEUE, RESEARCH_STATE_STAGE } from "@/lib/pipeline/research/state";
+import {
+  buildBerthState,
+  bundleFactsJob,
+  planResearchState,
+  planResearchStateFacts,
+  refreshNearby,
+  RESEARCH_STATE_FACTS_QUEUE,
+  RESEARCH_STATE_FACTS_STAGE,
+  RESEARCH_STATE_QUEUE,
+  RESEARCH_STATE_STAGE,
+} from "@/lib/pipeline/research/state";
+import { planLandsideSearch, RESEARCH_LANDSIDE_SEARCH_STAGE, searchLandside } from "@/lib/pipeline/research/landside-search";
+import {
+  extractLandsideUnits,
+  planLandsideExtract,
+  RESEARCH_LANDSIDE_EXTRACT_QUEUE,
+  RESEARCH_LANDSIDE_EXTRACT_STAGE,
+} from "@/lib/pipeline/research/landside-extract";
 import { planResearchSearch, RESEARCH_SEARCH_STAGE, searchCandidate } from "@/lib/pipeline/research/search";
 import { modelClientFor } from "./ai-batch";
-import { crawlRenderPage } from "./fetch";
+
+/** The page renderer of this process: Playwright unless `PERIPLUS_RENDERER=off` (then `render: auto` never renders). */
+function crawlRenderPage(env: Pick<Env, "PERIPLUS_RENDERER"> = getEnv()): RenderPage | undefined {
+  return env.PERIPLUS_RENDERER === "off" ? undefined : getRenderer().render;
+}
 
 /** Stage `research.search`: one job per candidate of the run (`run.params.subdivisionKey` or `placeIds`). */
 export const researchSearchStage: StageDefinition = {
@@ -85,6 +107,27 @@ export const researchStateStage: StageDefinition = {
   plan: (db, run) => planResearchState(db, run),
 };
 
+/** Stage `research.state_facts`: only the fact bundling of the run's confirmed berths (the end of the follow-up chain). */
+export const researchStateFactsStage: StageDefinition = {
+  name: RESEARCH_STATE_FACTS_STAGE,
+  queue: RESEARCH_STATE_FACTS_QUEUE,
+  plan: (db, run) => planResearchStateFacts(db, run),
+};
+
+/** Stage `research.landside_search`: one job per confirmed place of the run (follow-up chain only). */
+export const researchLandsideSearchStage: StageDefinition = {
+  name: RESEARCH_LANDSIDE_SEARCH_STAGE,
+  queue: "research.landside_search",
+  plan: (db, run) => planLandsideSearch(db, run),
+};
+
+/** Stage `research.landside_extract`: the landside units of the run's confirmed places, as message batches. */
+export const researchLandsideExtractStage: StageDefinition = {
+  name: RESEARCH_LANDSIDE_EXTRACT_STAGE,
+  queue: RESEARCH_LANDSIDE_EXTRACT_QUEUE,
+  plan: (db, run) => planLandsideExtract(db, run, getConfig(), getArchive()),
+};
+
 const runIdOf = (data: JobData): string => z.string().min(1).parse(data.runId);
 
 const searchJobSchema = z.object({ placeId: z.uuid() });
@@ -103,7 +146,6 @@ export const researchFetchHandler: JobHandler<JobData> = async (data, ctx) => {
   const { url } = fetchJobSchema.parse(data);
   const runId = runIdOf(data);
   const cfg = getConfig().fetch;
-  // No simulation branch: a research fetch always goes to the real web (`fetchResearchPage` does not read `deps.simulated`).
   const deps = {
     transport: getCrawlTransport(),
     converters: createConverters({ transport: getTransport(), renderPage: crawlRenderPage(), cfg }),
@@ -195,7 +237,35 @@ export const researchStateHandler: JobHandler<JobData> = async (data, ctx) => {
   const { runId, placeId } = stateBuildSchema.parse(data);
   const [run] = await ctx.db.select({ params: runs.params }).from(runs).where(eq(runs.id, runId));
   if (!run) throw new Error(`run ${runId} does not exist`);
-  const rules = await consolidationConfigFor(ctx.db, (run.params as Record<string, unknown>).rulesVersion);
+  const rules = consolidationConfigFor((run.params as Record<string, unknown>).rulesVersion);
   const result = await buildBerthState(ctx.db, placeId, { runId, rules });
   ctx.log.info({ placeId, ...result }, "berth state");
+};
+
+/** Job of `research.state_facts`: a job with `placeId` refreshes the berth's `nearby`; one with `placeIds` sends those berths' free facts to `bundle-facts` as a message batch (also the follow-on job). */
+export const researchStateFactsHandler: JobHandler<JobData> = async (data, ctx) => {
+  if (!Array.isArray(data.placeIds)) {
+    const { placeId } = z.object({ placeId: z.uuid() }).parse(data);
+    ctx.log.info({ placeId, ...(await refreshNearby(ctx.db, placeId)) }, "nearby refreshed");
+    return;
+  }
+  const job = stateBundleSchema.parse(data);
+  const result = await bundleFactsJob(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss }, job, RESEARCH_STATE_FACTS_QUEUE);
+  ctx.log.info({ places: job.placeIds.length, ...result }, "fact bundling batch submitted");
+};
+
+const landsideSearchSchema = z.object({ placeId: z.uuid() });
+
+/** Searches the landside queries of one confirmed berth and records the hits (purpose `landside`). */
+export const researchLandsideSearchHandler: JobHandler<JobData> = async (data, ctx) => {
+  const { placeId } = landsideSearchSchema.parse(data);
+  const result = await searchLandside(ctx.db, placeId, { transport: getTransport(), archive: getArchive() }, { db: ctx.db, runId: runIdOf(data), stage: data.stage });
+  ctx.log.info({ placeId, ...result }, "landside searched");
+};
+
+/** Sends one job's landside units to `extract-landside` as a message batch; the poll job stores the facts. */
+export const researchLandsideExtractHandler: JobHandler<JobData> = async (data, ctx) => {
+  const job = extractJobSchema.parse(data);
+  const result = await extractLandsideUnits(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss, archive: getArchive() }, job);
+  ctx.log.info({ units: job.unitIds.length, ...result }, "landside extraction batch submitted");
 };

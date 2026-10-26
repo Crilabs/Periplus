@@ -18,6 +18,8 @@ export function decideAccess(input: { pathname: string; session: SessionClaims |
   if (path === null) return { action: "deny", status: 404 };
 
   const match = matchRoute(path);
+  // The MCP route answers its own 401 (with its text and WWW-Authenticate) and its 403 for browsers.
+  if (match?.rule.kind === "mcp") return { action: "allow" };
   if (isApiPath(path) || match?.rule.kind === "api") {
     if (!input.hasBearer) return { action: "deny", status: 401 };
     if (match?.rule.kind !== "api") return { action: "deny", status: 404 };

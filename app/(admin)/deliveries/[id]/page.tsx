@@ -3,43 +3,29 @@ import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
-import { deliveryArchive } from "@/lib/domain/delivery/archive";
 import type { Finding } from "@/lib/domain/delivery/validate";
 import { isContractFile } from "@/lib/domain/delivery/read";
 import { deliveryDetail } from "@/lib/domain/delivery/view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import {
-  CHANGE_EVENT_LABELS,
-  CHANGE_OBJECT_TYPE_LABELS,
   CHECK_LABELS,
   CONTRACT_FILE_LABELS,
   DELIVERY_STATUS_LABELS,
-  SEVERITY_LABELS,
 } from "../../_components/labels";
 import {
   Badge,
   buttonClass,
-  cx,
   DescriptionList,
   EmptyState,
   fmt,
   Mono,
-  Notice,
-  numClass,
   PageHeader,
   Panel,
-  Table,
-  tdClass,
   TextLink,
-  thClass,
-  trClass,
-  type Tone,
 } from "../../_components/ui";
 import { DELIVERY_STATUS_TONES } from "../status";
 
 export const metadata: Metadata = { title: "Lieferung" };
-
-const SEVERITY_TONES: Record<"info" | "notable" | "safety", Tone> = { info: "neutral", notable: "warn", safety: "danger" };
 
 const bytes = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
@@ -47,9 +33,9 @@ export default async function Page({ params }: PageProps<"/deliveries/[id]">) {
   await requireAdmin();
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) notFound();
-  const detail = await deliveryDetail(getDb(), deliveryArchive(), id.data);
+  const detail = await deliveryDetail(getDb(), id.data);
   if (!detail) notFound();
-  const { row, report, changes, files, objectLinks } = detail;
+  const { row, report, files, objectLinks } = detail;
   const failed = report.checks.filter((c) => !c.ok).length;
   const objectLink = (objectId: string | null): ReactNode =>
     objectId === null ? null : objectLinks[objectId] ? (
@@ -106,62 +92,6 @@ export default async function Page({ params }: PageProps<"/deliveries/[id]">) {
             description="Was beim Bau ausgelassen oder verworfen wurde. Warnungen blockieren das Paket nicht."
           >
             {report.warnings.length === 0 ? <p className="text-sm text-muted">Keine Warnungen.</p> : <Findings findings={report.warnings} objectLink={objectLink} />}
-          </Panel>
-
-          <Panel
-            title={row.status === "rejected" ? "Diff zur Vorversion" : "Änderungen"}
-            description={
-              changes === null
-                ? undefined
-                : row.status === "rejected"
-                  ? "Was dieses Paket gegenüber dem letzten gültigen geändert hätte (changes.json)."
-                  : "Die Objekte, deren Vertragsversion gestiegen ist (changes.json)."
-            }
-            flush
-          >
-            {detail.archiveError ? (
-              <div className="p-4">
-                <Notice tone="danger" title="Änderungsdatei nicht lesbar">
-                  Die gespeicherte changes.json fehlt im Archiv oder passt nicht zu ihrem Hash. Die Dateien lassen sich dann auch nicht herunterladen.
-                </Notice>
-              </div>
-            ) : changes === null ? (
-              <EmptyState title="Keine Änderungsdatei">
-                {row.status === "unchanged" ? "Ein unverändertes Paket speichert keine Dateien." : "Das erste Paket eines Landesteils hat keine changes.json."}
-              </EmptyState>
-            ) : changes.length === 0 ? (
-              <EmptyState title="Keine Änderungen" />
-            ) : (
-              <Table>
-                <thead>
-                  <tr>
-                    <th className={thClass}>Ereignis</th>
-                    <th className={thClass}>Objekt</th>
-                    <th className={thClass}>Schwere</th>
-                    <th className={thClass}>Felder</th>
-                    <th className={thClass}>Zusammenfassung</th>
-                    <th className={cx(thClass, "text-right")}>Version</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {changes.map((c) => (
-                    <tr key={c.objectId} className={trClass}>
-                      <td className={tdClass}>{CHANGE_EVENT_LABELS[c.event]}</td>
-                      <td className={tdClass}>
-                        <span className="mr-2 text-xs text-muted">{CHANGE_OBJECT_TYPE_LABELS[c.objectType]}</span>
-                        {objectLink(c.objectId)}
-                      </td>
-                      <td className={tdClass}>
-                        <Badge tone={SEVERITY_TONES[c.severity]}>{SEVERITY_LABELS[c.severity]}</Badge>
-                      </td>
-                      <td className={cx(tdClass, "font-mono text-xs")}>{c.fields.join(", ") || "–"}</td>
-                      <td className={cx(tdClass, "min-w-56")}>{c.summary.de}</td>
-                      <td className={cx(tdClass, numClass)}>{c.profileVersion}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-            )}
           </Panel>
         </div>
 

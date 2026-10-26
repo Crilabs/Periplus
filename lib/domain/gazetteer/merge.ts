@@ -2,9 +2,7 @@ import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { getConfig, type GazetteerConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, places, reviewTasks, type GeoObjectType, type GeoOrigin } from "@/lib/db/schema";
-import { dismissTasks, lockOpenPlaceTasks } from "@/lib/domain/consolidation/task-locks";
-import { levelFor } from "@/lib/domain/facts/levels";
-import { dropHighlightSelectionsOf } from "@/lib/domain/highlights/selections";
+import { dismissTasks, lockOpenPlaceTasks } from "@/lib/domain/review/task-locks";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
 import { decideReviewTask, TaskNotOpen } from "@/lib/domain/review-decisions";
 import { addNames, ensureFallbackNames, isGreek, normalizeName, transliterateElot743 } from "./names";
@@ -204,19 +202,18 @@ export async function openPairTask(
 /**
  * Decides every open pair task that `autoPairDecision` knows the answer to (by `AUTO_DECIDER`, oldest first, one
  * transaction per task), for pair tasks opened before the rule existed. A task one of whose objects ended meanwhile
- * (merged by an earlier decision of the same pass) is dismissed (`object_ended`). Returns the counts and the objects
- * that kept a merged object and take facts (to consolidate: the merged object may have brought facts).
+ * (merged by an earlier decision of the same pass) is dismissed (`object_ended`). Returns the counts.
  */
 export async function autoDecideOpenPairTasks(
   db: Db,
   rules: MergeRules,
-): Promise<{ same: number; distinct: number; dismissed: number; open: number; kept: string[] }> {
+): Promise<{ same: number; distinct: number; dismissed: number; open: number }> {
   const tasks = await db
     .select({ id: reviewTasks.id, subjectId: reviewTasks.subjectId, context: reviewTasks.context })
     .from(reviewTasks)
     .where(and(eq(reviewTasks.kind, "place_candidate"), eq(reviewTasks.subjectType, "geo_object_pair"), eq(reviewTasks.status, "open")))
     .orderBy(reviewTasks.createdAt, reviewTasks.id);
-  const result = { same: 0, distinct: 0, dismissed: 0, open: 0, kept: [] as string[] };
+  const result = { same: 0, distinct: 0, dismissed: 0, open: 0 };
   for (const task of tasks) {
     const ids = task.subjectId.split(":");
     const context = task.context as { similarity?: unknown; source?: unknown };
@@ -247,18 +244,15 @@ export async function autoDecideOpenPairTasks(
       result.open++;
       continue;
     }
-    let consolidate: { geoObjectId: string } | null;
     try {
-      ({ consolidate } = await decideReviewTask(db, { taskId: task.id, decision: { action }, decidedBy: AUTO_DECIDER }));
+      await decideReviewTask(db, { taskId: task.id, decision: { action }, decidedBy: AUTO_DECIDER });
     } catch (e) {
       // a person decided it meanwhile
       if (e instanceof TaskNotOpen) continue;
       throw e;
     }
     result[action]++;
-    if (consolidate && (await levelFor(db, consolidate.geoObjectId)) !== null) result.kept.push(consolidate.geoObjectId);
   }
-  result.kept = [...new Set(result.kept)];
   return result;
 }
 
@@ -353,8 +347,6 @@ export async function mergeGeoObjects(db: Db, keepId: string, dropId: string): P
       .update(geoObjects)
       .set({ mergedIntoId: keepId, validTo: sql`current_date`, updatedAt: sql`now()` })
       .where(eq(geoObjects.id, dropId));
-    // the dropped object neither selects nor is a highlight any more (spec 16)
-    await dropHighlightSelectionsOf(tx, dropId);
     const takeOver = {
       ...(keep.osmId === null && drop.osmId !== null ? { osmId: drop.osmId } : {}),
       ...(keep.wikidataId === null && drop.wikidataId !== null ? { wikidataId: drop.wikidataId } : {}),

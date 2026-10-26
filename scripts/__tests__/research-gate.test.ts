@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { geoObjects, reviewTasks } from "@/lib/db/schema";
+import { berthStates, geoObjects, reviewTasks } from "@/lib/db/schema";
 import type { NavilySpot } from "@/lib/domain/quality/navily-sample";
 import { loadNavilySpots } from "@/lib/domain/quality/navily-sample";
 import { newId } from "@/lib/domain/ids";
@@ -15,7 +15,9 @@ import { insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { signalPage } from "@/test/research-signals";
 import { insertTestSubdivision, insertTestTile } from "@/test/text";
-import { isInsideRepo, parseArgs, runGate, type GateArgs } from "../research-gate";
+import { configHash } from "@/lib/domain/mcp/version";
+import { gateConfigOf, loadGateInput } from "@/lib/domain/research/gate-report";
+import { isInsideRepo, parseArgs, runGate, runGateViaMcp, type GateArgs, type McpCall } from "../research-gate";
 
 /* The gate CLI against real Postgres with synthetic spots in a temp dir; the invented names must never reach the report. */
 
@@ -30,7 +32,7 @@ afterAll(async () => {
 const spot = (over: Partial<NavilySpot>): NavilySpot => ({ lat: 35.2, lon: 21.0, prot: null, seabeds: null, name: null, kind: "mooring", type: null, water: null, shop: null, ...over });
 const INVENTED = /Zzyzx|Qwoxx|Vrrmpf|\b35\.2\d*|\b21\.\d+|\b25\.\d+/;
 
-type SetupOpts = { wrongKind?: boolean; knownDomains?: number; signals?: boolean; knownLat?: number; edge?: boolean; unbacked?: boolean; unseeded?: boolean };
+type SetupOpts = { wrongKind?: boolean; knownDomains?: number; signals?: boolean; knownLat?: number; edge?: boolean; unbacked?: boolean; unseeded?: boolean; shelter?: number; prot?: string[]; noStateRow?: boolean; extraSpots?: NavilySpot[] };
 
 async function setup(tx: Db, o: SetupOpts = {}) {
   const key = `XT-${newId()}`;
@@ -46,6 +48,12 @@ async function setup(tx: Db, o: SetupOpts = {}) {
   if (o.unseeded) await insertTestTile(tx, tileIdFor(21.4, 35.2), null, sub.id);
   const known = await place("Zzyzx Cove", 21.0, o.knownDomains ?? 2, o.knownLat);
   const unknown = await place("Qwoxx Bay", 21.05, 2);
+  if (o.shelter !== undefined) {
+    await tx.insert(berthStates).values({
+      placeId: known.placeId, gaps: [], facts: [], landing: [], nearby: [],
+      core: { "shelter.N": { value: o.shelter, confidence: 0.8, origin: "computed", observedAt: null, factIds: [] } },
+    });
+  }
   const wrong = o.wrongKind ? await place("Wrxxy Pier", 21.15, 2) : null;
   // just inside the tile's west edge (lon 21.0); its spot lies about 90 m west, outside the subdivision's tiles
   const edge = o.edge ? await place("Zzyzx Edge", 21.0008, 2, 35.1) : null;
@@ -58,14 +66,15 @@ async function setup(tx: Db, o: SetupOpts = {}) {
     spotFile,
     JSON.stringify([
       spot({ name: "Elsewhere Bight", lon: 25.5 }), // outside the subdivision's tiles, first: filtered and file indexes differ
-      spot({ name: "Zzyzx Cove" }),
+      spot({ name: "Zzyzx Cove", prot: o.prot ?? null }),
       spot({ name: "Vrrmpf Haven", lon: 21.1 }),
       ...(wrong ? [spot({ name: "Wrxxy Pier", lon: 21.15, kind: "port" })] : []),
+      ...(o.extraSpots ?? []),
       ...(o.unseeded ? [spot({ name: "Vrrmpf Far", lon: 21.4 })] : []),
       ...(edge ? [spot({ name: "Zzyzx Edge", lon: 20.9998, lat: 35.1 })] : []),
     ]),
   );
-  const args: GateArgs = { subdivision: key, navily: spotFile, outDir: path.join(dir, "lists"), report: path.join(dir, "report", "n3-tor.md"), syncConflicts: false };
+  const args: GateArgs = { subdivision: key, navily: spotFile, outDir: path.join(dir, "lists"), report: path.join(dir, "report", "n3-tor.md"), syncConflicts: false, viaMcp: false };
   return { key, known, unknown, wrong, edge, unbacked, args, dir, spots: await loadNavilySpots(spotFile) };
 }
 
@@ -79,12 +88,81 @@ describe("research-gate parseArgs", () => {
     expect(d.outDir.startsWith(os.tmpdir())).toBe(true);
   });
 
+  it("knows --via-mcp, once", () => {
+    expect(parseArgs(["--subdivision", "GR-I", "--via-mcp"], { NAVILY_SPOTS_PATH: "/x" })).toMatchObject({ viaMcp: true });
+    expect(parseArgs(["--subdivision", "GR-I"], { NAVILY_SPOTS_PATH: "/x" })).toMatchObject({ viaMcp: false });
+    expect(() => parseArgs(["--subdivision", "a", "--via-mcp", "--via-mcp"], { NAVILY_SPOTS_PATH: "/x" })).toThrow(/usage/);
+  });
+
   it("aborts without subdivision or file, on unknown or doubled flags", () => {
     expect(() => parseArgs(["--navily", "/x"], {})).toThrow(/usage/);
     expect(() => parseArgs(["--subdivision", "a"], {})).toThrow(/NAVILY_SPOTS_PATH/);
     expect(() => parseArgs(["--subdivision", "a", "--bogus", "b"], { NAVILY_SPOTS_PATH: "/x" })).toThrow(/usage/);
     expect(() => parseArgs(["--subdivision", "a", "--sync-conflicts", "--sync-conflicts"], { NAVILY_SPOTS_PATH: "/x" })).toThrow(/usage/);
   });
+});
+
+/** A fake MCP client answering `gate_input` from the test database (as the server would) and recording every call. */
+function fakeMcp(tx: Db, serverCfg: typeof cfg, sha: string | null = "abc1234") {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const call: McpCall = async (name, args) => {
+    calls.push({ name, args: args as Record<string, unknown> });
+    if (name === "gate_input") {
+      const input = await loadGateInput(tx, (args as { subdivision: string }).subdivision, serverCfg);
+      return { version: { gitSha: sha, gateConfigHash: configHash(gateConfigOf(serverCfg)) }, input };
+    }
+    return { angelegt: 1, offen: 1 };
+  };
+  return { call, calls };
+}
+
+describe("runGateViaMcp", () => {
+  it("evaluates the production data locally; same report as the database path, names the production commit", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx);
+      const opts = { now: new Date("2026-10-23T12:00:00Z"), repoRoot: process.cwd() };
+      const { call, calls } = fakeMcp(tx, cfg);
+      const lines = (await runGateViaMcp(call, { ...s.args, viaMcp: true }, s.spots, cfg, opts)).join("\n");
+      expect(lines).toContain(`Produktion: abc1234, Tor-Config ${configHash(gateConfigOf(cfg))}`);
+      expect(lines).not.toContain("weicht ab");
+      expect(lines).toContain("Tor nicht bestanden");
+      expect(lines).not.toMatch(INVENTED);
+      expect(calls.map((c) => c.name)).toEqual(["gate_input"]);
+      const viaMcp = await readFile(s.args.report, "utf8");
+      await runGate(tx, s.args, s.spots, cfg, opts);
+      expect(viaMcp).toBe(await readFile(s.args.report, "utf8"));
+    }));
+
+  it("a differing local gate config is noted; the calculation uses the config of the input", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx);
+      const { call } = fakeMcp(tx, cfg);
+      const local = { ...cfg, research: { ...cfg.research, gate: { ...cfg.research.gate, minConfirmed: 99 } } };
+      const lines = (await runGateViaMcp(call, { ...s.args, viaMcp: true }, s.spots, local, { now: new Date(), repoRoot: process.cwd() })).join("\n");
+      expect(lines).toContain("lokale Tor-Config weicht ab, gerechnet mit der von Produktion");
+      expect(lines).toContain("Tor nicht bestanden");
+      expect(lines).not.toContain("Mindeststichprobe");
+    }));
+
+  it("--sync-conflicts sends subdivision, threshold and place IDs only", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx);
+      const { call, calls } = fakeMcp(tx, cfg);
+      const lines = (await runGateViaMcp(call, { ...s.args, viaMcp: true, syncConflicts: true }, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).join("\n");
+      expect(lines).toContain("conflict tasks (N=2): 1 created, 1 open");
+      const sync = calls.find((c) => c.name === "gate_sync_conflicts")!;
+      expect(sync.args).toEqual({ subdivision: s.key, threshold: 2, placeIds: [s.unknown.placeId] });
+      expect(Object.keys(sync.args).sort()).toEqual(["placeIds", "subdivision", "threshold"]);
+      expect(JSON.stringify(calls)).not.toMatch(INVENTED);
+    }));
+
+  it("refuses an out dir inside the repository before calling the server", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx);
+      const { call, calls } = fakeMcp(tx, cfg);
+      await expect(runGateViaMcp(call, { ...s.args, viaMcp: true, outDir: path.join(process.cwd(), "tmp-lists") }, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).rejects.toThrow(/outside the repository/);
+      expect(calls).toEqual([]);
+    }));
 });
 
 describe("runGate", () => {
@@ -99,9 +177,9 @@ describe("runGate", () => {
       expect(lines.join("\n")).not.toMatch(INVENTED);
 
       const report = await readFile(s.args.report, "utf8");
-      expect(report).toMatch(/\| 2 \| 2 \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 50 % \|/);
+      expect(report).toMatch(/\| 2 \| 2 \| 1 \| 0 \| 0 \| 0 \| 1 \| 0 \| 0 \| 50 % \|/);
       expect(report).toMatch(/kein Kandidat in der Nähe \| 1 \|/);
-      expect(report).toContain("Kernwerte gegen die Referenz: noch nicht verglichen (bekannte Lücke)");
+      expect(report).not.toContain("noch nicht verglichen");
       expect(report).toContain("Geliefert bestätigt, aber von der Regel (N=2) nicht gedeckt: 0");
       for (const text of [report, lines.join("\n")]) {
         expect(text).not.toMatch(INVENTED);
@@ -120,7 +198,32 @@ describe("runGate", () => {
       const again = await runGate(tx, { ...s.args, syncConflicts: true }, s.spots, cfg, { now, repoRoot: process.cwd() });
       expect(again.join("\n")).toContain("Tor bestanden bei N=2");
       expect(again.join("\n")).toMatch(/0 created, 0 open/);
-      expect(await readFile(s.args.report, "utf8")).toMatch(/\| 2 \| 2 \| 2 \| 0 \| 0 \| 0 \| 1 \| 0 \| 100 % \|/);
+      expect(await readFile(s.args.report, "utf8")).toMatch(/\| 2 \| 2 \| 2 \| 0 \| 0 \| 0 \| 0 \| 1 \| 0 \| 100 % \|/);
+    }));
+
+  it("a shelter claim the reference does not list breaks the gate; the report counts, the lists name the kind, no value leaks", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx, { shelter: 0.9, prot: ["S"] });
+      const lines = await runGate(tx, s.args, s.spots, cfg, { now: new Date("2026-10-25T12:00:00Z"), repoRoot: process.cwd() });
+      expect(lines.join("\n")).toMatch(/Tor nicht bestanden/);
+      const report = await readFile(s.args.report, "utf8");
+      expect(report).toContain("| Schwelle N | bestätigt | korrekt | falsche Art | Position abweichend | Schutz falsch |");
+      expect(report).toMatch(/\| 2 \| 2 \| 0 \| 0 \| 0 \| 1 \| 1 \| 0 \| 0 \| 0 % \|/);
+      expect(report).toMatch(/\| Schutz N \| 0 \| 1 \| 0 \| 0 \| 0 \|/); // a deviation counted; the table counts every matched place, the error place too
+      expect(report).not.toMatch(INVENTED);
+      expect(await readFile(path.join(s.args.outDir, "n3-tor-n2.csv"), "utf8")).toContain(`error,${s.known.placeId},shelter,`);
+    }));
+
+  it("the core table counts places without a state row as no state and lists every compared attribute", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx, { prot: ["S"] });
+      await runGate(tx, s.args, s.spots, cfg, { now: new Date("2026-10-25T12:00:00Z"), repoRoot: process.cwd() });
+      const report = await readFile(s.args.report, "utf8");
+      expect(report).toContain("## Kernwerte gegen die Referenz (N=");
+      expect(report).toMatch(/\| Schutz N \| 0 \| 0 \| 0 \| 0 \| 1 \|/);
+      for (const label of ["Grund", "Bojen", "Wasser", "Versorgung", "Schutz SW"]) expect(report).toContain(`| ${label} |`);
+      for (const label of ["Existenz", "Position |", "Tiefe", "Taverne"]) expect(report).not.toContain(`| ${label}`);
+      expect(report).not.toMatch(INVENTED);
     }));
 
   it("a spot of another kind is an error in the report, the outcome and the lists", () =>
@@ -130,7 +233,7 @@ describe("runGate", () => {
       const lines = await runGate(tx, s.args, s.spots, cfg, { now, repoRoot: process.cwd() });
       expect(lines.join("\n")).toMatch(/Tor nicht bestanden/);
       const report = await readFile(s.args.report, "utf8");
-      expect(report).toMatch(/\| 2 \| 3 \| 1 \| 1 \| 0 \| 1 \| 0 \| 0 \| 33\.3 % \|/);
+      expect(report).toMatch(/\| 2 \| 3 \| 1 \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 33\.3 % \|/);
       expect(report).not.toMatch(INVENTED);
       const csv = await readFile(path.join(s.args.outDir, "n3-tor-n2.csv"), "utf8");
       expect(csv).toMatch(new RegExp(`^error,${s.wrong!.placeId},wrong_kind,\\d+,3$`, "m"));
@@ -180,13 +283,47 @@ describe("runGate", () => {
       expect(await readFile(s.args.report, "utf8")).not.toContain("Tor bestanden");
     }));
 
+  it("the gate needs gate.minCoverage: a perfect gate at 40 % coverage is not passed, at 50 % it is; excluded spots stay out of the count", () =>
+    withRollback(async (tx) => {
+      const decideUnknown = async (s: Awaited<ReturnType<typeof setup>>) => {
+        const [task] = await runGate(tx, { ...s.args, syncConflicts: true }, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() }).then(() => tx.select().from(reviewTasks).where(eq(reviewTasks.subjectId, s.unknown.placeId)));
+        await decideReviewTask(tx, { taskId: task!.id, decision: { action: "berth" }, decidedBy: "admin@test.invalid" });
+      };
+      const far = (name: string, i: number, type: string | null = null) => spot({ name, lon: 21.0 + 0.002 * (i + 1), lat: 35.2005, type });
+      // spots in the tile: Zzyzx Cove (covered), Vrrmpf Haven, plus three more: 1 of 5 = 20 %, a dry-berthing and a prohibited spot do not count
+      const low = await setup(tx, { extraSpots: [far("Aaa Bight", 0), far("Bbb Bight", 1), far("Ccc Bight", 2), far("Ddd Dry", 3, "dry-berthing"), far("Eee Ban", 4, "prohibited")] });
+      await decideUnknown(low);
+      const lines = (await runGate(tx, low.args, low.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).join("\n");
+      expect(lines).toContain("(mindestens 50 %)");
+      expect(lines).toMatch(/Tor nicht bestanden: Abdeckung 20 % \(mindestens 50 %\)/);
+      expect(lines).toContain("spots in " + low.args.subdivision + ": 5");
+      const report = await readFile(low.args.report, "utf8");
+      expect(report).toMatch(/\| 100 % \| 0 \| 20 % \|/);
+      expect(report).not.toContain("Tor bestanden");
+      expect(report).not.toMatch(INVENTED);
+      // lowering the minimum to the reached coverage passes the same data
+      const ok = { ...cfg, research: { ...cfg.research, gate: { ...cfg.research.gate, minCoverage: 0.2 } } };
+      expect((await runGate(tx, low.args, low.spots, ok, { now: new Date(), repoRoot: process.cwd() })).join("\n")).toContain("Tor bestanden bei N=2");
+    }));
+
+  it("a place on a prohibited spot is a gate error in the report and the lists", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx, { extraSpots: [spot({ name: "Qwoxx Bay", lon: 21.05, type: "prohibited" })] });
+      const lines = (await runGate(tx, s.args, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).join("\n");
+      expect(lines).toContain("Tor nicht bestanden");
+      const csv = await readFile(path.join(s.args.outDir, "n3-tor-n2.csv"), "utf8");
+      expect(csv).toContain(`error,${s.unknown.placeId},prohibited,`);
+      expect(csv).not.toMatch(/Zzyzx|Qwoxx|Vrrmpf/);
+      expect(await readFile(s.args.report, "utf8")).not.toMatch(INVENTED);
+    }));
+
   it("a place near the edge finds its spot just outside the tiles; that spot is not counted", () =>
     withRollback(async (tx) => {
       const s = await setup(tx, { edge: true });
       const lines = await runGate(tx, s.args, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() });
       expect(lines.join("\n")).toContain("spots in " + s.args.subdivision + ": 2");
       // confirmed 3 (known, unknown, edge): the edge place is correct, only the unknown one is a conflict
-      expect(await readFile(s.args.report, "utf8")).toMatch(/\| 2 \| 3 \| 2 \| 0 \| 0 \| 1 \| 0 \| 0 \| 66\.7 % \|/);
+      expect(await readFile(s.args.report, "utf8")).toMatch(/\| 2 \| 3 \| 2 \| 0 \| 0 \| 0 \| 1 \| 0 \| 0 \| 66\.7 % \|/);
       const csv = await readFile(path.join(s.args.outDir, "n3-tor-n2.csv"), "utf8");
       expect(csv).not.toContain(s.edge!.placeId);
     }));
@@ -195,7 +332,7 @@ describe("runGate", () => {
     withRollback(async (tx) => {
       const s = await setup(tx, { knownLat: 35.2 + 300 / 111_195 });
       await runGate(tx, s.args, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() });
-      expect(await readFile(s.args.report, "utf8")).toMatch(/\| 2 \| 2 \| 0 \| 0 \| 1 \| 1 \| 0 \| 0 \| 0 % \|/);
+      expect(await readFile(s.args.report, "utf8")).toMatch(/\| 2 \| 2 \| 0 \| 0 \| 1 \| 0 \| 1 \| 0 \| 0 \| 0 % \|/);
       const csv = await readFile(path.join(s.args.outDir, "n3-tor-n2.csv"), "utf8");
       expect(csv).toMatch(new RegExp(`^error,${s.known.placeId},position,3\\d\\d,1$`, "m"));
     }));
@@ -205,7 +342,7 @@ describe("runGate", () => {
       const s = await setup(tx, { signals: false });
       const lines = await runGate(tx, s.args, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() });
       expect(lines.join("\n")).toContain("Tor nicht bestanden: bei keiner Schwelle ist ein Platz bestätigt");
-      expect(await readFile(s.args.report, "utf8")).toMatch(/\| 2 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| n\/a \|/);
+      expect(await readFile(s.args.report, "utf8")).toMatch(/\| 2 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| n\/a \|/);
     }));
 
   it("passing at N=3 notes the open conflicts at the lower threshold", () =>

@@ -1,10 +1,7 @@
-import { desc, eq, sql, type SQL } from "drizzle-orm";
-import { simulationActive } from "@/lib/adapters/simulation";
+import { sql, type SQL } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { getEnv, type Env } from "@/lib/env";
-import { profiles } from "@/lib/db/schema";
-import { consolidationTargets, reselectionTargets } from "@/lib/domain/consolidation/targets";
 import { loadPlaceImageInput } from "@/lib/domain/images/place-input";
 import { planRender } from "@/lib/domain/images/render-plan";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
@@ -19,8 +16,8 @@ const getLog = () => (logger ??= createLogger("images.place"));
 
 /*
  * Plan of stage `images.place` (spec 13): which places of a run get an image generated. A run started for images
- * (`startImageRun`) names a subdivision or one place and view in `params.images`; any other run with the stage (text,
- * geometry, consolidation) targets the title images of the objects it consolidated.
+ * (`startImageRun`) names a subdivision or one place and view in `params.images`; the follow-up run of confirmed
+ * berths names their objects (`images.geoObjectIds`). A run without `params.images` has no targets.
  */
 
 /**
@@ -30,26 +27,6 @@ const getLog = () => (logger ??= createLogger("images.place"));
 export type ImageRunScope = { subdivisionKey: string } | { geoObjectId: string; view: ImageView; force?: boolean } | { geoObjectIds: string[] };
 
 export type ImageTarget = { geoObjectId: string; view: ImageView; force?: true };
-
-/**
- * The objects a text, geometry or consolidation run consolidated, as `summaryTargets` derives them: the objects of the
- * profile versions the run created, and with `params.stagesOnly` or `params.geoObjectIds` also the run's targets
- * (`consolidationTargets`): a decision's follow-up names its objects, whether or not their profile changed. Never the
- * places the run only re-selected (`reselectionTargets`, final review C1): a new selection is no reason for an image.
- */
-async function consolidatedObjects(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<string[]> {
-  const rows = await db
-    .selectDistinctOn([profiles.geoObjectId], { geoObjectId: profiles.geoObjectId })
-    .from(profiles)
-    .where(eq(profiles.runId, run.id))
-    .orderBy(profiles.geoObjectId, desc(profiles.version));
-  const ids = new Set(rows.map((r) => r.geoObjectId));
-  if (Array.isArray(run.params.stagesOnly) || (Array.isArray(run.params.geoObjectIds) && !Array.isArray(run.params.documentVersionIds))) {
-    for (const id of await consolidationTargets(db, run)) ids.add(id);
-  }
-  for (const id of await reselectionTargets(db, run)) ids.delete(id);
-  return [...ids];
-}
 
 /**
  * Of the objects `scope` selects, the spots that get images, sorted by id: a current, unmerged place with status in
@@ -102,11 +79,11 @@ async function plannedKey(db: Db, geoObjectId: string, view: ImageView, cfg: Ima
  * The images a run generates, at most `images.pipeline.maxGenerationsPerRun`. Candidates: for a run from
  * `startImageRun` the title images of the subdivision's spots, or the one place and view it names; for the follow-up
  * run of confirmed berths (`params.images.geoObjectIds`) the title images of those objects; for any other run
- * the title images of the objects it consolidated (`consolidatedObjects`). Of those, the eligible spots
+ * none. Of those, the eligible spots
  * (`eligibleSpots`) whose current generation key is not done yet (`keyDone`: a current image of the slot, an open or a
  * decided task with that key; a forced scope passes over the decided task). Since the key depends on the imagery tiles, it is computed from the current
  * `imagery_tiles` rows of the windows around the camera target; a missing tile makes the key new. None in an
- * evaluation run or a simulation (no paid image calls there), and none (logged once per plan) while no image model
+ * evaluation run (no paid image calls there), and none (logged once per plan) while no image model
  * is usable (`imageModelAvailable`: the model this process set, else `env.OPENAI_API_KEY`; the web server plans the
  * first stage of a run it starts), so no run downloads imagery and renders for nothing.
  */
@@ -116,12 +93,13 @@ export async function imageTargets(
   cfg: ImageStageConfig = getConfig(),
   env: Pick<Env, "OPENAI_API_KEY"> = getEnv(),
 ): Promise<ImageTarget[]> {
-  if (run.params.evaluation === true || simulationActive()) return [];
+  if (run.params.evaluation === true) return [];
   if (!imageModelAvailable(db, env)) {
     getLog().warn({ runId: run.id }, "no usable image model (OPENAI_API_KEY missing?): the run generates no place images");
     return [];
   }
   const scope = run.params.images as ImageRunScope | undefined;
+  if (!scope) return [];
   let candidates: ImageTarget[];
   if (scope && "geoObjectId" in scope) {
     const ok = await eligibleSpots(db, inIds([scope.geoObjectId]), cfg);
@@ -131,15 +109,9 @@ export async function imageTargets(
     const view = titleView();
     candidates = ids.map((geoObjectId) => ({ geoObjectId, view }));
   } else {
-    let ids: string[];
-    if (scope && "subdivisionKey" in scope) {
-      const sub = await subdivisionByKey(db, scope.subdivisionKey);
-      if (!sub) return [];
-      ids = await eligibleSpots(db, sql`o.subdivision_id = ${sub.id}::uuid`, cfg);
-    } else {
-      const objects = await consolidatedObjects(db, run);
-      ids = objects.length === 0 ? [] : await eligibleSpots(db, inIds(objects), cfg);
-    }
+    const sub = await subdivisionByKey(db, scope.subdivisionKey);
+    if (!sub) return [];
+    const ids = await eligibleSpots(db, sql`o.subdivision_id = ${sub.id}::uuid`, cfg);
     const view = titleView();
     candidates = ids.map((geoObjectId) => ({ geoObjectId, view }));
   }
@@ -152,6 +124,23 @@ export async function imageTargets(
     targets.push(c);
   }
   return targets;
+}
+
+/**
+ * How many title images a run for `subdivisionKey` would plan now: the eligible spots (`eligibleSpots`) whose current
+ * generation key is not done yet, as `imageTargets` decides, but without the per-run cap and without the model check
+ * (the scope estimate of a start tool wants the whole backlog).
+ */
+export async function pendingImageSpotCount(db: Db, subdivisionKey: string, cfg: ImageStageConfig = getConfig()): Promise<number> {
+  const sub = await subdivisionByKey(db, subdivisionKey);
+  if (!sub) return 0;
+  const view = titleView();
+  let n = 0;
+  for (const id of await eligibleSpots(db, sql`o.subdivision_id = ${sub.id}::uuid`, cfg)) {
+    const key = await plannedKey(db, id, view, cfg);
+    if (key === null || !(await keyDone(db, id, view.slot, key))) n++;
+  }
+  return n;
 }
 
 /** One job per target, key `<geoObjectId>:<slot>`; a forced target's job carries `force`. */

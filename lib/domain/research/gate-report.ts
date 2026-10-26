@@ -3,17 +3,18 @@ import type { Point } from "geojson";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
-import { geoNames, geoObjects, places, researchHits } from "@/lib/db/schema";
+import { berthStates, geoNames, geoObjects, places, researchHits } from "@/lib/db/schema";
 import type { LonLat } from "@/lib/domain/geometry/water";
-import { comparedPosition, lonLatOf } from "@/lib/domain/quality/comparison-values";
+import { comparedPosition } from "@/lib/domain/quality/comparison-values";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { distanceM, type NavilySpot } from "@/lib/domain/quality/navily-sample";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { tileBbox, tileIdFor, tileNeighbours } from "@/lib/domain/tiles";
-import { latestProfiles, validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
+import type { Verdict } from "./confirmation";
 import { verdictsIn } from "./gate";
 import { gateDecisions } from "./gate-conflicts";
-import { evaluateGate, type GateErrorKind, type GatePlace, type GateRow, type MissReason } from "./gate-navily";
+import { evaluateGate, emptyAgreement, isExcludedSpot, GATE_CORE_ATTRIBUTES, type CoreAgreement, type GateErrorKind, type GatePlace, type GateRow, type MissReason } from "./gate-navily";
 
 /*
  * The reference gate as a measurement run (plan N3): loads the places of a subdivision, decides them per threshold,
@@ -33,6 +34,24 @@ export const MISS_REASON_LABELS: Record<MissReason, string> = {
   rejected: "abgelehnt oder aufgegeben",
 };
 
+/** German names of the error kinds in the lists and the report. */
+export const ERROR_KIND_LABELS: Record<GateErrorKind, string> = {
+  wrong_kind: "falsche Art",
+  position: "Position abweichend",
+  not_berth: "kein Liegeplatz",
+  shelter: "Schutz behauptet, bei der Referenz offen",
+  prohibited: "Ankerverbot bei der Referenz",
+};
+
+/** German names of the core attributes in the report. */
+const CORE_LABELS: Record<string, string> = {
+  seabed: "Grund",
+  "mooring.buoys": "Bojen",
+  "services.water": "Wasser",
+  "highlight.supply": "Versorgung",
+};
+const coreLabel = (a: string) => CORE_LABELS[a] ?? `Schutz ${a.slice("shelter.".length)}`;
+
 export type GateMeasurement = {
   subdivisionKey: string;
   /** All places of the subdivision (the scope of the conflict tasks). */
@@ -43,6 +62,8 @@ export type GateMeasurement = {
   /** Spots in the worked-on tiles, the ones counted (spots of the border buffer are matched, not counted). */
   spotCount: number;
   rows: GateRow[];
+  /** The core values against the reference at `deliveredThreshold`: the confirmed places with a spot, counted per attribute. */
+  coreAgreement: CoreAgreement;
   /** Per threshold: the confirmed places with a human decision (berth or not). */
   decided: Map<number, number>;
   /** Per threshold: the misses with the index of the spot in the loaded file; `distanceM` to the near candidate. */
@@ -58,16 +79,20 @@ export type GateMeasurement = {
    * delivered, but not backed by the rule. While there is one, the gate is not passed.
    */
   unbacked: string[];
-  /** The smallest threshold with correctness 100 %, no open conflict and at least `gate.minConfirmed` confirmed places; null when there is none. */
+  /** The smallest threshold with correctness 100 %, no open conflict, at least `gate.minConfirmed` confirmed places and `gate.minCoverage` coverage; null when there is none. */
   passedAt: number | null;
   /** When no threshold passes only for want of a sample: the confirmed count of the first threshold that is perfect but below `gate.minConfirmed`. */
   tooFewConfirmed: number | null;
   minConfirmed: number;
+  minCoverage: number;
+  /** When no threshold passes only for want of coverage: every threshold that is perfect with enough confirmed places, with its coverage. */
+  lowCoverage: Array<{ threshold: number; coverage: number }> | null;
+  shelterErrorMin: number;
   /** The smallest threshold with open conflicts (where `--sync-conflicts` asks); null when none has. */
   conflictThreshold: number | null;
 };
 
-/** All valid, unmerged places of the subdivision of any status, with the delivered positions (as `confirmedSubdivisionPlaces`). */
+/** All valid, unmerged places of the subdivision of any status, with the delivered positions (`places.position`, the anchor position) and the current state. */
 async function subdivisionPlaces(db: Db, subdivisionKey: string): Promise<Array<Omit<GatePlace, "verdicts" | "hasHits"> & { hasHits: boolean }>> {
   const sub = await requireSubdivision(db, subdivisionKey);
   const rows = await db
@@ -78,7 +103,8 @@ async function subdivisionPlaces(db: Db, subdivisionKey: string): Promise<Array<
       status: places.status,
       statusReason: places.statusReason,
       position: asGeoJson(places.position),
-      hasHits: sql<boolean>`exists (select 1 from ${researchHits} where ${researchHits.placeId} = ${places.id})`,
+      anchorPosition: asGeoJson(places.anchorPosition),
+      hasHits: sql<boolean>`exists (select 1 from ${researchHits} where ${researchHits.placeId} = ${places.id} and ${researchHits.purpose} <> 'landside')`,
     })
     .from(places)
     .innerJoin(geoObjects, eq(geoObjects.id, places.geoObjectId))
@@ -93,18 +119,21 @@ async function subdivisionPlaces(db: Db, subdivisionKey: string): Promise<Array<
     .orderBy(asc(geoNames.geoObjectId), asc(geoNames.name));
   const namesOf = new Map<string, string[]>();
   for (const n of nameRows) namesOf.set(n.geoObjectId, [...(namesOf.get(n.geoObjectId) ?? []), n.name]);
-  const profileOf = await latestProfiles(db, objectIds);
+  const stateOf = new Map(
+    (await db.select({ placeId: berthStates.placeId, core: berthStates.core, nearby: berthStates.nearby }).from(berthStates).where(inArray(berthStates.placeId, rows.map((r) => r.placeId)))).map((s) => [s.placeId, { core: s.core, nearby: s.nearby }]),
+  );
   return rows.map((r) => {
     const [lon, lat] = (r.position as Point).coordinates as [number, number];
-    const attributes = profileOf.get(r.geoObjectId)?.attributes ?? {};
+    const anchor = r.anchorPosition ? ((r.anchorPosition as Point).coordinates as [number, number]) : null;
     const names = namesOf.get(r.geoObjectId) ?? [];
     return {
       placeId: r.placeId,
       kind: r.kind,
       status: r.status,
       statusReason: r.statusReason,
-      position: lonLatOf(attributes["place.position"]) ?? { lon, lat },
-      anchorPosition: lonLatOf(attributes["anchor_position"]),
+      position: { lon, lat },
+      anchorPosition: anchor ? { lon: anchor[0], lat: anchor[1] } : null,
+      state: stateOf.get(r.placeId) ?? null,
       names,
       hasNames: names.length > 0,
       hasHits: r.hasHits,
@@ -112,62 +141,129 @@ async function subdivisionPlaces(db: Db, subdivisionKey: string): Promise<Array<
   });
 }
 
-/**
- * The worked-on tiles of the subdivision (those with at least one valid place; a tile seeded with zero candidates does
- * not count, it has nothing to deliver) as two predicates on a point: `inside` one of them (the spots counted), or
- * `matchable`: inside or within `bufferM` of one (the spots matched, so a place near the edge still finds its spot just
- * outside). The buffer is checked against the neighbour tiles only (a tile is far wider than any matching radius).
- */
-async function subdivisionTileAreas(
-  db: Db,
-  subdivisionKey: string,
-  bufferM: number,
-): Promise<{ inside: (p: LonLat) => boolean; matchable: (p: LonLat) => boolean; built: number; total: number }> {
+/** The tiles of the subdivision: all of them, and the worked-on ones (with at least one valid place; a tile seeded with zero candidates does not count, it has nothing to deliver). */
+async function tileIds(db: Db, subdivisionKey: string): Promise<GateInput["tiles"]> {
   const sub = await requireSubdivision(db, subdivisionKey);
   const all = await subdivisionTileIds(db, sub.id);
   const worked = await db
     .selectDistinct({ tileId: places.tileId })
     .from(places)
     .innerJoin(geoObjects, eq(geoObjects.id, places.geoObjectId))
-    .where(and(eq(geoObjects.subdivisionId, sub.id), isNull(places.mergedIntoId), validAt(places), inArray(places.tileId, all)));
-  const ids = new Set(worked.map((r) => r.tileId!));
-  const inside = (p: LonLat) => ids.has(tileIdFor(p.lon, p.lat));
+    .where(and(eq(geoObjects.subdivisionId, sub.id), isNull(places.mergedIntoId), validAt(places), inArray(places.tileId, all)))
+    .orderBy(asc(places.tileId));
+  return { all, worked: worked.map((r) => r.tileId!) };
+}
+
+/**
+ * The worked-on tiles as two predicates on a point: `inside` one of them (the spots counted), or `matchable`: inside or
+ * within `bufferM` of one (the spots matched, so a place near the edge still finds its spot just outside). The buffer is
+ * checked against the neighbour tiles only (a tile is far wider than any matching radius).
+ */
+function tileAreas(worked: Set<string>, bufferM: number): { inside: (p: LonLat) => boolean; matchable: (p: LonLat) => boolean } {
+  const inside = (p: LonLat) => worked.has(tileIdFor(p.lon, p.lat));
   const nearTile = (p: LonLat, id: string) => {
     const [west, south, east, north] = tileBbox(id);
     return distanceM(p, { lon: Math.min(Math.max(p.lon, west), east), lat: Math.min(Math.max(p.lat, south), north) }) <= bufferM;
   };
-  return { inside, matchable: (p) => inside(p) || tileNeighbours(tileIdFor(p.lon, p.lat)).some((id) => ids.has(id) && nearTile(p, id)), built: ids.size, total: all.length };
+  return { inside, matchable: (p) => inside(p) || tileNeighbours(tileIdFor(p.lon, p.lat)).some((id) => worked.has(id) && nearTile(p, id)) };
+}
+
+/** The part of the configuration the gate evaluation reads; travels with the `GateInput`. */
+export type GateConfigSnapshot = {
+  research: Pick<AppConfig["research"], "gate" | "confirmation">;
+  quality: Pick<AppConfig["quality"], "navily">;
+  /** The name affixes the spot matching strips (`matchPlacesToSpots`). */
+  nameAffixes: AppConfig["nameAffixes"];
+};
+
+export function gateConfigOf(cfg: AppConfig): GateConfigSnapshot {
+  return {
+    research: { gate: cfg.research.gate, confirmation: cfg.research.confirmation },
+    quality: { navily: cfg.quality.navily },
+    nameAffixes: cfg.nameAffixes,
+  };
+}
+
+export type GateInputPlace = Omit<GatePlace, "verdicts">;
+
+/**
+ * The database part of the gate, JSON types only (no Map, no Date): so it can leave the server and be evaluated where
+ * the reference spots are (`evaluateGateInput`), without the spots ever reaching the server.
+ */
+export type GateInput = {
+  subdivisionKey: string;
+  tiles: { all: string[]; worked: string[] };
+  /** The matching buffer around the worked-on tiles (`quality.navily.maxRadiusM`). */
+  bufferM: number;
+  places: GateInputPlace[];
+  decisions: Array<[placeId: string, "berth" | "not_berth"]>;
+  /** Per threshold of `research.gate.thresholds`: the verdict per place. */
+  verdicts: Array<[threshold: number, Array<[placeId: string, Verdict]>]>;
+  /** What is delivered now: the verdicts at `confirmation.minIndependentSources`, no human gate decision re-decided. */
+  delivered: Array<[placeId: string, Verdict]>;
+  config: GateConfigSnapshot;
+};
+
+/**
+ * Loads the database part of the gate of the subdivision in one read-only, repeatable-read transaction (one snapshot);
+ * pass the top-level `db`, a nested transaction would not honour it. Writes nothing.
+ */
+export async function loadGateInput(db: Db, subdivisionKey: string, cfg: AppConfig): Promise<GateInput> {
+  return db.transaction((tx) => loadIn(tx, subdivisionKey, cfg), { accessMode: "read only", isolationLevel: "repeatable read" });
+}
+
+async function loadIn(tx: Db, subdivisionKey: string, cfg: AppConfig): Promise<GateInput> {
+  const thresholds = cfg.research.gate.thresholds;
+  const tiles = await tileIds(tx, subdivisionKey);
+  const base = await subdivisionPlaces(tx, subdivisionKey);
+  const decisions = await gateDecisions(tx, base.map((p) => p.placeId));
+  const verdicts = await verdictsIn(tx, subdivisionKey, thresholds, cfg, { includePlaceIds: [...decisions.keys()] });
+  const deliveredThreshold = cfg.research.confirmation.minIndependentSources;
+  const delivered = (await verdictsIn(tx, subdivisionKey, [deliveredThreshold], cfg)).get(deliveredThreshold)!;
+  return {
+    subdivisionKey,
+    tiles,
+    bufferM: cfg.quality.navily.maxRadiusM,
+    places: base,
+    decisions: [...decisions],
+    verdicts: thresholds.map((n) => [n, [...verdicts.get(n)!]]),
+    delivered: [...delivered],
+    config: gateConfigOf(cfg),
+  };
 }
 
 /**
  * Measures the gate of the subdivision against the loaded reference spots: the spots inside the subdivision's worked-on tiles
- * count, those within `quality.navily.maxRadiusM` of them are matched as well (`subdivisionTileAreas`). Everything is read
+ * count, those within `quality.navily.maxRadiusM` of them are matched as well (`tileAreas`). Everything is read
  * in one read-only, repeatable-read transaction (one snapshot); pass the top-level `db`, a nested transaction would not
  * honour it. Also counts the places delivered as confirmed now that the rule at `confirmation.minIndependentSources`
  * does not back (`unbacked`). Writes nothing.
  */
 export async function measureGate(db: Db, input: { subdivisionKey: string; spots: NavilySpot[] }, cfg: AppConfig): Promise<GateMeasurement> {
-  return db.transaction((tx) => measureIn(tx, input, cfg), { accessMode: "read only", isolationLevel: "repeatable read" });
+  return evaluateGateInput(await loadGateInput(db, input.subdivisionKey, cfg), input.spots);
 }
 
-async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilySpot[] }, cfg: AppConfig): Promise<GateMeasurement> {
-  const { subdivisionKey } = input;
+/** The gate measurement from its database part and the reference spots; pure, computes with `input.config` only. */
+export function evaluateGateInput(input: GateInput, allSpots: NavilySpot[]): GateMeasurement {
+  const { subdivisionKey, config: cfg } = input;
   const thresholds = cfg.research.gate.thresholds;
   const deliveredThreshold = cfg.research.confirmation.minIndependentSources;
-  const area = await subdivisionTileAreas(tx, subdivisionKey, cfg.quality.navily.maxRadiusM);
-  const indexes = input.spots.flatMap((s, i) => (area.matchable(s) ? [i] : []));
-  const spots = indexes.map((i) => input.spots[i]!);
-  const counted = spots.filter((s) => area.inside(s)).length;
+  const area = tileAreas(new Set(input.tiles.worked), input.bufferM);
+  const indexes = allSpots.flatMap((s, i) => (area.matchable(s) ? [i] : []));
+  const spots = indexes.map((i) => allSpots[i]!);
+  const counted = spots.filter((s) => area.inside(s) && !isExcludedSpot(s, cfg.quality.navily)).length;
 
-  const base = await subdivisionPlaces(tx, subdivisionKey);
-  const decisions = await gateDecisions(tx, base.map((p) => p.placeId));
-  const verdicts = await verdictsIn(tx, subdivisionKey, thresholds, cfg, { includePlaceIds: [...decisions.keys()] });
-  // what is delivered now: the rule as `applyBerthVerdicts` applies it, no human gate decision re-decided
-  const delivered = (await verdictsIn(tx, subdivisionKey, [deliveredThreshold], cfg)).get(deliveredThreshold)!;
+  const base = input.places;
+  const decisions = new Map(input.decisions);
+  const verdicts = new Map(input.verdicts.map(([n, entries]) => [n, new Map(entries)]));
+  const delivered = new Map(input.delivered);
   const unbacked = base.filter((p) => p.status === "confirmed" && delivered.get(p.placeId)?.status !== "confirmed").map((p) => p.placeId);
   const gatePlaces: GatePlace[] = base.map((p) => ({
     ...p,
-    verdicts: new Map(thresholds.flatMap((n) => (verdicts.get(n)!.has(p.placeId) ? [[n, verdicts.get(n)!.get(p.placeId)!] as const] : []))),
+    verdicts: new Map(thresholds.flatMap((n) => {
+      const v = verdicts.get(n)?.get(p.placeId);
+      return v ? [[n, v] as const] : [];
+    })),
   }));
   const byId = new Map(gatePlaces.map((p) => [p.placeId, p]));
 
@@ -191,16 +287,20 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
   }
   const minConfirmed = cfg.research.gate.minConfirmed;
   const perfect = evaluated.rows.filter((r) => r.confirmed > 0 && r.correctness === 1 && r.conflicts === 0);
-  const passedAt = perfect.find((r) => r.confirmed >= minConfirmed)?.threshold ?? null;
-  const tooFewConfirmed = passedAt === null ? (perfect[0]?.confirmed ?? null) : null;
+  const minCoverage = cfg.research.gate.minCoverage;
+  const sampled = perfect.filter((r) => r.confirmed >= minConfirmed);
+  const passedAt = sampled.find((r) => (r.coverage ?? 0) >= minCoverage)?.threshold ?? null;
+  const tooFewConfirmed = passedAt === null && sampled.length === 0 ? (perfect[0]?.confirmed ?? null) : null;
+  const lowCoverage = passedAt === null && sampled.length > 0 ? sampled.map((r) => ({ threshold: r.threshold, coverage: r.coverage ?? 0 })) : null;
   const conflictThreshold = evaluated.rows.find((r) => r.conflicts > 0)?.threshold ?? null;
   return {
     subdivisionKey,
     scopePlaceIds: base.map((p) => p.placeId),
-    builtTiles: area.built,
-    totalTiles: area.total,
+    builtTiles: input.tiles.worked.length,
+    totalTiles: input.tiles.all.length,
     spotCount: counted,
     rows: evaluated.rows,
+    coreAgreement: evaluated.core.get(deliveredThreshold) ?? emptyAgreement(),
     decided,
     misses,
     conflicts: evaluated.conflicts,
@@ -210,6 +310,9 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
     passedAt,
     tooFewConfirmed,
     minConfirmed,
+    minCoverage,
+    lowCoverage,
+    shelterErrorMin: cfg.research.gate.shelterErrorMin,
     conflictThreshold,
   };
 }
@@ -222,12 +325,18 @@ export function gateOutcome(m: GateMeasurement): string {
   if (m.passedAt !== null) return `Tor bestanden bei N=${m.passedAt}`;
   if (m.rows.every((r) => r.confirmed === 0)) return "Tor nicht bestanden: bei keiner Schwelle ist ein Platz bestätigt";
   if (m.tooFewConfirmed !== null) return `Tor nicht bestanden: zu wenige bestätigte Plätze (${m.tooFewConfirmed} von mindestens ${m.minConfirmed})`;
+  if (m.lowCoverage !== null) {
+    const floor = (x: number) => Math.floor(x * 100 + 1e-9);
+    const shown = m.lowCoverage.length === 1 ? `${floor(m.lowCoverage[0]!.coverage)} %` : m.lowCoverage.map((c) => `N=${c.threshold}: ${floor(c.coverage)} %`).join(", ");
+    return `Tor nicht bestanden: Abdeckung ${shown} (mindestens ${floor(m.minCoverage)} %)`;
+  }
   const open = m.rows.reduce((sum, r) => sum + r.conflicts, 0);
   return open > 0
     ? "Tor nicht bestanden: bei keiner Schwelle sind alle bestätigten Plätze korrekt, es gibt offene Konflikte"
     : "Tor nicht bestanden: bei keiner Schwelle sind alle bestätigten Plätze korrekt";
 }
 
+const coveragePercent = (r: GateRow) => (r.coverage === null ? "n/a" : `${Math.round(r.coverage * 1000) / 10} %`);
 const percent = (r: GateRow) => (r.correctness === null ? "n/a" : `${Math.round(r.correctness * 1000) / 10} %`);
 
 /** The committed report (German): counts only, no name, id, coordinate or value of the reference. */
@@ -238,19 +347,30 @@ export function renderGateReport(m: GateMeasurement, generatedAt: Date): string 
     "",
     `Stand: ${generatedAt.toISOString().slice(0, 10)}. Gemessen wird, welche Plätze bei jeder Schwelle unabhängiger Quellen bestätigt wären, gegen die Referenz (${m.spotCount} Spots in den bearbeiteten Kacheln des Landesteils). Die Referenz ist nie Datenquelle, sie misst nur.`,
     "",
-    `Bearbeitete Kacheln: ${m.builtTiles} von ${m.totalTiles}. Nur Spots in bearbeiteten Kacheln (mit mindestens einem Platz) zählen; das Tor gilt nur mit mindestens ${m.minConfirmed} bestätigten Plätzen.`,
+    `Bearbeitete Kacheln: ${m.builtTiles} von ${m.totalTiles}. Nur Spots in bearbeiteten Kacheln (mit mindestens einem Platz) zählen; Spots mit Ankerverbot oder Trockenliegeplatz zählen nicht zur Abdeckung und stehen nicht in der Fehlliste; ein Platz bei einem Ankerverbot ist ein Fehler, bei einem Trockenliegeplatz ein Konflikt. Das Tor gilt nur mit mindestens ${m.minConfirmed} bestätigten Plätzen und einer Abdeckung von mindestens ${Math.round(m.minCoverage * 100)} % (korrekt zugeordnete Spots je Schwelle).`,
     "",
     "## Ergebnis je Schwelle",
     "",
-    "| Schwelle N | bestätigt | korrekt | falsche Art | Position abweichend | Konflikte offen | mit Entscheidung | davon „kein Liegeplatz“ | Korrektheit |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| Schwelle N | bestätigt | korrekt | falsche Art | Position abweichend | Schutz falsch | Konflikte offen | mit Entscheidung | davon „kein Liegeplatz“ | Korrektheit | Ankerverbot | Abdeckung |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ...m.rows.map(
-      (r) => `| ${r.threshold} | ${r.confirmed} | ${r.correct} | ${r.wrongKind} | ${r.wrongPosition} | ${r.conflicts} | ${m.decided.get(r.threshold) ?? 0} | ${r.decidedNotBerth} | ${percent(r)} |`,
+      (r) => `| ${r.threshold} | ${r.confirmed} | ${r.correct} | ${r.wrongKind} | ${r.wrongPosition} | ${r.wrongShelter} | ${r.conflicts} | ${m.decided.get(r.threshold) ?? 0} | ${r.decidedNotBerth} | ${percent(r)} | ${r.wrongProhibited} | ${coveragePercent(r)} |`,
     ),
     "",
     `Geliefert bestätigt, aber von der Regel (N=${m.deliveredThreshold}) nicht gedeckt: ${m.unbacked.length}. Solange es solche Plätze gibt, ist das Tor nicht bestanden.`,
     "",
-    "Kernwerte gegen die Referenz: noch nicht verglichen (bekannte Lücke).",
+    `Falsch geliefert gilt auch ein Sektor, den wir mit Schutzwert von mindestens ${String(m.shelterErrorMin).replace(".", ",")} als geschützt liefern, während die Referenz ihn nicht als geschützt nennt („${ERROR_KIND_LABELS.shelter}“); ein Platz mit so einem Sektor zählt nicht als korrekt.`,
+    "",
+    `## Kernwerte gegen die Referenz (N=${m.deliveredThreshold})`,
+    "",
+    "Verglichen werden die bestätigten Plätze mit Treffer in der Referenz. Übereinstimmung und Abweichung zählen, wo beide Seiten einen Wert haben; Lücke: die Referenz hat einen Wert, wir nicht; nicht bei Navily: die Referenz sagt nichts dazu; kein Stand: der Platz hat noch keinen Stand. Sonst wird nichts verglichen (Existenz und Position prüft das Tor selbst, Tiefe und Taverne hat die Referenz nicht). Nur der Schutzfehler bricht das Tor.",
+    "",
+    "| Kernwert | Übereinstimmung | Abweichung | Lücke | nicht bei Navily | kein Stand |",
+    "| --- | --- | --- | --- | --- | --- |",
+    ...GATE_CORE_ATTRIBUTES.map((a) => {
+      const c = m.coreAgreement[a];
+      return `| ${coreLabel(a)} | ${c.match} | ${c.deviation} | ${c.gap} | ${c.notAtNavily} | ${c.noState} |`;
+    }),
     "",
     "## Fehlliste: Spots ohne bestätigten Platz, nach Grund",
     "",
@@ -265,8 +385,8 @@ export function renderGateReport(m: GateMeasurement, generatedAt: Date): string 
     "## Gewählte Schwelle",
     "",
     m.passedAt !== null
-      ? `Kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte und genug bestätigten Plätzen: **N=${m.passedAt}**. ${gateOutcome(m)}.`
-      : `${gateOutcome(m)}. Gewählt wird die kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte und mit mindestens ${m.minConfirmed} bestätigten Plätzen; bisher gibt es keine.`,
+      ? `Kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte, genug bestätigten Plätzen und genug Abdeckung: **N=${m.passedAt}**. ${gateOutcome(m)}.`
+      : `${gateOutcome(m)}. Gewählt wird die kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte mit mindestens ${m.minConfirmed} bestätigten Plätzen und ausreichender Abdeckung; bisher gibt es keine.`,
     "",
   ];
   const lower = m.passedAt === null ? [] : m.rows.filter((r) => r.threshold < m.passedAt! && r.conflicts > 0).map((r) => `N=${r.threshold}`);

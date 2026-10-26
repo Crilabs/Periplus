@@ -5,12 +5,12 @@ import type { Db } from "@/lib/db/client";
 import type { PageKind, PlaceKind, PlaceStatus } from "@/lib/db/schema";
 import type { BerthStateOrigin, BerthStateValue } from "@/lib/db/schema/research-state";
 import type { DocType, ObservedAtBasis } from "@/lib/db/schema/sources";
-import { derivedBerthable } from "@/lib/domain/consolidation/berthable";
-import { byAttributeDateId } from "@/lib/domain/consolidation/build";
-import { computedInputs } from "@/lib/domain/consolidation/inputs";
-import { applyRule } from "@/lib/domain/consolidation/rules";
-import type { ConsolidationInput, RuleName } from "@/lib/domain/consolidation/types";
-import { attributeIn } from "@/lib/domain/consolidation/weights";
+import { derivedBerthable } from "@/lib/domain/rules/berthable";
+import { byAttributeDateId } from "@/lib/domain/rules/order";
+import { computedInputs } from "@/lib/domain/rules/computed-inputs";
+import { applyRule } from "@/lib/domain/rules";
+import type { ConsolidationInput, RuleName } from "@/lib/domain/rules/types";
+import { attributeIn } from "@/lib/domain/rules/weights";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { activeAssessor } from "./assessment";
@@ -81,7 +81,7 @@ export async function coreInputs(db: Db, placeId: string, config: AppConfig, rul
     join sources src on src.id = d.source_id
     join page_assessments a on a.document_version_id = f.document_version_id and a.model = ${assessor.model} and a.prompt_version = ${assessor.promptVersion}
     where f.place_id = ${placeId} and f.attribute is not null
-      and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
+      and u.kind = 'berth' and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
       and a.generated = false and ${liveResearchSourceSql("src")}
     order by f.id`);
 

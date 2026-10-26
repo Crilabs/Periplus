@@ -12,7 +12,6 @@ import {
   ButtonLink,
   cx,
   EmptyState,
-  FilterChips,
   fmt,
   Notice,
   numClass,
@@ -32,8 +31,6 @@ const querySchema = z.object({
   kind: z.enum(OFFERED_REVIEW_KINDS as [ReviewKind, ...ReviewKind[]]).optional().catch(undefined),
   before: z.uuid().optional().catch(undefined),
   notice: z.literal("run_not_started").optional().catch(undefined),
-  /** Comparison deviations of evaluation runs only (`only`) or without them (`none`). */
-  evaluation: z.enum(["only", "none"]).optional().catch(undefined),
 });
 
 /** The attribute of a list row in German: profile attributes come labelled, comparison attributes by key. */
@@ -76,17 +73,16 @@ function KindChips({ items }: { items: Array<{ href: string; label: string; coun
 
 export default async function Page({ searchParams }: PageProps<"/review">) {
   await requireAdmin();
-  const { kind, before, notice, evaluation } = querySchema.parse(await searchParams);
+  const { kind, before, notice } = querySchema.parse(await searchParams);
   const db = getDb();
-  const [counts, tasks] = await Promise.all([reviewCounts(db), listOpenTasks(db, { kind, evaluation, limit: PAGE_SIZE, before })]);
+  const [counts, tasks] = await Promise.all([reviewCounts(db), listOpenTasks(db, { kind, limit: PAGE_SIZE, before })]);
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
-  const href = (q: { kind?: string; evaluation?: string; before?: string }) => {
+  const href = (q: { kind?: string; before?: string }) => {
     const params = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => e[1] !== undefined));
     return params.size > 0 ? `/review?${params}` : "/review";
   };
-  const filter = (k?: string) => href({ kind: k, evaluation });
-  const more = tasks.length === PAGE_SIZE ? href({ kind, evaluation, before: tasks.at(-1)!.id }) : null;
-  const evaluationKinds = !kind || kind === "comparison_deviation";
+  const filter = (k?: string) => href({ kind: k });
+  const more = tasks.length === PAGE_SIZE ? href({ kind, before: tasks.at(-1)!.id }) : null;
   const now = new Date();
 
   return (
@@ -123,19 +119,6 @@ export default async function Page({ searchParams }: PageProps<"/review">) {
           ]}
         />
       </div>
-
-      {evaluationKinds && counts.comparison_deviation > 0 && (
-        <div className="mb-4">
-          <FilterChips
-            label="Abweichungen aus Bewertungsläufen"
-            items={[
-              { href: href({ kind }), label: "Alle", current: !evaluation },
-              { href: href({ kind, evaluation: "none" }), label: "Ohne Bewertung", current: evaluation === "none" },
-              { href: href({ kind, evaluation: "only" }), label: "Nur Bewertung", current: evaluation === "only" },
-            ]}
-          />
-        </div>
-      )}
 
       <Panel
         title={kind ? REVIEW_KIND_LABELS[kind] : "Offene Aufgaben"}
@@ -177,11 +160,6 @@ export default async function Page({ searchParams }: PageProps<"/review">) {
                         {t.name ?? t.subjectId}
                       </Link>
                       {attributeText(t.kind, t.attribute) && <span className="ml-1.5 text-muted">· {attributeText(t.kind, t.attribute)}</span>}
-                      {t.evaluation && (
-                        <span className="ml-2" title="Abweichung eines Bewertungslaufs (Kandidat für eine neue Konfiguration), nicht des laufenden Profils">
-                          <Badge tone="neutral">Bewertung</Badge>
-                        </span>
-                      )}
                     </td>
                     {!kind && (
                       <td className={tdClass}>
