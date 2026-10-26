@@ -276,7 +276,9 @@ export async function assignObjects(
   ids: string[],
 ): Promise<{ subdivisions: number; seas: number; updated: number; links: number }> {
   if (ids.length === 0) return { subdivisions: 0, seas: 0, updated: 0, links: 0 };
-  const only = sql`c.id in ${ids}`;
+  // one array parameter: a list of ids would bind one parameter each (Postgres allows 65,535 per statement)
+  const idArray = sql`${sql.param(ids)}::uuid[]`;
+  const only = sql`c.id = any(${idArray})`;
   const subdivisions = await setSubdivisions(db, only);
   const seas = await setSeas(db, only);
   let updated = 0;
@@ -288,7 +290,7 @@ export async function assignObjects(
     select t.id, o.id
     from geo_objects o
     join tiles t on t.bbox && o.geom and ST_Intersects(t.bbox, o.geom)
-    where o.id in ${ids} and t.valid_to is null and o.valid_to is null and o.merged_into_id is null
+    where o.id = any(${idArray}) and t.valid_to is null and o.valid_to is null and o.merged_into_id is null
       and o.type not in ${UNTILED_TYPES}
     on conflict do nothing`);
   return { subdivisions, seas, updated, links: res.rowCount ?? 0 };

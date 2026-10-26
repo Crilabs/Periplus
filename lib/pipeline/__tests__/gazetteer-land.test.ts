@@ -294,6 +294,21 @@ describe("importLandThings", () => {
       expect(await db.select().from(tileGeoObjects).where(eq(tileGeoObjects.geoObjectId, settlement))).toEqual([]);
     }));
 
+  it("a non-POI object carrying the QID of a far item is neither counted nor reassigned", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      // deliberately stale: a bay that carries the monastery's Wikidata id, without subdivision or tile link
+      const bay = await insertNamedObject(db, { type: "bay", names: [{ name: "Ormos Monis" }], lon: MONASTERY_AT.lon, lat: MONASTERY_AT.lat });
+      await db.update(geoObjects).set({ wikidataId: qid(MONASTERY) }).where(eq(geoObjects.id, bay));
+      const result = await run(db, KEY);
+      // castle and neighbour castle only; the monastery item went to the bay, so no POI was stored for it
+      expect(result).toMatchObject({ near: 3, far: 2, created: 5 });
+      const [row] = await db.select().from(geoObjects).where(eq(geoObjects.id, bay));
+      expect(row).toMatchObject({ type: "bay", subdivisionId: null, parentId: null, seaId: null });
+      expect(await db.select().from(tileGeoObjects).where(eq(tileGeoObjects.geoObjectId, bay))).toEqual([]);
+      expect((await stored(db)).filter((r) => r.wikidataId === qid(MONASTERY)).map((r) => r.id)).toEqual([bay]);
+    }));
+
   it("a far box that keeps failing is asked again as four quadrants, and the stage still succeeds", () =>
     withRollback(async (db) => {
       await prepare(db);

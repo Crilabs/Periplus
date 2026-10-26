@@ -13,7 +13,7 @@ import {
   assignTiles,
 } from "@/lib/domain/gazetteer/hierarchy";
 import { ensureSubdivisionTiles } from "@/lib/domain/gazetteer/tiles-ensure";
-import { newPublicId } from "@/lib/domain/ids";
+import { newId, newPublicId } from "@/lib/domain/ids";
 import { tileIdFor, type Bbox } from "@/lib/domain/tiles";
 import { withRollback } from "@/test/db";
 
@@ -442,6 +442,16 @@ describe("assignObjects", () => {
       // a rerun adds nothing
       expect(await assignObjects(db, [poi])).toEqual({ subdivisions: 0, seas: 0, updated: 0, links: 0 });
       expect(await assignObjects(db, [])).toEqual({ subdivisions: 0, seas: 0, updated: 0, links: 0 });
+    }));
+
+  it("takes more ids than one statement has parameters (one array parameter)", () =>
+    withRollback(async (db) => {
+      const { subdivisionId } = await setup(db);
+      await ensureSubdivisionTiles(db, subdivisionId);
+      const poi = await insert(db, "poi", point(25.4, 35.4), { category: "food" });
+      const ids = [...Array.from({ length: 70_000 }, () => newId()), poi];
+      expect(await assignObjects(db, ids)).toMatchObject({ subdivisions: 1, links: 1 });
+      expect(await subdivisionOf(db, poi)).toBe(subdivisionId);
     }));
 });
 

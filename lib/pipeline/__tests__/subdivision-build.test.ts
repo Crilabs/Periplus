@@ -5,6 +5,7 @@ import type { Db } from "@/lib/db/client";
 import { runs, subdivisions } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { LAND_STAGE } from "@/lib/pipeline/gazetteer/land";
+import { DETECT_BAYS_STAGE, GEOMETRY_STAGE } from "@/lib/pipeline/geometry";
 import { GAZETTEER_STAGES, startLandRun } from "@/lib/pipeline/gazetteer/stages";
 import { afterBuildRunEnded, queueCountry, startSubdivisionBuild, SUBDIVISION_BUILD_STAGES } from "@/lib/pipeline/subdivision-build";
 import { RunScopeNotReady, SEED_STAGE } from "@/lib/pipeline/tile-scope";
@@ -49,10 +50,13 @@ describe("SUBDIVISION_BUILD_STAGES", () => {
 });
 
 describe("stage gazetteer.land", () => {
-  it("runs in the build directly after seed.tile", () => {
+  it("runs in the build after the geometry stages, so the computed bays are candidates, before areas.import", () => {
     const stages: readonly string[] = SUBDIVISION_BUILD_STAGES;
     expect(LAND_STAGE).toBe("gazetteer.land");
-    expect(stages.indexOf(LAND_STAGE)).toBe(stages.indexOf(SEED_STAGE) + 1);
+    expect(stages.indexOf(LAND_STAGE)).toBeGreaterThan(stages.indexOf(SEED_STAGE));
+    expect(stages.indexOf(LAND_STAGE)).toBeGreaterThan(stages.indexOf(DETECT_BAYS_STAGE));
+    expect(stages.indexOf(LAND_STAGE)).toBe(stages.indexOf(GEOMETRY_STAGE) + 1);
+    expect(stages.indexOf(LAND_STAGE)).toBe(stages.indexOf("areas.import") - 1);
   });
 
   it("startLandRun refuses a subdivision without candidates before the run exists", () =>

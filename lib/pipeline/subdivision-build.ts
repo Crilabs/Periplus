@@ -13,8 +13,8 @@ import { SEED_STAGE } from "@/lib/pipeline/tile-scope";
 
 /*
  * „Aufbauen“ of a subdivision (spec 14 „Landesteil-Lauf“, „Admin-UI“): one run of kind `full` with the stages of the
- * gazetteer, dataset, seed, things on land (`gazetteer.land`, N7 4.4), marina website (`places.website`, spec 15 C),
- * geometry runs and the Revier import, in that order. The research of the subdivision is a separate run the operator
+ * gazetteer, dataset, seed, marina website (`places.website`, spec 15 C), geometry runs, things on land
+ * (`gazetteer.land`, N7 4.4) and the Revier import, in that order. The research of the subdivision is a separate run the operator
  * starts per subdivision (N6: the build neither re-reads mentions nor discovers sources). Each stage plans when it is
  * reached, so the run needs no
  * tiles to start (the gazetteer creates them). A queue per country („Alle offenen aufbauen“) builds one subdivision
@@ -27,11 +27,13 @@ export const SUBDIVISION_BUILD_STAGES = [
   ...GAZETTEER_STAGES,
   DATASETS_STAGE,
   SEED_STAGE,
-  // the things on land around the seeded candidates (N7 4.4); it assigns what it loads itself
-  LAND_STAGE,
   // the websites of the seeded marinas and ports become approved sources (spec 15 C); their crawl stays a separate run
   PLACE_WEBSITE_STAGE,
   ...GEOMETRY_RUN_STAGES,
+  // the things on land around the candidates (N7 4.4), after geometry: `geometry.detect_bays` creates candidates
+  // (computed bays) and `geometry.place` their computed anchor positions, the ring centers; neither reads POIs.
+  // It assigns what it loads itself.
+  LAND_STAGE,
   AREA_IMPORT_STAGE,
 ] as const;
 

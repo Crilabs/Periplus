@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { RetryableHttpError, type CallContext, type Transport } from "@/lib/adapters/http";
 import { buildLandQuery, overpassQueryRetrying, type OverpassElement } from "@/lib/adapters/overpass";
 import type { Archive } from "@/lib/adapters/s3";
@@ -262,15 +262,27 @@ export async function importLandThings(
     }
     const classes = Object.fromEntries(land.wikidataClasses.map((c): [string, GeoObjectType] => [c, "poi"]));
     const wd = await importWikidataItems(tx, wikidataItems, { classes, categories: categories.wikidata, allowCreate: new Set<GeoObjectType>(["poi"]) });
-    result.far += wikidataItems.length - wd.skipped;
     result.created += wd.created;
     result.skippedGeometry += wd.skipped;
     if (wikidataItems.length > 0) {
+      // the POIs the items were stored as or linked to; an item linked to another type (a bay carrying the id) is not
+      // this stage's object and is neither counted nor assigned, one already counted in the near ring not twice
       const rows = await tx
         .select({ id: geoObjects.id })
         .from(geoObjects)
-        .where(and(inArray(geoObjects.wikidataId, wikidataItems.map((i) => i.id)), isNull(geoObjects.validTo), isNull(geoObjects.mergedIntoId)));
-      for (const row of rows) ids.add(row.id);
+        .where(
+          and(
+            sql`${geoObjects.wikidataId} = any(${sql.param(wikidataItems.map((i) => i.id))}::text[])`,
+            eq(geoObjects.type, "poi"),
+            isNull(geoObjects.validTo),
+            isNull(geoObjects.mergedIntoId),
+          ),
+        );
+      for (const row of rows) {
+        if (ids.has(row.id)) continue;
+        ids.add(row.id);
+        result.far++;
+      }
     }
   });
 
