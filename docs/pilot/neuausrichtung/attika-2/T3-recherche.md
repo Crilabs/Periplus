@@ -78,3 +78,12 @@ die Batch-API von Anthropic (Rauchprobe 1: 2–3 min); kein Fehler bei uns.
 - **Strand-Kandidaten:** 25 liegen bei einem Spot; 23 davon ohne Suchtreffer, 2 mit zu wenigen Quellen. Die Suche unter
   Strandnamen liefert Badestrand- und Hotelseiten, oft aus anderen Regionen (gleichnamige Strände), keine
   Ankerplatz-Seiten. Kein neuer bestätigter Platz.
+
+## Step 3: Hauptlauf GR-I
+
+Christian (27.10.): Hauptlauf mit DataForSEO 20 €/Tag (PR #46, Deploy `d54f6142`, `configHash` `01d905402a9040b9`).
+
+Ohne `confirm` (27.10. 21:13): 764 Plätze; Server-Schätzung 30,95 € (Basis Rauchprobe 2 mit Cache, daher zu niedrig).
+Eigene Hochrechnung aus Rauchprobe 1 (11,59 € für 81 Plätze ohne Cache, 0,143 €/Platz): **~110 €**, davon DataForSEO
+~15 €. Budgetstand vor dem Start: Anthropic 13,44/80 €, DataForSEO 2,24/20 €, OpenAI 0,25/10 €. Abbruch (`run_end`) über
+**165 €** (+50 %). Anthropic-Tagesbudget reicht nicht für einen Tag; der Lauf wartet am Budget und setzt am Folgetag fort.
