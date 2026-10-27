@@ -93,7 +93,7 @@ Die Raumgliederung (Landesteile, Grob-Gazetteer, Landpolygone) bleibt nötig, mu
 
 ### 5.2 Kandidaten
 
-Kandidaten sind Buchten, Häfen, Marinas, Seezeichen-Ankerplätze und Bojenfelder aus dem Gerüst und aus der Entdeckung (5.5). Je Kandidat rechnet die Geometrie (Teil-Spec 04) Schutz je Sektor, Tiefe, Grund, Ankerfläche und Ankerposition. Liegt er in einer Sperrfläche mit Ankerverbot, wird er `no_anchoring` und nicht recherchiert. **Kandidaten werden nie geliefert.**
+Kandidaten sind Buchten, Häfen, Marinas, Seezeichen-Ankerplätze, Bojenfelder und benannte Küstenstrände (Ankerplatz im Wasser vor dem Strand; liegt dort schon ein Platz, gibt der Strand einem unbenannten Platz nur seinen Namen; Attika 2, B28) aus dem Gerüst und aus der Entdeckung (5.5). Je Kandidat rechnet die Geometrie (Teil-Spec 04) Schutz je Sektor, Tiefe, Grund, Ankerfläche und Ankerposition. Liegt er in einer Sperrfläche mit Ankerverbot, wird er `no_anchoring` und nicht recherchiert. **Kandidaten werden nie geliefert.**
 
 ### 5.3 Recherche je Kandidat
 

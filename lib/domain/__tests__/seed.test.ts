@@ -14,6 +14,7 @@ import {
   tiles,
   type GeoObjectType,
   type PlaceKind,
+  type PoiCategory,
   type RestrictedKind,
 } from "@/lib/db/schema";
 import { placeKindFromTags, seedTile } from "@/lib/domain/seed";
@@ -49,6 +50,7 @@ type ObjectInput = {
   tileIds?: string[];
   mergedIntoId?: string;
   ended?: boolean;
+  category?: PoiCategory;
 };
 
 async function insertObject(db: Db, o: ObjectInput): Promise<string> {
@@ -59,6 +61,7 @@ async function insertObject(db: Db, o: ObjectInput): Promise<string> {
       origin: "osm",
       geom: sql`${geomFromGeoJson(o.geometry)}`,
       tags: o.tags ?? {},
+      category: o.category,
       mergedIntoId: o.mergedIntoId,
       ...(o.ended ? { validFrom: "2020-01-01", validTo: "2021-01-01" } : {}),
     })
@@ -141,7 +144,7 @@ describe("seedTile", () => {
       ]);
 
       const result = await seedTile(db, T1, cfg());
-      expect(result).toEqual({ created: 4, existing: 0, skippedOtherTile: 0, noAnchoring: 0 });
+      expect(result).toEqual({ created: 4, existing: 0, skippedOtherTile: 0, noAnchoring: 0, beaches: { created: 0, named: 0 } });
 
       const rows: Awaited<ReturnType<typeof placeOf>>[] = [];
       for (const id of [bay, harbour, marina, mooring]) rows.push(await placeOf(db, id));
@@ -180,9 +183,9 @@ describe("seedTile", () => {
       // Centroid at 27.21 E: in T1.
       const bay = await insertObject(db, { type: "bay", geometry: box(27.15, 34.1, 27.27, 34.15), tileIds: [T1, T2] });
 
-      expect(await seedTile(db, T2, cfg())).toEqual({ created: 0, existing: 0, skippedOtherTile: 1, noAnchoring: 0 });
-      expect(await seedTile(db, T1, cfg())).toEqual({ created: 1, existing: 0, skippedOtherTile: 0, noAnchoring: 0 });
-      expect(await seedTile(db, T2, cfg())).toEqual({ created: 0, existing: 0, skippedOtherTile: 1, noAnchoring: 0 });
+      expect(await seedTile(db, T2, cfg())).toEqual({ created: 0, existing: 0, skippedOtherTile: 1, noAnchoring: 0, beaches: { created: 0, named: 0 } });
+      expect(await seedTile(db, T1, cfg())).toEqual({ created: 1, existing: 0, skippedOtherTile: 0, noAnchoring: 0, beaches: { created: 0, named: 0 } });
+      expect(await seedTile(db, T2, cfg())).toEqual({ created: 0, existing: 0, skippedOtherTile: 1, noAnchoring: 0, beaches: { created: 0, named: 0 } });
 
       const rows = await db.select({ tileId: places.tileId }).from(places).where(eq(places.geoObjectId, bay));
       expect(rows).toEqual([{ tileId: T1 }]);
@@ -227,7 +230,7 @@ describe("seedTile", () => {
       const blocked = await insertObject(db, { type: "bay", geometry: point(27.02, 34.02) });
       const protectedBay = await insertObject(db, { type: "bay", geometry: point(27.07, 34.07) });
 
-      expect(await seedTile(db, T1, cfg())).toEqual({ created: 2, existing: 0, skippedOtherTile: 0, noAnchoring: 1 });
+      expect(await seedTile(db, T1, cfg())).toEqual({ created: 2, existing: 0, skippedOtherTile: 0, noAnchoring: 1, beaches: { created: 0, named: 0 } });
 
       const blockedPlace = await placeOf(db, blocked);
       expect(blockedPlace).toMatchObject({ status: "no_anchoring", statusReason: `restricted:military:${military}` });
@@ -250,6 +253,7 @@ describe("seedTile", () => {
         existing: 0,
         skippedOtherTile: 0,
         noAnchoring: 1,
+        beaches: { created: 0, named: 0 },
       });
       expect(await placeOf(db, inBanned)).toMatchObject({
         status: "no_anchoring",
@@ -269,11 +273,81 @@ describe("seedTile", () => {
       // A restricted area appearing later does not touch existing places.
       await insertRestricted(db, "military", box(27.0, 34.0, 27.25, 34.25));
 
-      expect(await seedTile(db, T1, cfg())).toEqual({ created: 0, existing: 2, skippedOtherTile: 0, noAnchoring: 0 });
+      expect(await seedTile(db, T1, cfg())).toEqual({ created: 0, existing: 2, skippedOtherTile: 0, noAnchoring: 0, beaches: { created: 0, named: 0 } });
       expect(await placeOf(db, a)).toMatchObject({ status: "confirmed", statusReason: null });
       expect(await placeOf(db, b)).toMatchObject({ status: "candidate", statusReason: null });
       const count = await db.$count(places, inArray(places.geoObjectId, [a, b]));
       expect(count).toBe(2);
       expect(await tasksFor(db, [placeA!.id, placeB!.id])).toHaveLength(2);
+    }));
+});
+
+describe("seedTile: beaches", () => {
+  // Land west of 27.10 E; a beach on its shore at 27.0995 E faces the open water to the east.
+  const land = box(27.0, 34.0, 27.1, 34.25);
+  const addLand = (db: Db) => db.insert(landPolygons).values({ geom: sql`${geomFromGeoJson(land)}`, datasetVersion: "test" });
+  const beachAt = (db: Db, lon: number, lat: number) =>
+    insertObject(db, { type: "poi", category: "beach", geometry: point(lon, lat), tags: { natural: "beach" } });
+  const name = (geoObjectId: string, n: string, language = "en") => ({
+    geoObjectId, name: n, nameNormalized: n.toLowerCase(), language, script: "latin" as const, origin: "osm" as const,
+  });
+  const beachPlaces = (db: Db) =>
+    db.execute<{ id: string; geo_object_id: string; kind: string; status: string; origin: string; type: string; in_water: boolean; shore_m: number }>(sql`
+      select p.id, p.geo_object_id, p.kind, p.status, o.origin, o.type,
+        not exists (select 1 from land_polygons l where ST_Intersects(l.geom, p.position)) as in_water,
+        ST_Distance(p.position::geography, ST_Boundary(${geomFromGeoJson(land)})::geography) as shore_m
+      from places p join geo_objects o on o.id = p.geo_object_id
+      where o.origin = 'computed'`);
+
+  it("a named coastal beach without a candidate nearby becomes an anchorage candidate in the water in front of it", () =>
+    withRollback(async (db) => {
+      await addLand(db);
+      const beach = await beachAt(db, 27.0995, 34.1);
+      await db.insert(geoNames).values([name(beach, "Golden Beach"), name(beach, "Χρυσή Αμμουδιά", "el")]);
+
+      const result = await seedTile(db, T1, cfg());
+      expect(result).toMatchObject({ created: 1, beaches: { created: 1, named: 0 } });
+
+      const { rows } = await beachPlaces(db);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ kind: "anchorage", status: "candidate", origin: "computed", type: "bay", in_water: true });
+      expect(rows[0]!.shore_m).toBeLessThanOrEqual(cfg().beachCandidates.offshoreM + 1);
+      const names = await db.select({ name: geoNames.name }).from(geoNames).where(eq(geoNames.geoObjectId, rows[0]!.geo_object_id));
+      expect(names.map((n) => n.name)).toEqual(expect.arrayContaining(["Golden Beach", "Χρυσή Αμμουδιά"]));
+      const links = await db.select().from(tileGeoObjects).where(eq(tileGeoObjects.geoObjectId, rows[0]!.geo_object_id));
+      expect(links).toEqual([{ tileId: T1, geoObjectId: rows[0]!.geo_object_id }]);
+      expect(await tasksFor(db, [rows[0]!.id])).toHaveLength(1);
+
+      // a rerun creates nothing
+      expect(await seedTile(db, T1, cfg())).toMatchObject({ created: 0, beaches: { created: 0, named: 0 } });
+    }));
+
+  it("a beach near an existing candidate creates nothing; an unnamed candidate there takes the beach's names", () =>
+    withRollback(async (db) => {
+      await addLand(db);
+      const named = await insertObject(db, { type: "bay", geometry: point(27.101, 34.2) });
+      await db.insert(geoNames).values(name(named, "North Bay"));
+      const unnamed = await insertObject(db, { type: "bay", geometry: point(27.101, 34.1) });
+      const b1 = await beachAt(db, 27.0995, 34.2);
+      const b2 = await beachAt(db, 27.0995, 34.1);
+      await db.insert(geoNames).values([name(b1, "North Beach"), name(b2, "Sandy Beach")]);
+
+      const result = await seedTile(db, T1, cfg());
+      expect(result).toMatchObject({ created: 2, beaches: { created: 0, named: 1 } });
+      const namesOf = async (id: string) =>
+        (await db.select({ name: geoNames.name }).from(geoNames).where(eq(geoNames.geoObjectId, id))).map((n) => n.name).sort();
+      expect(await namesOf(named)).toEqual(["North Bay"]);
+      expect(await namesOf(unnamed)).toEqual(["Sandy Beach"]);
+      expect((await beachPlaces(db)).rows).toEqual([]);
+    }));
+
+  it("an unnamed beach and a beach away from the coast are no candidates", () =>
+    withRollback(async (db) => {
+      await addLand(db);
+      await beachAt(db, 27.0995, 34.1);
+      const inland = await beachAt(db, 27.05, 34.15);
+      await db.insert(geoNames).values(name(inland, "Lake Beach"));
+
+      expect(await seedTile(db, T1, cfg())).toMatchObject({ created: 0, beaches: { created: 0, named: 0 } });
     }));
 });

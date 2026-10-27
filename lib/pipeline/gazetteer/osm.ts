@@ -97,7 +97,8 @@ export async function nearCoast(db: Db, geometry: GeoObjectDraft["geometry"], di
  * `bboxBufferKm` (`buildGazetteerQuery`), archives the raw answer under
  * `datasets/overpass/<subdivision key>/<YYYY-MM-DD>.json` and upserts every classified, named element in one
  * transaction (all or nothing). Settlements are kept only within `coastDistanceM` of the water. POIs are not stored
- * here (the stage around the candidates loads them); one in the answer counts as `skipped`. A relation with more
+ * here (the stage around the candidates loads them) except beaches within `beachCandidates.coastM` of the water, which
+ * `seedTile` turns into anchorage candidates (B28); any other POI in the answer counts as `skipped`. A relation with more
  * member points than `overpass.maxRelationPoints` is logged and counted in `skippedLarge`. An element whose geometry
  * cannot be repaired is logged and skipped. Requires land polygons for the box.
  */
@@ -125,7 +126,8 @@ export async function importOsm(
     for (const el of elements) {
       const tags = el.tags ?? {};
       const cls = classifyOsm(tags, categories, el.type);
-      const geometry = cls && cls.type !== "poi" && elementGeometry(el);
+      const beach = cls?.type === "poi" && cls.category === "beach";
+      const geometry = cls && (cls.type !== "poi" || beach) && elementGeometry(el);
       if (!cls || !geometry) {
         result.skipped++;
         continue;
@@ -137,6 +139,10 @@ export async function importOsm(
         continue;
       }
       if (cls.type === "settlement" && !(await nearCoast(tx, geometry, gazetteer.coastDistanceM))) {
+        result.skipped++;
+        continue;
+      }
+      if (beach && !(await nearCoast(tx, geometry, gazetteer.beachCandidates.coastM))) {
         result.skipped++;
         continue;
       }

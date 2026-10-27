@@ -34,6 +34,7 @@ describe("buildGazetteerQuery", () => {
     expect(ql.startsWith("[out:json][timeout:180];")).toBe(true);
     expect(ql).toContain('relation["place"="gulf"](37.5,23,37.75,23.25);');
     expect(ql).toContain('relation["natural"="bay"](37.5,23,37.75,23.25);');
+    expect(ql).toContain('nwr["natural"="beach"](37.5,23,37.75,23.25);');
     expect(ql).toContain('way["natural"="bay"](37.5,23,37.75,23.25);');
     expect(ql).toContain('nwr["place"~"^(island|islet|archipelago)$"](37.5,23,37.75,23.25);');
     expect(ql).toContain('node["place"~"^(town|village|hamlet)$"](37.5,23,37.75,23.25);');
