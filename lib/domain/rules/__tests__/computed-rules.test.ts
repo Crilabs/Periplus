@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConsolidationInput } from "@/lib/domain/rules/types";
+import { getConsolidationConfig } from "@/lib/config";
 import { computed, review, ruleCtx, text } from "@/test/fixtures/consolidation/scenarios";
 import { bathymetryRule } from "../bathymetry";
 import { computedOnlyRule } from "../computed-only";
@@ -20,13 +21,31 @@ const depthCtx = ruleCtx({ attribute: "depth.anchoring_min" });
 describe("shelterRule", () => {
   it.each<[string, ConsolidationInput[], number, string]>([
     ["computed only", [c(0.6)], 0.6, "computed"],
-    ["good text within one step", [c(0.6), t(0.9)], 0.9, "text"],
+    ["better text raises by at most 0.1", [c(0.6), t(0.9)], 0.7, "text"],
+    ["better text within 0.1", [c(0.6), t(0.65)], 0.65, "text"],
     ["poor text corrected by at most 0.3", [c(0.6), t(0.1)], 0.3, "text"],
     ["contradicting texts take the worse", [c(0.6), t(0.9), t(0.5, { sourceKey: "source:b" })], 0.5, "text"],
     ["no computation: text value", [t(0.5)], 0.5, "text"],
     ["an observation corrects like a text", [c(0.6), t(0.1, { origin: "observed" })], 0.3, "observed"],
   ])("shelter: %s", (_n, inputs, value, origin) => {
     expect(shelterRule(inputs, ctx)).toMatchObject({ value, origin, conflict: null });
+  });
+
+  it("a text raises the basis by at most maxRaise, lowers it by up to maxCorrection (test run Attika 2)", () => {
+    expect(ctx.cfg.rules.shelter).toMatchObject({ maxRaise: 0.1, maxCorrection: 0.3 });
+    // a blanket "very good from any direction" (0.9) cannot close an open sector
+    expect(shelterRule([c(0.597), t(0.9)], ctx)).toMatchObject({ value: 0.697, origin: "text" });
+    expect(shelterRule([c(0.597), t(0.2)], ctx)).toMatchObject({ value: 0.297, origin: "text" });
+    expect(shelterRule([t(0.9)], ctx)).toMatchObject({ value: 0.9, origin: "text" });
+    // a review raises like a text
+    expect(shelterRule([c(0.597), review({ value: 0.9 })], ctx)).toMatchObject({ value: 0.697, origin: "review" });
+  });
+
+  it("rules v3 (no maxRaise) keeps raising by up to maxCorrection", () => {
+    const v3 = ruleCtx({ attribute: "shelter.N", cfg: getConsolidationConfig("v3") });
+    expect(v3.cfg.rules.shelter).not.toHaveProperty("maxRaise");
+    expect(shelterRule([c(0.597), t(0.9)], v3)).toMatchObject({ value: 0.897, origin: "text" });
+    expect(shelterRule([c(0.6), t(0.9)], v3)).toMatchObject({ value: 0.9, origin: "text" });
   });
 
   it("the youngest computation is the basis", () => {
@@ -42,7 +61,7 @@ describe("shelterRule", () => {
 
   it("confidence over the support: computed alone, confirmed by a text", () => {
     expect(shelterRule([c(0.6, { confidence: 0.6 })], ctx)!.confidence).toBe(0.6);
-    // the text carries the result 0.9, the computation (0.6) does not: base max(0.6, 0.8 × 1), no bonus
+    // the text sets the result 0.7, the computation (0.6) does not carry it: base 0.8 × 1 of the text, no bonus
     expect(shelterRule([c(0.6, { confidence: 0.6 }), t(0.9)], ctx)!.confidence).toBe(0.8);
     // both carry 0.6: second independent source +0.15, cap 0.95
     expect(shelterRule([c(0.6, { confidence: 0.6 }), t(0.6)], ctx)!.confidence).toBe(0.95);

@@ -519,9 +519,9 @@ describe("consolidation rules", () => {
     return rules;
   };
 
-  it("consolidation v3 is active and keeps the rules of the berth state", () => {
+  it("consolidation v4 is active and keeps the rules of the berth state", () => {
     const c = getConfig().consolidation;
-    expect(c.version).toBe("v3");
+    expect(c.version).toBe("v4");
     expect(c).toMatchObject({
       recency: { halfLifeYears: 3 },
       precision: 3,
@@ -530,7 +530,8 @@ describe("consolidation rules", () => {
       expiry: { cycles: 2, defaultCycleDays: 365 },
       weights: { computed: 1, review: 1, observed: 0.8, poi: 0.6 },
     });
-    expect(c.rules.shelter).toMatchObject({ maxCorrection: 0.3, harbourFloor: 0.8, openSideMinConfidence: 0.7 });
+    // a text raises a sector by at most 0.1, lowers it by up to 0.3 (test run Attika 2)
+    expect(c.rules.shelter).toMatchObject({ maxCorrection: 0.3, maxRaise: 0.1, harbourFloor: 0.8, openSideMinConfidence: 0.7 });
     expect(c.rules.shelter.harbourKinds).toEqual(["port", "marina"]);
     expect(c.confidence.classes.map((k) => k.name)).toEqual(["high", "medium", "low"]);
     // identity keys of the list attributes merged by `union`; [] = the element itself
@@ -566,6 +567,9 @@ describe("consolidation rules", () => {
     };
     expect(withRules((c) => ((c.confidence.classes[2] as { min: number }).min = 0.1))).toThrow(/consolidation\/v2\.json.*confidence/);
     expect(withRules((c) => Object.assign(c, { bogus: 1 }))).toThrow(/consolidation\/v2\.json/);
+    expect(withRules((c) => (c.rules.shelter.maxRaise = 0.4))).toThrow(/consolidation\/v2\.json.*maxRaise/);
+    expect(withRules((c) => (c.rules.shelter.maxRaise = -0.1))).toThrow(/consolidation\/v2\.json.*maxRaise/);
+    expect(withRules((c) => delete c.rules.shelter.maxRaise)).not.toThrow();
     expect(withRules(() => {})).not.toThrow();
   });
 

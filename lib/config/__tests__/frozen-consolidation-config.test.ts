@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 const FROZEN: Record<string, string> = {
   "v3.json": "ba63ef0b2c3ceb46592fa9d014da0ed604f4af435495b704f391af7fcc38302f",
+  "v4.json": "759017108d5d97d9343afc1c783c40ddce24a32a76dca06237bb721b793217be",
 };
 
 describe("frozen consolidation rules versions", () => {
