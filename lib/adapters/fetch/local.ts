@@ -39,6 +39,17 @@ function removeAll(document: ReturnType<typeof parseHTML>["document"], selector:
 }
 
 /**
+ * Parses `html` as a whole document. linkedom builds no `html`/`body` around markup without an `html` root: the first
+ * element becomes the root (a fragment, a JS redirect of only a `script`), or there is none (empty, plain text), and
+ * `body` and Readability fail on it. Such markup is parsed again inside `<html><head></head><body>…</body></html>`.
+ */
+function parseDocument(html: string): ReturnType<typeof parseHTML> {
+  const parsed = parseHTML(html);
+  if (parsed.document.documentElement?.tagName === "HTML") return parsed;
+  return parseHTML(`<!doctype html><html><head></head><body>${html}</body></html>`);
+}
+
+/**
  * Main content of an HTML page as Markdown: removes `script, style, noscript, iframe` and the `selectors`
  * (an invalid selector is an error), extracts the article with Readability (relative links resolved against
  * `<base href>`, else `url`) and converts it with Turndown (ATX headings, fenced code, GFM tables). The title
@@ -54,9 +65,7 @@ export function htmlToMarkdown(html: string, url: string, selectors: string[]): 
 
 /** `htmlToMarkdown` plus the published date Readability reads from the metadata (`article:published_time` …). */
 function convertHtml(html: string, url: string, selectors: string[]) {
-  const { document } = parseHTML(html);
-  // linkedom leaves `documentElement` null for a body without any element (empty, plain text); `body` and Readability throw then.
-  if (!document.documentElement) return { markdown: "", title: null, mainChars: 0, publishedHint: null };
+  const { document } = parseDocument(html);
   removeAll(document, ALWAYS_REMOVED);
   for (const selector of selectors) removeAll(document, selector);
 
