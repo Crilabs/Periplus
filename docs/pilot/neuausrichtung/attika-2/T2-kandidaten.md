@@ -148,3 +148,19 @@ bleibt offen. Die Obergrenze +0,1 für Schutz aus Text gilt auch für Review-Ent
 - Die Lücke ist strukturell: Die Referenz kennt Spots an fast jeder Küste, auch mehrere je Bucht und an gerader Küste
   ohne Namen; das Gerüst kennt einen Platz je benanntem Merkmal. Weiteres Nachschärfen am Gerüst bringt nach dieser
   Zerlegung höchstens einige Prozentpunkte; 50 % bei 150 m sind so nicht erreichbar.
+
+Christian (27.10., nach Rauchprobe 2): Hauptlauf mit DataForSEO-Budget 20 €/Tag (PR #46); Toleranz 300 m prüfen.
+
+### Toleranz 300 m (nur gemessen, Abnahmeregel unverändert)
+
+`maxPositionDeviationM` steht in der Tor-Config (`gateConfigHash` `7d3da3c5b8cf1d15`); `research:gate` rechnet immer mit
+der Config von Produktion. Wirkung aus den Messungen oben:
+
+| | 150 m | 300 m |
+| --- | ---: | ---: |
+| Obergrenze Abdeckung (Kandidat in Reichweite, 414 Spots) | 25,1 % | 45,6 % (189) |
+| Positionsfehler der Rauchprobe (466 m Marina, 432 m Bucht) | 2 | 2 |
+
+Auch bei 300 m bleibt die Obergrenze unter 50 %; die beiden Positionsfehler blieben Fehler. 300 m heißt: eine
+Ankerposition darf 300 m vom Liegeplatz der Referenz abweichen; in kleinen Buchten ist das die ganze Bucht.
+Entscheidung über die Abnahmeregel bei Christian (T8).
