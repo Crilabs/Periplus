@@ -79,9 +79,11 @@ describe("computePlaceGeometry", () => {
       expect(fetch.inputs.originSource).toBe("computed_anchor");
       const origin = fetch.inputs.origin as { lon: number; lat: number };
       const { x, y } = await utmOf(tx, origin);
-      expect(Math.abs(x)).toBeLessThan(60);
-      expect(y).toBeGreaterThan(100);
-      expect(y).toBeLessThan(300);
+      // In the nearshore band: 30–150 m off the shore of the 500 m bay circle, inside the bay.
+      const offShoreM = 500 - Math.hypot(x, y);
+      expect(offShoreM).toBeGreaterThanOrEqual(30);
+      expect(offShoreM).toBeLessThanOrEqual(150);
+      expect(y).toBeGreaterThan(0);
       expect(fetch.inputs.landVersions).toEqual([SCENE_LAND_VERSION]);
       expect(fetch.outputs.rays as number[]).toHaveLength(72);
 
@@ -89,13 +91,15 @@ describe("computePlaceGeometry", () => {
       expect(Math.abs(shelterOf("S"))).toBeLessThanOrEqual(0.02);
       expect(shelterOf("N")).toBeGreaterThanOrEqual(0.93);
       for (const s of SECTORS) expect(factValue(stored, "shelter", `shelter.${s}`)!.confidence).toBe(0.6);
-      expect(factValue(stored, "shelter", "opening_bearing")!.value).toMatchObject({ bearingDeg: 180 });
+      // South out of the bay mouth, seen from the anchor off the bay's centre line.
+      const { bearingDeg } = factValue(stored, "shelter", "opening_bearing")!.value as { bearingDeg: number };
+      expect(Math.abs(bearingDeg - 180)).toBeLessThanOrEqual(30);
       expect(factValue(stored, "shelter", "swell_protection")!.confidence).toBe(0.4);
       expect(factValue(stored, "fetch", "fetch.S")!).toMatchObject({ value: 50000, confidence: 0.7 });
 
       const approach = factValue(stored, "depth", "depth.approach")!.value as Record<string, number | null>;
       expect(Object.values(approach).some((v) => v !== null)).toBe(true);
-      expect(approach).toEqual({ at50m: 8, at100m: 10, at200m: 12 });
+      expect(approach).toEqual({ at50m: 8, at100m: 8, at200m: 10 });
       const anchoringMin = factValue(stored, "depth", "depth.anchoring_min")!.value as number;
       const anchoringMax = factValue(stored, "depth", "depth.anchoring_max")!.value as number;
       expect(anchoringMin).toBeGreaterThanOrEqual(3);

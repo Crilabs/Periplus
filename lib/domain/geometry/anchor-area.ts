@@ -9,7 +9,9 @@ import type { LonLat } from "./water";
 /**
  * Anchor area of a place: water with depth `minDepthM`…`maxDepthM` at least `landClearanceM` from land.
  * `key` identifies the geometry like `WaterArea.key` (md5 of its WKB snapped to 1e-7°, `"empty"` without
- * area); `position` = centre of the largest inscribed circle (computed in UTM), null when empty.
+ * area); `position` = centre of the largest inscribed circle (computed in UTM) of the nearshore band (the part of
+ * the area within `nearshoreM` of the land clearance zone), of the whole area when that band is empty; null when
+ * the area is empty.
  */
 export type AnchorArea = {
   geometry: MultiPolygon | null;
@@ -38,7 +40,9 @@ const EMPTY: AnchorArea = { geometry: null, areaM2: 0, position: null, key: "emp
 /**
  * Anchor area inside `water`: raster pixels (centre inside the water, every raster intersecting it) with
  * `minDepthM ≤ depth ≤ maxDepthM` as polygons, unioned, intersected with the water, minus land buffered by
- * `landClearanceM` (land outside the water within the clearance counts too); polygon parts only.
+ * `landClearanceM` (land outside the water within the clearance counts too); polygon parts only. The position sits
+ * in the nearshore band (area within `landClearanceM + nearshoreM` of land, land outside the water counting too) so
+ * it lies where boats anchor rather than in the middle of a wide area; without a band it falls back to the area.
  */
 export async function anchorArea(db: Db, water: Geometry, cfg: GeometryConfig["anchorArea"]): Promise<AnchorArea> {
   const center = bboxCenter(water);
@@ -47,6 +51,9 @@ export async function anchorArea(db: Db, water: Geometry, cfg: GeometryConfig["a
   const { rows } = await db.execute<{ geometry: MultiPolygon | null; area_m2: number; lon: number | null; lat: number | null; key: string }>(sql`
     with w as (select ${geomFromGeoJson(water)} as geom),
     reach as (select ST_Buffer(w.geom::geography, ${cfg.landClearanceM}::float8)::geometry as geom from w),
+    shore_reach as (
+      select ST_Buffer(w.geom::geography, ${cfg.landClearanceM + cfg.nearshoreM}::float8)::geometry as geom from w
+    ),
     depth_band as (
       select ST_Union(d.geom) as geom
       from w, bathymetry b,
@@ -66,9 +73,20 @@ export async function anchorArea(db: Db, water: Geometry, cfg: GeometryConfig["a
       from (select ST_Intersection(depth_band.geom, w.geom) as geom from depth_band, w where depth_band.geom is not null) inside
     ),
     nonempty as (select geom from area where not ST_IsEmpty(geom)),
+    shore as (
+      select ST_Buffer(ST_Union(ST_Intersection(l.geom, r.geom))::geography, ${cfg.landClearanceM + cfg.nearshoreM}::float8)::geometry as geom
+      from land_polygons l, shore_reach r
+      where l.geom && r.geom and ST_Intersects(l.geom, r.geom)
+    ),
+    band as (
+      select ST_CollectionExtract(ST_Intersection(n.geom, shore.geom), 3) as geom
+      from nonempty n, shore
+      where shore.geom is not null
+    ),
     centre as (
-      select ST_Transform((ST_MaximumInscribedCircle(ST_Transform(geom, ${srid}::int))).center, 4326) as geom
-      from nonempty
+      select ST_Transform((ST_MaximumInscribedCircle(ST_Transform(
+               coalesce((select geom from band where not ST_IsEmpty(geom)), n.geom), ${srid}::int))).center, 4326) as geom
+      from nonempty n
     )
     select ST_AsGeoJSON(n.geom)::json as geometry,
            ST_Area(n.geom::geography) as area_m2,

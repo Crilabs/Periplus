@@ -270,7 +270,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
  * Stage `geometry.place` for one place, in one transaction (spec 04). Writes one computation per kind through
  * `recordComputation` (nothing when its inputs equal the newest row), in this order:
  * 1. `anchor_area` (always): water area and anchor area (water with anchoring depth, clear of land), facts
- *    `anchor_area` and `anchor_position` when the area is not empty; gaps `no_water` / `origin_unresolved`
+ *    `anchor_area` and `anchor_position` (in the area's nearshore band) when the area is not empty; gaps `no_water` / `origin_unresolved`
  *    (for `shelter.*`, `fetch.*`) and `no_anchor_area`.
  * 2. `fetch`, 3. `shelter`, 4. `depth` — only with an origin: the review anchor, else this run's computed anchor,
  *    else the place position (moved off land).
