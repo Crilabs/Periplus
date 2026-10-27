@@ -7,6 +7,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { withRollback } from "@/test/db";
 import { insertTestRaster } from "@/test/geometry/raster";
 import { anchorArea } from "../anchor-area";
+import { utmSridFor } from "../projection";
 import type { LonLat } from "../water";
 
 const cfg = loadConfig("config").geometry.anchorArea;
@@ -37,6 +38,28 @@ async function check(tx: Db, area: Geometry, p: LonLat): Promise<{ valid: boolea
     from a, p`);
   const row = rows[0]!;
   return { valid: row.valid, inside: row.inside, dLatM: Number(row.d) };
+}
+
+/** Distance in metres from `p` to the nearest land polygon. */
+async function landDistanceM(tx: Db, p: LonLat): Promise<number> {
+  const { rows } = await tx.execute<{ d: number }>(sql`
+    select min(ST_Distance(l.geom::geography, ST_SetSRID(ST_MakePoint(${p.lon}::float8, ${p.lat}::float8), 4326)::geography)) as d
+    from land_polygons l`);
+  return Number(rows[0]!.d);
+}
+
+/** Centre of the largest inscribed circle of `area` (the rule before the nearshore band) and its distance to `p` in m. */
+async function inscribedCentre(tx: Db, area: Geometry, p: LonLat): Promise<{ centre: LonLat; distanceM: number }> {
+  const srid = utmSridFor(p.lon, p.lat);
+  const { rows } = await tx.execute<{ lon: number; lat: number; d: number }>(sql`
+    with c as (
+      select ST_Transform((ST_MaximumInscribedCircle(ST_Transform(${geomFromGeoJson(area)}, ${srid}::int))).center, 4326) as geom
+    )
+    select ST_X(c.geom) as lon, ST_Y(c.geom) as lat,
+           ST_Distance(c.geom::geography, ST_SetSRID(ST_MakePoint(${p.lon}::float8, ${p.lat}::float8), 4326)::geography) as d
+    from c`);
+  const row = rows[0]!;
+  return { centre: { lon: Number(row.lon), lat: Number(row.lat) }, distanceM: Number(row.d) };
 }
 
 describe("anchorArea", () => {
@@ -90,5 +113,52 @@ describe("anchorArea", () => {
   it("water without raster coverage → empty", () =>
     withRollback(async (tx) => {
       expect((await anchorArea(tx, box(21.1, 35.1, 21.11, 35.11), cfg)).key).toBe("empty");
+    }));
+
+  it("wide area: position in the nearshore band 30–150 m off land, not in the middle of the area", () =>
+    withRollback(async (tx) => {
+      await insertTestRaster(tx);
+      // Land strip on the west: the anchor area is ≈ 790 m wide, its middle ≈ 400 m off land.
+      await insertLandBox(tx, box(21.0, 35.2, 21.001, 35.21));
+      const result = await anchorArea(tx, RASTER_EXTENT, cfg);
+      const c = await check(tx, result.geometry!, result.position!);
+      expect(c.inside).toBe(true);
+      const d = await landDistanceM(tx, result.position!);
+      expect(d).toBeGreaterThanOrEqual(cfg.landClearanceM);
+      expect(d).toBeLessThanOrEqual(cfg.landClearanceM + cfg.nearshoreM);
+      const middle = await inscribedCentre(tx, result.geometry!, result.position!);
+      expect(await landDistanceM(tx, middle.centre)).toBeGreaterThan(cfg.landClearanceM + cfg.nearshoreM);
+    }));
+
+  it("narrow area entirely within the band: position ≈ the inscribed-circle centre of the area", () =>
+    withRollback(async (tx) => {
+      await insertTestRaster(tx);
+      await insertLandBox(tx, box(21.0, 35.2, 21.001, 35.21));
+      // Water 21.001–21.0025: the anchor area lies 30–136 m off land.
+      const result = await anchorArea(tx, box(21.001, 35.2, 21.0025, 35.21), cfg);
+      expect(result.areaM2).toBeGreaterThan(0);
+      expect((await inscribedCentre(tx, result.geometry!, result.position!)).distanceM).toBeLessThanOrEqual(5);
+    }));
+
+  it("empty band (deeper than 12 m within 150 m of land): falls back to the inscribed-circle centre", () =>
+    withRollback(async (tx) => {
+      await insertTestRaster(tx);
+      // Land on the south: rows 6–8 (14–18 m) separate it by ≥ 330 m from the 3–12 m rows.
+      await insertLandBox(tx, box(21.0, 35.19, 21.01, 35.201));
+      const result = await anchorArea(tx, RASTER_EXTENT, cfg);
+      expect(result.position).not.toBeNull();
+      expect((await inscribedCentre(tx, result.geometry!, result.position!)).distanceM).toBeLessThanOrEqual(1);
+    }));
+
+  it("nearshoreM changes only the position, never the area, its size or key", () =>
+    withRollback(async (tx) => {
+      await insertTestRaster(tx);
+      await insertLandBox(tx, box(21.0, 35.2, 21.001, 35.21));
+      const near = await anchorArea(tx, RASTER_EXTENT, cfg);
+      const wide = await anchorArea(tx, RASTER_EXTENT, { ...cfg, nearshoreM: 2000 });
+      expect(wide.geometry).toEqual(near.geometry);
+      expect(wide.areaM2).toBe(near.areaM2);
+      expect(wide.key).toBe(near.key);
+      expect(wide.position).not.toEqual(near.position);
     }));
 });

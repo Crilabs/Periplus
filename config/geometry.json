@@ -1,5 +1,5 @@
 {
-  "rulesVersion": "geometry-1",
+  "rulesVersion": "geometry-2",
   "fetch": { "rayCount": 72, "rayStepDeg": 5, "maxRayM": 50000, "confidence": 0.7 },
   "shelter": { "fMinM": 300, "fMaxM": 20000, "meanWeight": 0.7, "minWeight": 0.3, "confidence": 0.6 },
   "opening": { "openFetchM": 2000, "minResultant": 0.25, "confidence": 0.6 },
@@ -24,6 +24,7 @@
     "minDepthM": 3,
     "maxDepthM": 12,
     "landClearanceM": 30,
+    "nearshoreM": 120,
     "positionConfidence": 0.3,
     "correctionConfidence": 0.9,
     "correctionMaxDistanceM": 2000

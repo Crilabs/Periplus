@@ -453,6 +453,8 @@ export const geometrySchema = z.strictObject({
       minDepthM: z.number().nonnegative(),
       maxDepthM: meters,
       landClearanceM: z.number().nonnegative(),
+      /** The position lies in the part of the area within this distance of the land clearance zone, if any. */
+      nearshoreM: meters,
       positionConfidence: confidence,
       correctionConfidence: confidence,
       correctionMaxDistanceM: meters,

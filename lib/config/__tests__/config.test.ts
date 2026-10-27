@@ -217,12 +217,12 @@ describe("loadConfig", () => {
 
   it("loads the geometry rules and the restrictions", () => {
     const c = loadConfig("config");
-    expect(c.geometry.rulesVersion).toBe("geometry-1");
+    expect(c.geometry.rulesVersion).toBe("geometry-2");
     expect(c.geometry.fetch).toEqual({ rayCount: 72, rayStepDeg: 5, maxRayM: 50000, confidence: 0.7 });
     expect(c.geometry.shelter).toEqual({ fMinM: 300, fMaxM: 20000, meanWeight: 0.7, minWeight: 0.3, confidence: 0.6 });
     expect(c.geometry.swell.noSourceValue).toBe(0.9);
     expect(c.geometry.depth.sampleDistancesM).toEqual([50, 100, 200]);
-    expect(c.geometry.anchorArea).toMatchObject({ minDepthM: 3, maxDepthM: 12, landClearanceM: 30 });
+    expect(c.geometry.anchorArea).toMatchObject({ minDepthM: 3, maxDepthM: 12, landClearanceM: 30, nearshoreM: 120 });
     expect(c.geometry.restriction).toEqual({ minShare: 0.5, confidence: 0.9 });
     expect(c.restrictions).toEqual({ protectedAreaAnchoringBan: [] });
   });

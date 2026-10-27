@@ -1,5 +1,5 @@
 {
-  "rulesVersion": "geometry-1",
+  "rulesVersion": "geometry-2",
   "places": {
     "Perdika": {
       "sectors": {
@@ -31,25 +31,25 @@
     },
     "Aponisos": {
       "sectors": {
-        "N": 0.014,
-        "NE": 0.329,
-        "E": 0.817,
-        "SE": 0.777,
-        "S": 0.581,
-        "SW": 0.297,
-        "W": 0.14,
-        "NW": 0.044
+        "N": 0.104,
+        "NE": 1,
+        "E": 1,
+        "SE": 1,
+        "S": 1,
+        "SW": 0.907,
+        "W": 0.128,
+        "NW": 0.049
       },
-      "swell": 0.022,
+      "swell": 0.025,
       "opening": {
-        "bearingDeg": 308,
-        "widthDeg": 195
+        "bearingDeg": 312,
+        "widthDeg": 130
       },
       "depth": {
         "approach": {
-          "at50m": 9.8,
-          "at100m": 17,
-          "at200m": 13.9
+          "at50m": 10.8,
+          "at100m": 19.5,
+          "at200m": 18.9
         },
         "min": 0.1,
         "max": 20
@@ -59,7 +59,7 @@
     },
     "Aegina harbour": {
       "sectors": {
-        "N": 0.949,
+        "N": 0.951,
         "NE": 1,
         "E": 1,
         "SE": 0.7,

@@ -28,7 +28,7 @@ describe("placeGeometry", () => {
       const view = (await placeGeometry(tx, scene.placeId))!;
       expect(view).not.toBeNull();
       expect(view.computedAt).toBeInstanceOf(Date);
-      expect(view.rulesVersion).toBe("geometry-1");
+      expect(view.rulesVersion).toBe("geometry-2");
       expect(view.originSource).toBe("computed_anchor");
       expect(view.origin).not.toBeNull();
 
@@ -37,7 +37,7 @@ describe("placeGeometry", () => {
       expect(view.sectors!.S.shelter).toBeLessThan(0.1);
       expect(view.sectors!.S.fetchM).toBe(50000);
       expect(view.swell).not.toBeNull();
-      expect(view.opening!.bearingDeg).toBe(180);
+      expect(Math.abs(view.opening!.bearingDeg! - 180)).toBeLessThanOrEqual(30);
 
       expect(view.rays).toHaveLength(72);
       expect(view.rays.map((r) => r.bearingDeg)).toEqual(Array.from({ length: 72 }, (_, i) => i * 5));
@@ -79,7 +79,7 @@ describe("placeGeometry", () => {
         "restriction",
         "quietness",
       ]);
-      expect(view.computations.every((c) => c.rulesVersion === "geometry-1")).toBe(true);
+      expect(view.computations.every((c) => c.rulesVersion === "geometry-2")).toBe(true);
 
       // Outside the raster: gaps from the anchor area and depth computations.
       const gapView = (await placeGeometry(tx, outside.placeId))!;
