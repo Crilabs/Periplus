@@ -124,3 +124,6 @@ Wo die Lücke bleibt (310 Spots ohne Kandidat ≤ 150 m, Strand = Mittelpunkt �
 
 Selbst jeder Spot an einem Strand gedeckt ergäbe ~49 %; zwei Drittel der Lücke liegen an Küste ohne Strand und ohne
 Kandidat.
+
+Christian (27.10., nach der Neumessung): Lücke an Küste ohne Strand kostenlos klären und parallel Rauchprobe 2; Tor T2
+bleibt offen. Die Obergrenze +0,1 für Schutz aus Text gilt auch für Review-Entscheidungen (bleibt wie gebaut).

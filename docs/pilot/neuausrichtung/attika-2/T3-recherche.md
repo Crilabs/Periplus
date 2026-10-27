@@ -49,3 +49,11 @@ Konverter (B29, PR #41)**.
 
 Fehlliste der Probekachel bestätigt B28: Plätze ohne Namen werden nicht gesucht, die Entdeckung fand keinen neuen
 Kandidaten, und von 188 Routen-Stopps ließen sich 11 zuordnen.
+
+## Rauchprobe 2 (nach #42–#45)
+
+Christian (27.10.): Rauchprobe 2 in derselben Probekachel `q025:813:510`.
+
+Schätzung ohne `confirm`: 99 Plätze (vorher 81), **14,16 €** (Anthropic 10,00, DataForSEO 1,59; Basis Lauf `01a17cc8…`
+11,59 € für 81). Budgetstand vor dem Start: Anthropic 10,06/80 €, DataForSEO 1,61/10 €, OpenAI 0,25/10 €. Abbruch
+(`run_end`) über 21,24 € (+50 %).
