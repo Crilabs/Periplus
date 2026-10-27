@@ -80,10 +80,25 @@ describe("htmlToMarkdown", () => {
     expect(() => htmlToMarkdown(boilerplateHtml, "https://x.gr/a", ["div[["])).toThrow(/div\[\[/);
   });
 
-  it("a body without any element (empty, whitespace, plain text, comment) converts to nothing instead of throwing", () => {
-    for (const html of ["", "  \n", "plain text", "<!-- only a comment -->"]) {
+  it("a body without any element (empty, whitespace, comment) converts to nothing instead of throwing", () => {
+    for (const html of ["", "  \n", "<!-- only a comment -->"]) {
       expect(htmlToMarkdown(html, "https://x.gr/a", [])).toEqual({ markdown: "", title: null, mainChars: 0 });
     }
+  });
+
+  it("a page of only a script, style, noscript or iframe (JS redirect) converts to nothing instead of throwing", () => {
+    const redirect = '<script type="text/javascript">\n  window.location.assign(window.location.href + "en/");\n</script>';
+    for (const html of [redirect, "<style>p{}</style>", "<noscript>x</noscript>", "<iframe src=x></iframe>"]) {
+      expect(htmlToMarkdown(html, "https://x.gr/a", []).mainChars).toBe(0);
+    }
+  });
+
+  it("a fragment without html and body keeps its content", () => {
+    const fragment = '<div class="module"><p>Gummipaint data sheet</p><a href="/docs/7125.pdf">PDF</a></div>';
+    const r = htmlToMarkdown(fragment, "https://x.gr/a", []);
+    expect(r.markdown).toContain("Gummipaint data sheet");
+    expect(r.markdown).toContain("https://x.gr/docs/7125.pdf");
+    expect(htmlToMarkdown("plain text", "https://x.gr/a", []).markdown).toBe("plain text");
   });
 });
 
@@ -97,6 +112,15 @@ describe("local converter", () => {
       expect(r.rendered).toBe(true);
       expect(r.markdown).toContain("Ankerplatz liegt geschützt");
       expect(r.costEur).toBe(0);
+    });
+  });
+
+  it("auto renders a page that is only a JS redirect", async () => {
+    const renderPage = fakeRenderer();
+    await withRollback(async (tx) => {
+      const r = await createLocalConverter({ renderPage, cfg: cfg() }).convert(input({ html: "<script>window.location.assign('/en/a')</script>" }), { db: tx });
+      expect(r.rendered).toBe(true);
+      expect(r.markdown).toContain("Ankerplatz liegt geschützt");
     });
   });
 
