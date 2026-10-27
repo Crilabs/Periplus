@@ -1,0 +1,51 @@
+# T3 – Recherche GR-I (Attika 2)
+
+## Step 1: Rauchprobe Probekachel `q025:813:510`
+
+Freigabe Christian 27.10. („Ursache klären + Rauchprobe“), parallel zur Ursachensuche aus T2 Step 3.
+
+Ohne `confirm` (27.10. 10:55): Umfang 81 Plätze; Schätzung „keine Grundlage (noch kein vergleichbarer Lauf)“; Budgets
+je Tag: Anthropic 80 € (verbraucht 0,00 €), DataForSEO 10 €, Firecrawl 2 €, Jina 5 €, OpenAI 10 € (je 0 €).
+
+Eigene Hochrechnung aus N1 (`n1-probelauf.md`: 9,83 € für 85 Kandidaten, ≈ 0,29 € je Kandidat mit Namen): 33 Plätze mit
+Namen (25 Ankerbuchten, 7 Marinas, 1 Hafen) × 0,29 € ≈ **10 €**. Abbruchgrenze (+50 %): **15 €**.
+
+Mit `confirm` gestartet 27.10. 10:54, Lauf `01a17cc8…`, beendet 11:58 (64 min). **Kosten 11,59 €** (Rahmen 10 €,
+Grenze 15 €): Seitenbewertung 6,25 €, PDF-Umwandlung 2,40 €, DataForSEO 1,59 € (455 Aufrufe), Auszug 0,89 €,
+Routen 0,45 €; Crawl, robots.txt und 269 Browser-Renderings kostenlos.
+
+| Größe | Rauchprobe | N1 (Probekachel, Dev) |
+| --- | ---: | ---: |
+| Plätze im Umfang / mit Namen | 81 / 33 | 85 / 36 |
+| Suchanfragen | 251 | 221 |
+| Plätze mit Treffern | 30 | – |
+| Treffer positiv / negativ | 1.109 / 1.010 (981 / 695 URLs) | 38 / 35 je Kandidat |
+| Seiten geholt / gescheitert / übersprungen | 1.277 / 232 / 107 | – |
+| Seitenbewertungen | 1.277, davon erste Hand 124 (Revierführer 62, Törnbericht 45, Forum 13) | – |
+| Einheiten (Seite × Platz) | 148 für 24 Plätze aus 81 Seiten | – |
+| Signale | 33 (positiv 30, negativ 3) für 14 Plätze; ≥ 2 unabhängige Quellen: 9 Plätze | – |
+| Fakten | 329 für 17 Plätze, davon 55 sicherheitsrelevant | – |
+| Routen-Stopps | 188, davon 11 per Name zugeordnet | – |
+| neue Kandidaten aus der Entdeckung | **0** | – |
+| bestätigt (Lauf) / `no_anchoring` in der Kachel | 1 / 5 | 2 bei N=2 |
+| Kosten je Platz / je Platz mit Namen | 0,14 € / 0,35 € | – / 0,29 € |
+
+22 Abruf-Jobs gescheitert: 11× HTTP 429 (meist expedia.*), 2× HTTP 500, 2× Zeitüberschreitung, 1× kein PDF, **6×
+Konverter (B29, PR #41)**.
+
+`research:gate` (nur Scratchpad, bearbeitete Kacheln 31 von 56, Abdeckung daher ohne Aussage) für die Probekachel:
+
+| N | bestätigt | korrekt | Position abweichend | Schutz falsch |
+| --- | ---: | ---: | ---: | ---: |
+| 2–4 | 4 | 1 | 2 | 1 |
+| 5 | 2 | 1 | 1 | 0 |
+
+- Position 466 m: OSM-Marina-Punkt an der Stadtkai-Seite; die Referenz führt die Marina 466 m entfernt, einen Kai 5 m
+  neben unserem Punkt. Zuordnung über den Namen.
+- Position 554 m (Ankerposition) / 530 m (Buchtpunkt): große Bucht als OSM-Punkt, die Referenz hat zwei Spots darin
+  (256 m und 530 m entfernt). Ursache wie B28 (1).
+- Schutz falsch (64 m, Zuordnung richtig): wir liefern Schutz in SE, S, SW, W, die Referenz nennt diese Sektoren
+  offen. Sicherheitsrelevant nach A4; Einzelprüfung in T5.
+
+Fehlliste der Probekachel bestätigt B28: Plätze ohne Namen werden nicht gesucht, die Entdeckung fand keinen neuen
+Kandidaten, und von 188 Routen-Stopps ließen sich 11 zuordnen.
