@@ -79,3 +79,13 @@ ob sie nachgestellt wird, entscheidet T5 mit allen bestätigten Plätzen.
 Ein Branch je Teil (`fix/anchor-nearshore`, `feat/beach-candidates`, `feat/search-nearby-names`, `fix/shelter-raise`),
 je mit Tests (TDD), PR zur Freigabe. Danach auf Produktion: Gazetteer/Seed/Geometrie GR-I neu (kostenlos), Obergrenze
 neu messen (Tor ≥ 50 %), dann Rauchprobe 2 in derselben Probekachel (~15 €) und erst dann der Hauptlauf.
+
+## Umsetzung (27.10.)
+
+| Teil | PR | Abweichung |
+| --- | --- | --- |
+| 1. Ankerposition im Uferband (`nearshoreM` 120, `geometry-2`) | #42 | – |
+| 2. Strände als Kandidaten (`beachCandidates` coastM 50, mergeM 300, offshoreM 60) | #44 | unbenannte Strände werden keine Kandidaten (nicht suchbar) |
+| 3. Suchnamen | #44 | nur über Strände: eine unbenannte Bucht ≤ 300 m vor einem benannten Strand übernimmt dessen Namen. **Keine Suchnamen aus Ort/Kap:** eine Seite zählt nur, wenn sie den Liegeplatz nennt (N3, `assign.ts`); „anchorage near {ort}“ nennt eine unbenannte Bucht nie, die Suchen kosteten nur |
+| 4. Text hebt Schutz höchstens um 0,1 (Konsolidierung v4) | #43 | gilt auch für Review-Entscheidungen (die Regel behandelt sie wie Texte) |
+| Neulauf ohne Buchtsuche (`geometry_start` `skipBayDetection`) | #45 | neu, Entscheidung Christian |
