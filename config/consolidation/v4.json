@@ -1,0 +1,119 @@
+{
+  "recency": {
+    "halfLifeYears": 3
+  },
+  "precision": 3,
+  "weights": {
+    "computed": 1.0,
+    "review": 1.0,
+    "observed": 0.8,
+    "poi": 0.6
+  },
+  "poiConfidence": 0.6,
+  "confidence": {
+    "secondSourceBonus": 0.15,
+    "cap": 0.95,
+    "review": 0.95,
+    "classes": [
+      {
+        "name": "high",
+        "min": 0.7
+      },
+      {
+        "name": "medium",
+        "min": 0.4
+      },
+      {
+        "name": "low",
+        "min": 0
+      }
+    ]
+  },
+  "conflict": {
+    "minRatio": 1.5
+  },
+  "expiry": {
+    "cycles": 2,
+    "defaultCycleDays": 365
+  },
+  "rules": {
+    "shelter": {
+      "maxCorrection": 0.3,
+      "maxRaise": 0.1,
+      "harbourFloor": 0.8,
+      "harbourKinds": [
+        "port",
+        "marina"
+      ],
+      "openSideMinConfidence": 0.7,
+      "openSideMaxValue": 0.5,
+      "harbourDefaultConfidence": 0.3
+    },
+    "swell_protection": {
+      "textMinConfidence": 0.7
+    },
+    "bathymetry": {
+      "textMinConfidence": 0.8,
+      "weakRasterConfidence": 0.4
+    },
+    "latest_observation": {
+      "presence": [
+        "mooring.buoys"
+      ]
+    },
+    "default": {
+      "latestMinConfidence": 0.5,
+      "fieldwise": [
+        "contact"
+      ]
+    },
+    "area_weighted": {
+      "agreeWithin": 0.2
+    },
+    "highlight": {
+      "maxNames": 10,
+      "poiRadiusM": 2000
+    },
+    "union": {
+      "keys": {
+        "hazards": [
+          "kind",
+          "name"
+        ],
+        "restricted_zones": [
+          "kind",
+          "name"
+        ],
+        "wind_systems": [
+          "name"
+        ],
+        "season_notes": [
+          "kind"
+        ],
+        "mooring.types": [],
+        "charter_bases": [],
+        "supply_ports": []
+      }
+    }
+  },
+  "gaps": {
+    "ignore": {
+      "anchorage": [
+        "contact",
+        "prices",
+        "capacity",
+        "place.kind_evidence"
+      ],
+      "port": [
+        "place.kind_evidence"
+      ],
+      "marina": [
+        "place.kind_evidence"
+      ],
+      "mooring_field": [
+        "contact",
+        "place.kind_evidence"
+      ]
+    }
+  }
+}

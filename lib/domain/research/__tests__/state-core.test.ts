@@ -52,14 +52,14 @@ const computed = (attribute: string, value: unknown) =>
   input({ attribute, value, origin: "computed", confidence: 0.55, observedAt: "2026-10-01", lastConfirmedAt: "2026-10-01" });
 
 describe("decideCore", () => {
-  it("shelter: the computation is the basis, a text corrects it by at most one step", () => {
+  it("shelter: the computation is the basis, a text lowers it by at most 0.3 and raises it by at most 0.1", () => {
     const basis = computed("shelter.N", 0.9);
     const poor = input({ attribute: "shelter.N", value: 0.1 });
     const { core } = decideCore([basis, poor], anchorage, opts);
     expect(core["shelter.N"]).toMatchObject({ value: 0.6, origin: "text", factIds: [poor.factId] });
 
     const up = decideCore([computed("shelter.S", 0.5), input({ attribute: "shelter.S", value: 0.9 })], anchorage, opts);
-    expect(up.core["shelter.S"]).toMatchObject({ value: 0.8, origin: "text" });
+    expect(up.core["shelter.S"]).toMatchObject({ value: 0.6, origin: "text" });
 
     const alone = decideCore([basis], anchorage, opts);
     expect(alone.core["shelter.N"]).toMatchObject({ value: 0.9, origin: "computed", observedAt: "2026-10-01", factIds: [basis.factId] });

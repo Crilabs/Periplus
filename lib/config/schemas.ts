@@ -853,14 +853,21 @@ export const consolidationSchema = z.strictObject({
   conflict: z.strictObject({ minRatio: z.number().gt(1) }),
   expiry: z.strictObject({ cycles: positiveInt, defaultCycleDays: positiveInt }),
   rules: z.strictObject({
-    shelter: z.strictObject({
-      maxCorrection: share,
-      harbourFloor: share,
-      harbourKinds: z.array(z.enum(placeKindEnum.enumValues)).min(1),
-      openSideMinConfidence: confidence,
-      openSideMaxValue: share,
-      harbourDefaultConfidence: confidence,
-    }),
+    shelter: z
+      .strictObject({
+        maxCorrection: share,
+        /** At most this far a correction raises the basis (v4 on); without it (v3) up to `maxCorrection`. */
+        maxRaise: share.optional(),
+        harbourFloor: share,
+        harbourKinds: z.array(z.enum(placeKindEnum.enumValues)).min(1),
+        openSideMinConfidence: confidence,
+        openSideMaxValue: share,
+        harbourDefaultConfidence: confidence,
+      })
+      .refine((s) => s.maxRaise === undefined || s.maxRaise <= s.maxCorrection, {
+        message: "must not exceed maxCorrection",
+        path: ["maxRaise"],
+      }),
     swell_protection: z.strictObject({ textMinConfidence: confidence }),
     bathymetry: z.strictObject({ textMinConfidence: confidence, weakRasterConfidence: confidence }),
     /** Object attributes picked on `present` alone, their other fields filled per field (ruling M5-C-R2 I-1). */

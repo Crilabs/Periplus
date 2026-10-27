@@ -4,8 +4,10 @@ import { ruleResult } from "./result";
 
 /**
  * `shelter.<sector>` (spec 07): the youngest computation is the basis; corrections (texts, observations and review
- * decisions, the review with `confidence.review` and superseding what it saw) correct it by at most `maxCorrection`,
- * contradicting corrections give the worse value; without a computation the correction value holds. A port or marina
+ * decisions, the review with `confidence.review` and superseding what it saw) lower it by at most `maxCorrection` but
+ * raise it by at most `maxRaise` (rules v4 on, test run Attika 2: a blanket "good from any direction" must not close an
+ * open sector; v3 raises by up to `maxCorrection`), contradicting corrections give the worse value; without a
+ * computation the correction value holds. A port or marina
  * keeps `harbourFloor` unless the correction setting the value (confidence ≥ `openSideMinConfidence`, value ≤
  * `openSideMaxValue`) proves an open side; the floor has origin `rule` and cites no input, with
  * `harbourDefaultConfidence`.
@@ -37,7 +39,7 @@ function harbourFloor(ctx: RuleContext): RuleResult {
 }
 
 /**
- * The basis corrected by the worst correction (clamped to ±`maxCorrection`). `setters` carry the worse value. The
+ * The basis corrected by the worst correction (clamped to −`maxCorrection` / +`maxRaise`). `setters` carry the worse value. The
  * support (base confidence and second-source bonus) holds the setters and the inputs carrying the result value: the
  * basis only when the clamp left it unchanged.
  */
@@ -52,7 +54,7 @@ function correct(
   const worst = Math.min(...texts.map((i) => i.value as number));
   const setters = texts.filter((i) => i.value === worst);
   const value = basis
-    ? Math.min(Math.max(worst, (basis.value as number) - p.maxCorrection), (basis.value as number) + p.maxCorrection)
+    ? Math.min(Math.max(worst, (basis.value as number) - p.maxCorrection), (basis.value as number) + (p.maxRaise ?? p.maxCorrection))
     : worst;
   const origin: InputOrigin = setters.some((i) => i.origin === "review")
     ? "review"
