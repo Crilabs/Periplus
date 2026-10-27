@@ -412,6 +412,19 @@ describe("startGeometryRun", () => {
       ]);
     }));
 
+  it("with skipBayDetection a tile run only computes the places (rerun after a rule change)", () =>
+    withRollback(async (tx) => {
+      const scene = await buildBayScene(tx);
+      await insertTile(tx, scene.tileId);
+      const { boss, inserted } = recordingBoss();
+      const { id } = await startGeometryRun(tx, boss, { tileId: scene.tileId }, "test", { skipBayDetection: true });
+      const [run] = await tx.select().from(runs).where(eq(runs.id, id));
+      expect(run).toMatchObject({ scopeType: "tile", stages: [GEOMETRY_STAGE], params: { tileIds: [scene.tileId] } });
+      expect(inserted).toEqual([
+        { queue: "geometry.compute", data: { key: scene.placeId, placeId: scene.placeId, runId: id, stage: GEOMETRY_STAGE } },
+      ]);
+    }));
+
   it("creates a place run that enqueues only that place", () =>
     withRollback(async (tx) => {
       const scene = await buildBayScene(tx);

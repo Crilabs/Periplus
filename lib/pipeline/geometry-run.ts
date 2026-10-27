@@ -21,13 +21,15 @@ export const GEOMETRY_RUN_STAGES = [DETECT_BAYS_STAGE, GEOMETRY_STAGE] as const;
  * computed values up in the berth follow-up chain). Checked before the run exists: the tile
  * exists, or the subdivision exists (an area key fails with the replacement hint) and has coast tiles, or the place is one the stage computes
  * and lies on a tile; every scoped tile has bathymetry and land polygons within the ray length. A scope lacking
- * one of these inputs throws `RunScopeNotReady`.
+ * one of these inputs throws `RunScopeNotReady`. `skipBayDetection` leaves out `geometry.detect_bays` for a tile or a
+ * subdivision too: a rerun after a change of the place rules (Attika 2) needs no new bay detection.
  */
 export async function startGeometryRun(
   db: Db,
   boss: PgBoss,
   scope: { tileId: string } | { subdivisionKey: string } | { placeId: string },
   triggeredBy: string,
+  opts: { skipBayDetection?: boolean } = {},
 ): Promise<{ id: string }> {
   let tileIds: string[];
   let run: { scope: { type: "tile" | "subdivision" | "place"; id: string }; params: Record<string, unknown> };
@@ -57,6 +59,9 @@ export async function startGeometryRun(
     run = { scope: { type: "place", id: scope.placeId }, params: { placeIds: [scope.placeId] } };
   }
   await checkGeometryTiles(db, tileIds);
-  const stages = run.scope.type === "place" ? GEOMETRY_RUN_STAGES.filter((s) => s !== DETECT_BAYS_STAGE) : [...GEOMETRY_RUN_STAGES];
+  const stages =
+    run.scope.type === "place" || opts.skipBayDetection
+      ? GEOMETRY_RUN_STAGES.filter((s) => s !== DETECT_BAYS_STAGE)
+      : [...GEOMETRY_RUN_STAGES];
   return startRun(db, boss, { kind: "stage", ...run, stages, triggeredBy });
 }

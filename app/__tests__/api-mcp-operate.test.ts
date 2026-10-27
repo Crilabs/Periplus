@@ -281,6 +281,20 @@ describe("/api/mcp start tools", () => {
       expect(await runCount(tx)).toBe(before);
     }));
 
+  it("geometry_start with skipBayDetection starts only the place stage (rerun after a rule change, Attika 2)", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      inserted.length = 0;
+      const { token } = await tokenFor(tx);
+      const { tileId } = await seedCandidates(tx, GATE_KEY);
+      await insertTestRaster(tx, { tileId });
+      await tx.insert(landPolygons).values({ geom: sql`ST_MakeEnvelope(21.10, 35.20, 21.11, 35.21, 4326)`, datasetVersion: "test" });
+      const started = await callTool(token, "geometry_start", { subdivision: GATE_KEY, skipBayDetection: true, confirm: true });
+      expect(started.isError ? started.text : "").toBe("");
+      const [run] = await tx.select().from(runs).where(eq(runs.id, JSON.parse(started.text).runId));
+      expect(run!.stages).toEqual(["geometry.place"]);
+    }));
+
   it("images_start without confirm: the run's images capped at maxGenerationsPerRun, the whole backlog apart", () =>
     withRollback(async (tx) => {
       db = tx;

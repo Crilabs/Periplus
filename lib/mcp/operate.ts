@@ -205,14 +205,22 @@ export function registerOperateTools(server: McpServer, caller: McpCaller): void
     "geometry_start",
     {
       title: "Geometrie",
-      description: "Startet „Geometrie“ für einen Landesteil oder eine Kachel (genau eines von `subdivision`, `tileId`). Ohne `confirm` nur Umfang (Kacheln) und Schätzung.",
-      inputSchema: { subdivision: subdivisionArg.optional(), tileId: tileIdArg.optional(), confirm: confirmArg },
+      description:
+        "Startet „Geometrie“ für einen Landesteil oder eine Kachel (genau eines von `subdivision`, `tileId`): erst die Buchtsuche, dann die Geometrie je Platz; mit `skipBayDetection` nur die Geometrie je Platz (Neulauf nach geänderten Regeln). Ohne `confirm` nur Umfang (Kacheln) und Schätzung.",
+      inputSchema: {
+        subdivision: subdivisionArg.optional(),
+        tileId: tileIdArg.optional(),
+        skipBayDetection: z.boolean().optional().describe("true: ohne Buchtsuche, nur die Geometrie je Platz"),
+        confirm: confirmArg,
+      },
       annotations: WRITE,
     },
     (args) =>
       write("geometry_start", async () => {
         const scope = await tileOrSubdivision(args);
-        return startTool("geometry", scope, args.confirm, async () => startGeometryRun(getDb(), await boss(), scope, by));
+        return startTool("geometry", scope, args.confirm, async () =>
+          startGeometryRun(getDb(), await boss(), scope, by, { skipBayDetection: args.skipBayDetection }),
+        );
       }),
   );
 
