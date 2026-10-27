@@ -2,9 +2,11 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getConfig, type GazetteerConfig, type RestrictionsConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, places, type GeoObjectType, type PlaceKind } from "@/lib/db/schema";
+import { assignParentOf } from "@/lib/domain/gazetteer/hierarchy";
+import { addNames } from "@/lib/domain/gazetteer/names";
 import { exclusionFor, exclusionReason, restrictionHits } from "@/lib/domain/geometry/restrictions";
 import { createReviewTask } from "@/lib/domain/review";
-import { validAt } from "@/lib/db/valid-at";
+import { validAt, validAtAlias } from "@/lib/db/valid-at";
 
 /** Geo object types that are always place candidates. */
 const CANDIDATE_TYPES: GeoObjectType[] = ["bay", "harbour"];
@@ -33,6 +35,8 @@ export type SeedResult = {
   skippedOtherTile: number;
   /** Of `created`: places that start as `no_anchoring` because they lie in a restricted area. */
   noAnchoring: number;
+  /** Beaches (`seedBeaches`): new places (also in `created`) and unnamed places that took a beach's names. */
+  beaches: { created: number; named: number };
 };
 
 type Candidate = {
@@ -128,11 +132,10 @@ export async function seedTile(
     protectedAreaAnchoringBan: opts.restrictions.protectedAreaAnchoringBan,
   };
   return db.transaction(async (tx) => {
-    const result: SeedResult = { created: 0, existing: 0, skippedOtherTile: 0, noAnchoring: 0 };
+    const result: SeedResult = { created: 0, existing: 0, skippedOtherTile: 0, noAnchoring: 0, beaches: { created: 0, named: 0 } };
     const candidates = await candidatesOf(tx, tileId);
     const inTile = candidates.filter((c) => c.positionTileId === tileId);
     result.skippedOtherTile = candidates.length - inTile.length;
-    if (inTile.length === 0) return result;
     // Shared with every other seed, exclusive against `geometry.detect_bays` (which takes it exclusively): a bay
     // detection running beside a seed then sees the places the seed creates, never a second candidate for the same
     // anchorage (CON-4).
@@ -180,6 +183,144 @@ export async function seedTile(
         context: { geoObjectId: c.id, kind, tileId, name: await displayName(tx, c.id) },
       });
     }
+    // After the other candidates, so a beach in front of a bay finds the bay's place.
+    await seedBeaches(tx, tileId, cfg, banConfig, opts.minShare, result);
     return result;
   });
+}
+
+type BeachSpot = {
+  id: string;
+  /** EWKB hex of the point `offshoreM` off the shore in front of the beach. */
+  position: string;
+  lon: number;
+  lat: number;
+  positionTileId: string;
+  /** The nearest place within `mergeM` of the position and whether its geo object has a valid name; null without one. */
+  nearPlaceObjectId: string | null;
+  nearPlaceNamed: boolean;
+};
+
+/**
+ * The named beaches linked to `tileId` (poi of category `beach`) within `coastM` of the coast, each with the point in the
+ * water in front of it: the point of the water at least `offshoreM` from land (within `coastM` + 2 × `offshoreM` of
+ * the beach) nearest to the beach. A beach without such water (inland, or the coast too far) is left out.
+ */
+async function beachSpotsOf(db: Db, tileId: string, cfg: GazetteerConfig["beachCandidates"]): Promise<BeachSpot[]> {
+  const { coastM, mergeM, offshoreM } = cfg;
+  const { rows } = await db.execute<BeachSpot>(sql`
+    with beaches as (
+      select g.id, g.geom,
+        ST_Buffer(g.geom::geography, ${coastM + 2 * offshoreM}::float8)::geometry as reach
+      from tile_geo_objects l
+      join geo_objects g on g.id = l.geo_object_id
+      where l.tile_id = ${tileId}
+        and g.type = 'poi' and g.category = 'beach'
+        and g.merged_into_id is null
+        and ${validAtAlias("g")}
+        and exists (select 1 from geo_names n where n.geo_object_id = g.id and n.valid_to is null)
+    ),
+    shore as (
+      select b.id, b.geom, b.reach,
+        (select ST_Union(ST_Intersection(lp.geom, b.reach)) from land_polygons lp
+         where lp.geom && b.reach and ST_Intersects(lp.geom, b.reach)) as land
+      from beaches b
+    ),
+    water as (
+      select s.id, s.geom,
+        case when s.land is null then null
+          else ST_Difference(s.reach, ST_Buffer(s.land::geography, ${offshoreM}::float8)::geometry) end as open_water,
+        s.land is not null
+          and not ST_IsEmpty(ST_Difference(ST_Buffer(s.geom::geography, ${coastM}::float8)::geometry, s.land)) as coastal
+      from shore s
+    ),
+    spots as (
+      select w.id, ST_ClosestPoint(w.open_water, ST_Centroid(w.geom)) as position
+      from water w
+      where w.coastal and w.open_water is not null and not ST_IsEmpty(w.open_water)
+    )
+    select sp.id, sp.position::text as position, ST_X(sp.position) as lon, ST_Y(sp.position) as lat,
+      tile_id_for(sp.position) as "positionTileId",
+      near.geo_object_id as "nearPlaceObjectId",
+      coalesce(near.named, false) as "nearPlaceNamed"
+    from spots sp
+    left join lateral (
+      select p.geo_object_id,
+        exists (select 1 from geo_names n where n.geo_object_id = p.geo_object_id and n.valid_to is null) as named
+      from places p
+      where ST_DWithin(p.position::geography, sp.position::geography, ${mergeM}::float8)
+      order by p.position::geography <-> sp.position::geography
+      limit 1
+    ) near on true
+    order by sp.id`);
+  return rows;
+}
+
+/** The valid names of a geo object as drafts (without transliterations and fallbacks, which `addNames` derives). */
+async function namesOf(db: Db, geoObjectId: string) {
+  return db
+    .select({ name: geoNames.name, language: geoNames.language, origin: geoNames.origin, isPreferred: geoNames.isPreferred })
+    .from(geoNames)
+    .where(and(eq(geoNames.geoObjectId, geoObjectId), validAt(geoNames), sql`${geoNames.origin} not in ('transliteration', 'fallback')`));
+}
+
+/**
+ * Beaches as anchorage candidates (Attika 2, B28: anchorages in front of beaches on open coast had no candidate). Per
+ * named coastal beach of the tile (`beachSpotsOf`), whose point in front of it lies in this tile: with a place within
+ * `mergeM` the beach adds nothing, except that an unnamed place takes the beach's names (it is searched under them);
+ * otherwise a new candidate like a detected bay (geo object of type `bay`, origin `computed`, the point, the beach's
+ * names, its parent, its tile link) with a place (`anchorage`, `candidate`, or `no_anchoring` in a restricted area
+ * like `seedTile`) and a `place_candidate` review task. A rerun creates nothing: the place lies within `mergeM`.
+ */
+async function seedBeaches(
+  db: Db,
+  tileId: string,
+  cfg: GazetteerConfig,
+  banConfig: Parameters<typeof restrictionHits>[2],
+  minShare: number,
+  result: SeedResult,
+): Promise<void> {
+  for (const b of await beachSpotsOf(db, tileId, cfg.beachCandidates)) {
+    if (b.positionTileId !== tileId) continue;
+    const names = await namesOf(db, b.id);
+    if (b.nearPlaceObjectId) {
+      if (!b.nearPlaceNamed && (await addNames(db, b.nearPlaceObjectId, names.map((n) => ({ ...n })))) > 0) result.beaches.named++;
+      continue;
+    }
+    const [object] = await db
+      .insert(geoObjects)
+      .values({ type: "bay", origin: "computed", geom: sql`${b.position}::geometry` })
+      .returning({ id: geoObjects.id });
+    await addNames(db, object!.id, names.map((n) => ({ ...n })));
+    await assignParentOf(db, object!.id);
+    const hits = await restrictionHits(db, { area: null, position: { lon: Number(b.lon), lat: Number(b.lat) } }, banConfig);
+    const exclusion = exclusionFor(hits, minShare);
+    const restriction = exclusion ? exclusionReason(exclusion) : null;
+    const [place] = await db
+      .insert(places)
+      .values({
+        geoObjectId: object!.id,
+        kind: "anchorage",
+        status: restriction ? "no_anchoring" : "candidate",
+        statusReason: restriction,
+        position: sql`${b.position}::geometry`,
+      })
+      .returning({ id: places.id });
+    await db.execute(sql`
+      insert into tile_geo_objects (tile_id, geo_object_id)
+      select t.id, ${object!.id}::uuid from tiles t where t.id = ${tileId} and t.valid_to is null
+      on conflict do nothing`);
+    result.created++;
+    result.beaches.created++;
+    if (restriction) {
+      result.noAnchoring++;
+      continue;
+    }
+    await createReviewTask(db, {
+      kind: "place_candidate",
+      subjectType: "place",
+      subjectId: place!.id,
+      context: { geoObjectId: object!.id, kind: "anchorage", tileId, name: await displayName(db, object!.id), beachId: b.id },
+    });
+  }
 }

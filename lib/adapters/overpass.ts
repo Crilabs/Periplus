@@ -50,6 +50,8 @@ export function buildGazetteerQuery(bbox: Bbox, timeoutSeconds: number): string 
       'nwr["seamark:type"~"^(harbour|anchorage|mooring|small_craft_facility)$"]',
       'nwr["leisure"="marina"]',
       'nwr["harbour"]',
+      // coastal beaches become anchorage candidates (B28); `importOsm` keeps those near the coast
+      'nwr["natural"="beach"]',
     ],
     bbox,
     timeoutSeconds,

@@ -86,6 +86,25 @@ const archive = testArchive();
 beforeAll(() => archive.ensureBucket());
 
 describe("importOsm", () => {
+  it("imports the beaches on the coast as POIs of category beach (B28: they become anchorage candidates), not inland ones", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const beaches: OverpassElement[] = [
+        // 22 m south of the coast line 35.35 N
+        { type: "node", id: ID + 20, lat: 35.3498, lon: 25.13, tags: { natural: "beach", name: "Test Beach" } },
+        { type: "node", id: ID + 21, lat: 35.3498, lon: 25.14, tags: { natural: "beach" } },
+        // 5.5 km inland
+        { type: "node", id: ID + 22, lat: 35.3, lon: 25.13, tags: { natural: "beach", name: "Lake Beach" } },
+      ];
+      const result = await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: beaches }), archive });
+      expect(result).toMatchObject({ created: 2, skipped: 1 });
+      const rows = await objects(db, [osm("node", 20), osm("node", 21), osm("node", 22)]);
+      expect(rows.map((r) => [r.osmId, r.type, r.category]).sort()).toEqual([
+        [osm("node", 20), "poi", "beach"],
+        [osm("node", 21), "poi", "beach"],
+      ]);
+    }));
+
   it("imports the fixture: island, bay, marina and coastal village, not the inland village or the taverna", () =>
     withRollback(async (db) => {
       await prepare(db);

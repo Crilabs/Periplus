@@ -353,6 +353,15 @@ export const gazetteerSchema = z.strictObject({
   bboxBufferKm: z.number().nonnegative(),
   landBufferKm: z.number().nonnegative(),
   coastDistanceM: z.number().positive(),
+  /**
+   * Beaches as anchorage candidates (`seedTile`): a named beach within `coastM` of the coast whose water `offshoreM` in
+   * front of it has no place within `mergeM` becomes one; an unnamed place within `mergeM` takes its names instead.
+   */
+  beachCandidates: z.strictObject({
+    coastM: z.number().positive(),
+    mergeM: z.number().positive(),
+    offshoreM: z.number().positive(),
+  }),
   /** The coarse gazetteer's features per country (plan 14b): OSM place values kept as towns, minimum areas, coast distance. */
   coarse: z.strictObject({
     placeTypes: z.array(z.string().regex(/^[a-z_]+$/)).min(1),
