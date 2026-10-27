@@ -1,6 +1,6 @@
 {
   "anthropic": { "dailyEur": 80 },
-  "dataforseo": { "dailyEur": 10 },
+  "dataforseo": { "dailyEur": 20 },
   "firecrawl": { "dailyEur": 2 },
   "jina": { "dailyEur": 5 },
   "openai": { "dailyEur": 10 }
