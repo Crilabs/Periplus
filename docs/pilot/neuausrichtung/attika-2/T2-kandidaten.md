@@ -127,3 +127,24 @@ Kandidat.
 
 Christian (27.10., nach der Neumessung): Lücke an Küste ohne Strand kostenlos klären und parallel Rauchprobe 2; Tor T2
 bleibt offen. Die Obergrenze +0,1 für Schutz aus Text gilt auch für Review-Entscheidungen (bleibt wie gebaut).
+
+### Lücke nach dem Nachschärfen (kostenlos geklärt)
+
+310 Spots ohne Kandidat ≤ 150 m:
+
+| Ursache | Spots |
+| --- | ---: |
+| mehrere Spots in derselben Bucht: der nächste Kandidat deckt schon einen anderen Spot ≤ 150 m (ein Platz je Bucht) | 45 |
+| Strand ≤ 300 m, aber kein Kandidat ≤ 150 m (davon 49 nur unbenannte Strände, nicht suchbar) | 99 |
+| kein Strand; Gazetteer-Punkt (Bucht, Hafen) ≤ 500 m, Ankerposition aber > 150 m davon | 118 |
+| kein Strand, kein Gazetteer-Punkt ≤ 500 m (gerade Küste) | 93 |
+
+(Überschneidungen: die erste Zeile zählt quer zu den übrigen.)
+
+- Strand-Kandidaten entstehen richtig 60 m vor dem Strand. `geometry.place` setzt ihre Ankerposition danach in das
+  Uferband im Umkreis von 600 m und damit oft 150–600 m vom Strand weg (Probekachel: 18 von 24 benannten Stränden).
+  Der Vorrang „Uferband vor dem Strand“ aus dem Design (Teil 1) ist nicht gebaut. Gewicht klein: mit der Platzposition
+  statt der Ankerposition 107 statt 104 Spots.
+- Die Lücke ist strukturell: Die Referenz kennt Spots an fast jeder Küste, auch mehrere je Bucht und an gerader Küste
+  ohne Namen; das Gerüst kennt einen Platz je benanntem Merkmal. Weiteres Nachschärfen am Gerüst bringt nach dieser
+  Zerlegung höchstens einige Prozentpunkte; 50 % bei 150 m sind so nicht erreichbar.
