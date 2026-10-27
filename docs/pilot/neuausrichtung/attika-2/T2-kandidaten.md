@@ -86,3 +86,41 @@ Median-Abstand Spot → nächster Kandidat: 559 m.
 Christian (27.10., nach der Rauchprobe): Nachschärfen nach `docs/superpowers/specs/2026-10-27-periplus-geruest-nachschaerfen-design.md`
 (Ankerposition im Uferband bis 150 m, Strände als Kandidaten, Suchnamen aus Strand/Ort/Kap, Text hebt Schutz höchstens
 um 0,1). Danach Gerüst, Seed und Geometrie GR-I neu und Step 3 neu messen; Tor T2 bleibt bis dahin offen.
+
+## Step 3 neu gemessen (nach #42–#45, 27.10.)
+
+Deploy `3b5885ca` (#42 Uferband `geometry-2`, #43 Konsolidierung v4, #44 Strände, #45 `skipBayDetection`). Neulauf GR-I
+ohne Kosten, alle ohne Fehler:
+
+| Lauf | Stufen | Ergebnis |
+| --- | --- | --- |
+| `01a17d33…` Gazetteer | osm, wikidata, geonames, hierarchy | 727 Küstenstrände aus OSM (insgesamt 1.278 Strände im Bestand, davon 487 benannt) |
+| `01a17d6e…` Seed | `seed.tile` 56/56 | 247 neue Ankerplatz-Kandidaten vor benannten Stränden |
+| `01a17db0…` Geometrie ohne Buchtsuche | `geometry.place` 1.916/1.916 | alle Berechnungen `geometry-2` |
+
+Gültige Plätze: 1.916 (1.889 Kandidaten, 1 bestätigt, 26 Sperrfläche).
+
+| nächster Kandidat | Spots | Anteil | vorher |
+| --- | ---: | ---: | ---: |
+| ≤ 150 m, Kandidat aus Quelle | 60 | 14,5 % | 13,3 % |
+| ≤ 150 m, nur berechnet (Bucht oder Strand) | 44 | 10,6 % | 4,8 % |
+| ≤ 150 m, nur Sperrfläche | 1 | 0,2 % | 0 |
+| 150–300 m | 85 | 20,5 % | 14,3 % |
+| 300–1.000 m | 185 | 44,7 % | 56,0 % |
+| > 1.000 m | 39 | 9,4 % | 11,6 % |
+
+**Obergrenze 25,1 %** (104/414, vorher 18,1 %), gefordert 50 %. **Tor T2 nicht erreicht.**
+
+Probekachel `q025:813:510`: Median Uferabstand der Ankerpositionen 92 m (berechnet) / 91 m (benannt), vorher 237 / 173 m;
+Spots 64 m. Spots mit Kandidat ≤ 150 m: 27 von 108; Median Spot → nächster Kandidat 471 m (vorher 559 m).
+
+Wo die Lücke bleibt (310 Spots ohne Kandidat ≤ 150 m, Strand = Mittelpunkt ≤ 300 m):
+
+| | Kandidat 150–300 m | Kandidat > 300 m |
+| --- | ---: | ---: |
+| benannter Strand ≤ 300 m | 19 | 31 |
+| nur unbenannter Strand ≤ 300 m | 17 | 32 |
+| kein Strand ≤ 300 m | 211 (zusammen) | |
+
+Selbst jeder Spot an einem Strand gedeckt ergäbe ~49 %; zwei Drittel der Lücke liegen an Küste ohne Strand und ohne
+Kandidat.
