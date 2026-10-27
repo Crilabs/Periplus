@@ -57,3 +57,24 @@ Christian (27.10.): Rauchprobe 2 in derselben Probekachel `q025:813:510`.
 Schätzung ohne `confirm`: 99 Plätze (vorher 81), **14,16 €** (Anthropic 10,00, DataForSEO 1,59; Basis Lauf `01a17cc8…`
 11,59 € für 81). Budgetstand vor dem Start: Anthropic 10,06/80 €, DataForSEO 1,61/10 €, OpenAI 0,25/10 €. Abbruch
 (`run_end`) über 21,24 € (+50 %).
+
+Mit `confirm` gestartet 27.10. 15:29, Lauf `01a17dc3…`, beendet ~19:24. **Kosten 4,01 €** (Schätzung 14,16 €; Seiten
+werden je URL einmal bewertet, die meisten waren aus Rauchprobe 1 schon bewertet). Die Seitenbewertung wartete ~2 h auf
+die Batch-API von Anthropic (Rauchprobe 1: 2–3 min); kein Fehler bei uns.
+
+| Stufe | Jobs |
+| --- | --- |
+| `research.search` | 99/99 |
+| `research.fetch` | 990/1.013, 23 gescheitert (17× HTTP 429 expedia/vrbo, 2× HTTP 500, 2× Zeitüberschreitung, 1× kein PDF; alles Seiten aus anderen Regionen) |
+| `research.assess` / `extract` / `routes` | 12 / 4 / 2 |
+| `research.discover` / `confirm` / `state` | 41 / 1 / 3 |
+
+`research:gate` (Scratchpad, bearbeitete Kacheln 31 von 56): unverändert 4 bestätigt, 1 korrekt, 2 Position, 1 Schutz.
+
+- **Schutz (Russian Bay, `01a179f0-fd3b…`):** mit v4 und Uferband jetzt SE 0,87, S 0,70, SW 0,68, W 0,82 (vorher überall
+  0,9). Die Begrenzung wirkt; die gerechnete Basis liegt nach der ufernahen Ankerposition aber selbst bei 0,6–0,77, also
+  SE, S, W weiter ≥ 0,7, wo die Referenz offen nennt. Bleibt für T5 (gerechnete Kurve).
+- **Position:** Marina 466 m (unverändert, OSM-Punkt am Stadtkai); große Bucht jetzt 432 m (vorher 554 m).
+- **Strand-Kandidaten:** 25 liegen bei einem Spot; 23 davon ohne Suchtreffer, 2 mit zu wenigen Quellen. Die Suche unter
+  Strandnamen liefert Badestrand- und Hotelseiten, oft aus anderen Regionen (gleichnamige Strände), keine
+  Ankerplatz-Seiten. Kein neuer bestätigter Platz.
