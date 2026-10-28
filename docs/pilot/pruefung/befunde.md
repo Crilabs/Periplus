@@ -73,3 +73,11 @@ Gattungsnamen griechischer Buchten („Ormos Agiou Nikolaou“) treffen ganz Gri
 
 Christian (28.10.): Land und bis zu zwei Reviere in die Suchvorlagen, Vorlagen ohne Ort ersetzen, griechische Endungen
 im Namensabgleich; Abdeckungsziel 50 % bleibt (braucht zusätzlich ein dichteres Gerüst, B28). Umsetzung PR #47.
+
+## B35 – DataForSEO „No Search Results“ (40102) lässt den ganzen Kandidaten scheitern (klein)
+
+Nachlauf Attika 2 (`01a18370`): Der Job `research.search` eines Kandidaten mit Anführungszeichen im Namen scheiterte
+mit `dataforseo status 40102 … No Search Results` bei einer einzelnen Suche. 40102 ist ein leeres Ergebnis, kein
+Fehler; die anderen Suchen des Kandidaten gehen damit verloren und eine Aufgabe „Fehlgeschlagener Job“ entsteht. Ein
+`job_retry` scheitert wieder gleich. 1 von 763 Kandidaten. Behebung: 40102 als Suche ohne Treffer behandeln
+(`fix/`-Zweig mit Regressionstest).
