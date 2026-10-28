@@ -155,3 +155,6 @@ Namensvarianten größer.
 
 Abbruchgrenze (+50 % auf die Projektion): 105 €. Wegen des Tagesbudgets (36 € frei) läuft die Bewertung voraussichtlich
 in die Budgetpause und setzt nach Mitternacht UTC fort.
+
+Christian (28.10.): „Jetzt starten“. Lauf `01a18370-4db0-7315-aab9-514767715779`, gestartet 17:55 CET mit
+`confirm: true` (763 Plätze).
