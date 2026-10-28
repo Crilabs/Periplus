@@ -94,3 +94,25 @@ Queue freigeben; `queue_resume` 07:50, die übrigen 22 Batches sind abgeschickt.
 `research.extract` stand 07:54 ebenfalls an der Budgetpause (Reservierung der Bewertungs-Batches noch offen; Auszugs-
 Batches je ~7,6 € geschätzt, gebucht ~0,46 €). Mit derselben Freigabe 09:33 und 09:44 per `queue_resume` fortgesetzt;
 Auszug 38/38 um 09:51, Kosten 48,61 €.
+
+### Ergebnis Hauptlauf
+
+Lauf `01a17eff…` beendet 28.10. ~10:15, **Kosten 51,20 €** (Schätzung ~110 €, Grenze 165 €).
+
+| Stufe | Jobs |
+| --- | --- |
+| `research.search` | 764/764 |
+| `research.fetch` | 8.190/8.286, 96 gescheitert (1,2 %) |
+| `research.assess` / `extract` / `routes` | 124 / 38 / 6 |
+| `research.discover` / `confirm` / `state` | 213 / 1 / 16 |
+
+Trichter (Lauf): 764 Plätze gesucht → 283 mit Suchtreffern (14.835 Treffer, 8.654 URLs) → 6.009 Seiten bewertet
+(erste Hand 388; Seitenart: sonstige 2.951, Verzeichnis 1.137, Reiseführer 870, Behörde 389, Revierführer 294,
+Törnbericht 219, Forum 86, Marina 63) → 1.698 Einheiten für 220 Plätze → 305 Signale für 77 Plätze, davon nur 15 aus
+erster Hand. Zählende positive Belege (Regel aus `config/research.json`, alle Läufe, je Seite gezählt): 40 Plätze mit
+mindestens einem, 18 mit mindestens zwei.
+
+`research:gate` (`tor.md`, Produktion `d54f6142`, Tor-Config `7d3da3c5b8cf1d15`, Kacheln 31 von 56, 637 Spots):
+**Tor nicht bestanden.** N=2: 14 bestätigt, 5 korrekt, 7 Position abweichend (189, 253, 254, 331, 432, 466, 812 m),
+1 Schutz falsch (Russian Bay), 1 Konflikt offen (nicht in der Referenz; Aufgabe angelegt). Abdeckung 0,8 %. Fehlliste
+N=2: kein Kandidat 486, zu wenige Quellen 98, ohne Namen 26, ohne Treffer 10.
