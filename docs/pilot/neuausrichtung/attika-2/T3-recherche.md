@@ -158,3 +158,7 @@ in die Budgetpause und setzt nach Mitternacht UTC fort.
 
 Christian (28.10.): „Jetzt starten“. Lauf `01a18370-4db0-7315-aab9-514767715779`, gestartet 17:55 CET mit
 `confirm: true` (763 Plätze).
+
+Stand 22:35 CET: Suche 762/763 (1 gescheitert, B35), Abruf 5.016/5.133 (Ausfälle meist HTTP 429), Bewertung 34/41,
+22,73 €. Budgetpause `research.assess` (B33: 17 Batches reserviert 35,55 €, gebucht 9,04 €; keine offene Reservierung,
+Anthropic 53,48/80 €). Nach Christians stehender Freigabe für denselben Lauf um 22:36 fortgesetzt (`queue_resume`).
