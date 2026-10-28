@@ -130,3 +130,28 @@ Namensvarianten sind ein kleiner Anteil.
 Christian (28.10.): Suche schärfen mit Land und bis zu zwei Revieren, Vorlagen ohne Ort ersetzen, Namensvarianten
 mitbauen; Abdeckungsziel 50 % bleibt. Umsetzung PR #47 (`fix/research-search-context`), danach Nachlauf GR-I mit
 Schätzung.
+
+### Nachlauf nach PR #47 – Schätzung (28.10., 18:00 CET)
+
+Deploy: PR #47 gemergt (`a64d1c18`), `version` meldet `a64d1c18`, neue Vorlagen und `nameStem` aktiv.
+
+`research_start` GR-I ohne `confirm`: 763 Plätze, Schätzung des Servers 51,14 € (Anthropic 43,21, DataForSEO 8;
+nur hochgerechnet aus dem Hauptlauf `01a17eff`, ohne die neuen Vorlagen). Budgetstand: Anthropic 43,87/80 €,
+DataForSEO 0,66/20 €.
+
+Eigene Schätzung: Gesucht werden nur Kandidaten mit Namen (Hauptlauf: 277). Mit den neuen Vorlagen und im Mittel 1,39
+Revieren je Kandidat ergeben sich etwa 1.750 positive und 530 negative Suchen (~2.300, fast alle neu, ~8 €).
+Bewertungen werden je Modell und Promptversion wiederverwendet; neu kosten nur Seiten, die noch nicht bewertet wurden
+(höchstens 40 Treffer je Kandidat, also höchstens ~11.000 Seiten, ~0,0068 € je Seite). Auszug wird durch die
+Namensvarianten größer.
+
+| Stufe | erwartet | Obergrenze |
+| --- | --- | --- |
+| Suche | 8 € | 10 € |
+| Abruf | 3 € | 5 € |
+| Bewertung | 40 € | 75 € |
+| Auszug, Routen, Stand | 20 € | 30 € |
+| **Summe** | **~70 €** | **~120 €** |
+
+Abbruchgrenze (+50 % auf die Projektion): 105 €. Wegen des Tagesbudgets (36 € frei) läuft die Bewertung voraussichtlich
+in die Budgetpause und setzt nach Mitternacht UTC fort.
