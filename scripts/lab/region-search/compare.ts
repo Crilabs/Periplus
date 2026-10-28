@@ -142,7 +142,8 @@ export const compareCommand: Command = async (_args, dir) => {
   const navilyPath = process.env.NAVILY_SPOTS_PATH;
   if (!navilyPath) throw new Error("NAVILY_SPOTS_PATH is not set");
   const spots = await loadNavilySpots(navilyPath);
-  const gate = (await mcpTool("gate_input", { subdivision: "GR-I" })) as GateInputLite;
+  const answer = (await mcpTool("gate_input", { subdivision: "GR-I" })) as { version?: { gitSha: string | null }; input?: GateInputLite };
+  const gate = answer?.input;
   if (!gate?.tiles?.all) throw new Error("gate_input: no tiles in answer");
   const located = (await readJson<Located[]>(dir, "located.json")) ?? [];
   const hits = await readJsonl<Hit>(dir, "hits.jsonl");

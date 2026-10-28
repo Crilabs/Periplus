@@ -128,7 +128,8 @@ export async function runExtract(ledger: CostLedger, dir: string, opts: { limit?
   const system = await systemPrompt();
   const schema = structuredOutputSchema(z.toJSONSchema(extractionSchema)) as Record<string, unknown>;
   const pages = new Map((await readJsonl<PageRow>(dir, "pages.jsonl")).filter((p) => !p.error).map((p) => [p.url, p]));
-  const done = new Set((await readJsonl<ExtractRow>(dir, "extract.jsonl")).map((r) => r.url));
+  // a page whose call failed (API error) is tried again on the next run
+  const done = new Set((await readJsonl<ExtractRow>(dir, "extract.jsonl")).filter((r) => !r.error).map((r) => r.url));
   const todo = (await readJsonl<Assessment>(dir, "assessments.jsonl")).filter((a) => !a.error && counting.has(a.page_kind) && !a.generated && !done.has(a.url) && pages.has(a.url));
   const queue = todo.slice(0, opts.limit);
   let n = 0;
