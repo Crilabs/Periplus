@@ -52,3 +52,24 @@ bis Mitternacht UTC an. Nach dem Buchen war das Budget frei, die Pause blieb abe
 Wartezeit). Christian gab die Queue am 28.10. 07:50 per `queue_resume` frei; die 22 Batches reservierten 44,79 €.
 Offen: Schätzung je Batch an gebuchte Kosten angleichen (`estimatedCostEur`), Budgetpause nach Ende der Reservierungen
 selbst aufheben statt bis zum Tageswechsel.
+
+## B34 – Recherche findet für die meisten Kandidaten keine zählenden Seiten (Attika 2, Hauptlauf)
+
+Hauptlauf GR-I (`01a17eff…`), Tor N=2: 98 Spots „zu wenige unabhängige Quellen“ (82 Plätze: 62 Ankerbuchten,
+16 Marinas, 4 Häfen). 80 dieser Plätze haben ≥ 20 Treffer-URLs, 3.671 Seiten geholt; davon sind 473 Paare (Platz ×
+Seite) zählender Seitenart mit aufgeführten Liegeplätzen (Revierführer 283, Törnbericht 96, Forum 45, Behörde 42,
+Marina 7), aber nur 28 wurden Einheiten.
+
+Abgleich der übrigen 445 Paare (Wortstamm der Namen, ohne Gattungswörter): 418 nennen keinen Liegeplatz mit
+passendem Namen; Stichprobe: gleichnamige oder andere Buchten in anderen Revieren (Ionisches Meer, Kykladen, Kreta,
+Karibik, England). Die Namenszuordnung (`berthNameMatches`) verwirft sie zu Recht. 27 Paare mit Stamm-Treffer, davon
+etwa die Hälfte echte Namensvarianten desselben Platzes (Genitiv/Transliteration „Lavrion“–„Lavriou“, Übersetzung
+„Monastery“–„Monastiriou“, „Paralia X“–„X Beach“); der Rest andere Orte gleichen Namens.
+
+Ursache vor allem die Suche: die Vorlagen sind überwiegend `{name} anchorage|sailing|Ankerplatz|…` ohne Revier, die
+Gattungsnamen griechischer Buchten („Ormos Agiou Nikolaou“) treffen ganz Griechenland. Namensvarianten kosten wenig
+(geschätzt ≤ 6 Plätze). Folge: selbst mit perfekter Recherche läge die Abdeckung bei 150 m bei höchstens ~24 %
+(486 von 637 Spots ohne Kandidat, B28); mit der heutigen Ausbeute 0,8 %.
+
+Offen (Entscheidung Christian): Revier in die Suchvorlagen (Landesteil, Insel, Nachbarort), Namensvarianten
+(griechische Kasusformen, Übersetzungen) in den Abgleich; Zielgröße der Abdeckung.

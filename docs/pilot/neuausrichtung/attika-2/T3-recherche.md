@@ -116,3 +116,13 @@ mindestens einem, 18 mit mindestens zwei.
 **Tor nicht bestanden.** N=2: 14 bestätigt, 5 korrekt, 7 Position abweichend (189, 253, 254, 331, 432, 466, 812 m),
 1 Schutz falsch (Russian Bay), 1 Konflikt offen (nicht in der Referenz; Aufgabe angelegt). Abdeckung 0,8 %. Fehlliste
 N=2: kein Kandidat 486, zu wenige Quellen 98, ohne Namen 26, ohne Treffer 10.
+
+### Ausbeute untersucht (Christian 28.10.: „Ausbeute untersuchen“)
+
+Spotzahl: Das Tor zählt 637 Spots in den 31 bearbeiteten Kacheln (Kacheln mit Platz); T2 zählte 414 in einer anderen
+Kachelliste (34 Kacheln, 23 gemeinsam). Die Obergrenze bei 150 m liegt im Nenner des Tors bei ~24 % (486 Spots ohne
+Kandidat), passend zu T2 (25,1 %).
+
+Die 0,8 % entstehen in der Recherche: Befund **B34** (Suche trifft gleichnamige Buchten anderer Reviere; von 473
+zählenden Seiten-Paaren der 82 Plätze mit zu wenigen Quellen nennen 418 den Platz nicht, 28 wurden Einheiten).
+Namensvarianten sind ein kleiner Anteil.
