@@ -49,6 +49,16 @@ describe("locateByGazetteer", () => {
     expect("object" in r && r.object.id).toBe("g5");
   });
 
+  it("lets the mention's kind pick among a harbour, a settlement and a cape of the same name far apart", () => {
+    const town: GazObject[] = [
+      { id: "h1", type: "harbour", category: null, names: ["Limani Drossia"], lon: 4.80, lat: 54.40, islandName: null },
+      { id: "s1", type: "settlement", category: null, names: ["Drossia"], lon: 4.82, lat: 54.41, islandName: null },
+      { id: "c1", type: "cape", category: null, names: ["Akra Drossia"], lon: 4.85, lat: 54.45, islandName: null },
+    ];
+    const r = locateByGazetteer(mention({ name: "Drossia", kind: "port" }), town, affixes);
+    expect("object" in r && r.object.id).toBe("h1");
+  });
+
   it("reports no match for an unknown name", () => {
     const r = locateByGazetteer(mention({ name: "Kalimnotis" }), gaz, affixes);
     expect("reason" in r && r.reason).toBe("no_match");
