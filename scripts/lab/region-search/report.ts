@@ -7,6 +7,8 @@ import type { Metrics } from "./compare";
 
 export type ReportInput = {
   metrics: Metrics[];
+  /** Located mentions outside the area's tiles (GR-J and beyond): not counted anywhere else. */
+  outside: number;
   costs: { totalEur: number; byStage: Record<string, number>; capEur: number };
   counts: { queriesD: number; queriesC: number; hitsD: number; hitsC: number; pages: number; assessed: number; counting: number; mentions: number; dropped: number };
   topDomains: Array<{ domain: string; pages: number; mentions: number }>;
@@ -25,7 +27,7 @@ export function decision(m: Metrics): string {
 }
 
 export function renderReport(input: ReportInput): string {
-  const { metrics, costs, counts, topDomains, generatedAt } = input;
+  const { metrics, outside, costs, counts, topDomains, generatedAt } = input;
   const date = generatedAt.toISOString().slice(0, 10);
   const lines: string[] = [];
   lines.push(`# P1 – Revier-Suche und Verortung aus Berichten (Attika 2)`, ``);
@@ -35,7 +37,8 @@ export function renderReport(input: ReportInput): string {
   lines.push(`| Anfragen DataForSEO (D) / Gebiete Claude-Websuche (C) | ${counts.queriesD} / ${counts.queriesC} |`);
   lines.push(`| URLs aus D / aus C | ${counts.hitsD} / ${counts.hitsC} |`);
   lines.push(`| Seiten geholt / bewertet / zählend | ${counts.pages} / ${counts.assessed} / ${counts.counting} |`);
-  lines.push(`| Nennungen (gültig) / verworfen | ${counts.mentions} / ${counts.dropped} |`, ``);
+  lines.push(`| Nennungen (gültig) / verworfen | ${counts.mentions} / ${counts.dropped} |`);
+  lines.push(`| davon verortet außerhalb der Kacheln von GR-I (GR-J und weiter) | ${outside} |`, ``);
   for (const m of metrics) {
     lines.push(`## Nenner „${m.denominator}“: ${m.spots} Spots, ${m.clusters} Bucht-Cluster (≤ 300 m)`, ``);
     lines.push(`| Kennzahl | Wert | Anteil |`, `| --- | ---: | ---: |`);

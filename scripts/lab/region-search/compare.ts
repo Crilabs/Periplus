@@ -12,7 +12,7 @@ import { CostLedger } from "./costs";
 import type { ExtractRow } from "./extract";
 import type { PageRow } from "./fetch";
 import type { Located } from "./locate";
-import { mcpTool } from "./mcp";
+import { mcpSqlRows, mcpTool } from "./mcp";
 import { renderReport } from "./report";
 import type { Hit } from "./search-dataforseo";
 import { readJson, readJsonl, writeJson } from "./store";
@@ -22,7 +22,18 @@ import { readJson, readJsonl, writeJson } from "./store";
  * per-spot lists stay in the pilot directory (Grundprinzip 9).
  */
 
-export type Denominator = { name: string; spots: NavilySpot[]; clusters: Array<{ lon: number; lat: number; members: number[] }> };
+export type Denominator = { name: string; tiles: Set<string>; spots: NavilySpot[]; clusters: Array<{ lon: number; lat: number; members: number[] }> };
+
+/** Located mentions inside the area's tiles and those outside (pages of the search areas also describe GR-J and beyond). */
+export function splitByArea(located: Located[], tiles: Set<string>): { inside: Located[]; outside: Located[] } {
+  const inside: Located[] = [];
+  const outside: Located[] = [];
+  for (const l of located) {
+    if (l.lon !== null && l.lat !== null && !tiles.has(tileIdFor(l.lon, l.lat))) outside.push(l);
+    else inside.push(l);
+  }
+  return { inside, outside };
+}
 
 export type Metrics = {
   denominator: string;
@@ -65,7 +76,7 @@ export function denominators(
   const make = (name: string, tiles: string[]): Denominator => {
     const set = new Set(tiles);
     const inside = spots.filter((s) => set.has(tileIdFor(s.lon, s.lat)) && !isExcludedSpot(s, navilyCfg));
-    return { name, spots: inside, clusters: clusterPoints(inside, BAY_RADIUS_M) };
+    return { name, tiles: set, spots: inside, clusters: clusterPoints(inside, BAY_RADIUS_M) };
   };
   return [make("Kacheln GR-I", gate.tiles.all), make("Tor-Kacheln", gate.tiles.worked)];
 }
@@ -144,8 +155,10 @@ export const compareCommand: Command = async (_args, dir) => {
   const spots = await loadNavilySpots(navilyPath);
   const answer = (await mcpTool("gate_input", { subdivision: "GR-I" })) as { version?: { gitSha: string | null }; input?: GateInputLite };
   const gate = answer?.input;
-  if (!gate?.tiles?.all) throw new Error("gate_input: no tiles in answer");
-  const located = (await readJson<Located[]>(dir, "located.json")) ?? [];
+  if (!gate?.tiles?.worked) throw new Error("gate_input: no tiles in answer");
+  // `gate_input.tiles.all` is the 56-tile frame with neighbours; the subdivision's own 34 tiles (T2's denominator) come from `tiles`.
+  const own = (await mcpSqlRows<{ id: string }>(`select t.id from tiles t join subdivisions s on s.id = t.subdivision_id where s.key = 'GR-I' and t.valid_to is null order by t.id`)).map((r) => r.id);
+  const allLocated = (await readJson<Located[]>(dir, "located.json")) ?? [];
   const hits = await readJsonl<Hit>(dir, "hits.jsonl");
   const enginesOf = new Map<string, { d: boolean; c: boolean }>();
   for (const h of hits) {
@@ -153,8 +166,9 @@ export const compareCommand: Command = async (_args, dir) => {
     e[h.engine] = true;
     enginesOf.set(h.url, e);
   }
+  const dens = denominators(spots, { tiles: { all: own, worked: gate.tiles.worked }, bufferM: gate.bufferM }, cfg.quality.navily);
+  const { inside: located, outside } = splitByArea(allLocated, dens[0]!.tiles);
   const places = clusterLocated(located, BAY_RADIUS_M, { copyMinSharedWords: cfg.research.confirmation.copyMinSharedWords, engineOf: (url) => enginesOf.get(url) ?? { d: false, c: false } });
-  const dens = denominators(spots, gate, cfg.quality.navily);
   const metrics = dens.map((d) => measure(places, located, d));
 
   const pages = await readJsonl<PageRow>(dir, "pages.jsonl");
@@ -178,6 +192,7 @@ export const compareCommand: Command = async (_args, dir) => {
   const ledger = await CostLedger.open(dir);
   const report = renderReport({
     metrics,
+    outside: outside.length,
     costs: { totalEur: ledger.totalEur, byStage: ledger.byStage(), capEur: ledger.capEur },
     counts: {
       queriesD: (await readJsonl(dir, "queries-d.jsonl")).length,
@@ -187,7 +202,7 @@ export const compareCommand: Command = async (_args, dir) => {
       pages: pages.filter((p) => !p.error).length,
       assessed: assessments.filter((a) => !a.error).length,
       counting: assessments.filter((a) => !a.error && counting.has(a.page_kind) && !a.generated).length,
-      mentions: located.length,
+      mentions: allLocated.length,
       dropped: extracts.reduce((s, e) => s + e.dropped.length, 0),
     },
     topDomains,

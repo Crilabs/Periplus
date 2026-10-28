@@ -3,8 +3,9 @@ import { mcpSqlAll } from "./mcp";
 import { readJson, writeJson } from "./store";
 
 /*
- * Spec 5D step 2: the named objects of GR-I a mention can be matched against. Read from production through MCP `sql`
- * (500 rows per call); nothing from the reference.
+ * Spec 5D step 2: the named objects a mention can be matched against. GR-I and its neighbour GR-J (ruling, Task 10):
+ * the pages of the search areas describe Ermioni, Korfos or Epidavros too, and a mention located there counts as
+ * "outside" instead of "no match". Read from production through MCP `sql` (500 rows per call); nothing from the reference.
  */
 
 export type GazObject = { id: string; type: string; category: string | null; names: string[]; lon: number; lat: number; islandName: string | null };
@@ -23,7 +24,7 @@ export async function loadGazetteer(): Promise<GazObject[]> {
           where p.id = o.parent_id and pp.type in ('island', 'islet') order by (n.language = 'en') desc, n.is_preferred desc, n.name limit 1)
       ) as island_name
     from geo_objects o join subdivisions s on s.id = o.subdivision_id
-    where s.key = 'GR-I'
+    where s.key in ('GR-I', 'GR-J')
       and (o.type in ('bay', 'harbour', 'cape', 'settlement', 'island', 'islet') or (o.type = 'poi' and o.category = 'beach'))
     order by o.id`);
   return rows

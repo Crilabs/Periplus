@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { tileIdFor } from "../../../../lib/domain/tiles";
 import type { NavilySpot } from "../../../../lib/domain/quality/navily-sample";
 import { clusterLocated } from "../cluster";
-import { denominators, measure } from "../compare";
+import { denominators, measure, splitByArea } from "../compare";
 import { coordinatesIn } from "../coords";
 import type { Located } from "../locate";
 import { renderReport } from "../report";
@@ -47,22 +47,31 @@ const rows: Located[] = [
   located({}),
   located({ url: "https://b.example.org/p", domain: "b.example.org", berthQuote: "a lovely spot, we dropped the hook in the north corner and swam ashore", lat: 54.2012 }),
   located({ url: "https://c.example.org/p", domain: "c.example.org", lat: 54.3045, lon: 4.7, method: "coordinate", coordinate: { lat: 54.3045, lon: 4.7, precisionM: 90, text: "54°18.27'N 4°42'E" } }),
-  located({ url: "https://d.example.org/p", domain: "d.example.org", lat: 54.6, lon: 5.2 }),
-  located({ url: "https://e.example.org/p", domain: "e.example.org", lat: 54.6, lon: 5.2, berthQuote: "another crew's words about the same quiet bay, anchored in six metres" }),
+  located({ url: "https://d.example.org/p", domain: "d.example.org", lat: 54.21, lon: 4.6 }),
+  located({ url: "https://e.example.org/p", domain: "e.example.org", lat: 54.21, lon: 4.6, berthQuote: "another crew's words about the same quiet bay, anchored in six metres" }),
   located({ method: null, lon: null, lat: null, reason: "no_match", positionQuote: "in the north-west corner of the bay" }),
+  located({ url: "https://f.example.org/p", domain: "f.example.org", lat: 56.0, lon: 4.5 }), // outside the area's tiles
 ];
 
 describe("denominators and measure", () => {
   const dens = denominators(spots, gate, navilyCfg);
-  const places = clusterLocated(rows, 300);
+  const { inside, outside } = splitByArea(rows, dens[0]!.tiles);
+  const places = clusterLocated(inside, 300);
 
   it("excludes prohibited spots and clusters spots of one bay", () => {
     expect(dens[0]?.spots).toHaveLength(4);
     expect(dens[0]?.clusters).toHaveLength(3);
   });
 
+  it("keeps a mention located outside the area's tiles out of the web places", () => {
+    expect(outside).toHaveLength(1);
+    expect(outside[0]?.domain).toBe("f.example.org");
+    expect(inside).toHaveLength(rows.length - 1);
+    expect(places.some((p) => p.lat > 55)).toBe(false);
+  });
+
   it("counts coverage by distance, confirmation by strict sources, conflicts and unresolved reasons", () => {
-    const m = measure(places, rows, dens[0]!);
+    const m = measure(places, inside, dens[0]!);
     expect(m.covered1["150"]).toBe(2);
     expect(m.covered1["600"]).toBe(3);
     expect(m.confirmedStrict300).toBe(2);
@@ -81,6 +90,7 @@ describe("renderReport", () => {
     const places = clusterLocated(rows, 300);
     const report = renderReport({
       metrics: dens.map((d) => measure(places, rows, d)),
+      outside: 1,
       costs: { totalEur: 1.23, byStage: { "search-d": 0.3, assess: 0.93 }, capEur: 40 },
       counts: { queriesD: 10, queriesC: 2, hitsD: 100, hitsC: 50, pages: 120, assessed: 110, counting: 40, mentions: 6, dropped: 2 },
       topDomains: [{ domain: "a.example.org", pages: 3, mentions: 4 }],
