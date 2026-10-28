@@ -59,8 +59,9 @@ Bestätigungen, keine Lieferung; keine Bewertung der Kernwerte (Schutz, Grund); 
 
 ## 4. Umfang
 
-- **Gebiet:** Landesteil `GR-I` wie im Tor (Nenner: die 637 Spots in den bearbeiteten Kacheln aus `tor.md` und
-  zusätzlich alle Spots im Polygon ohne `prohibited`/`dry-berthing`; beide Zahlen werden berichtet).
+- **Gebiet:** Landesteil `GR-I`. Nenner: die Spots in den Kacheln von GR-I ohne `prohibited`/`dry-berthing`
+  (T2: 414) und zum Vergleich die 637 Spots der bearbeiteten Tor-Kacheln aus `tor.md`; beide Zahlen werden berichtet
+  (Abschnitt 6).
 - **Gebiets-Liste für die Anfragen** (Annahme, aus dem Gazetteer GR-I, nicht aus Navily): Saronischer Golf, Ägina,
   Agistri, Salamis, Poros, Hydra, Dokos, Spetses, Methana, Epidavros-Küste (soweit GR-I), Attika-Westküste
   (Vouliagmeni–Sounion), Attika-Ostküste (Lavrio–Rafina–Marathon), Kythira. Die Liste wird aus
@@ -132,17 +133,25 @@ Reihenfolge je Nennung; der erste Weg, der trifft, entscheidet, der Weg wird mit
 1. **Koordinate** (wörtlich) → Punkt; Genauigkeit aus der Schreibweise abgeleitet (ganze Minute ≈ ±900 m).
 2. **Name + Gebiet gegen das Gazetteer GR-I**: `geo_objects` (Buchten, Häfen, Strände, Kaps, Orte, Inseln, mit
    Namen in el/en/de), geholt über MCP `sql` (500 Zeilen je Aufruf, daher seitenweise), Abgleich mit dem vorhandenen
-   Wortstamm-Abgleich (`lib/domain/research/name-stem.ts`), Gebiet als Filter (Insel/Umkreis). Treffer → Punkt des
-   Objekts. Mehrdeutig (zwei Objekte gleichen Namens in GR-I) → unverortet, Grund „mehrdeutig“.
+   Namensabgleich `berthNameForms`/`berthNameMatches` (`lib/domain/research/assign.ts`, Affixe aus
+   `config/name-affixes.json`; nach dem Merge von `main` der Wortstamm-Abgleich aus PR #47), Gebiet als Filter
+   (Insel/Umkreis). Treffer → Punkt des Objekts. Mehrdeutig (zwei Objekte gleichen Namens in GR-I) → unverortet,
+   Grund „mehrdeutig“.
 3. **Lagebeschreibung** wird im Pilot nicht in einen Punkt umgesetzt, nur gezählt (wie oft gäbe es eine, wenn 1 und 2
    fehlen); das zeigt, was ein späterer Verortungsschritt gewinnen könnte.
-4. **Modellgestützte Verortung** (Entscheidung Christian, Abschnitt 10): Das Modell bekommt die Nennung und die
-   Gazetteer-Objekte des Gebiets als Liste und wählt eines oder „unbekannt“. Wenn erlaubt, läuft sie als getrennte
-   Spalte, damit ihr Anteil und ihre Fehlerquote sichtbar bleiben.
+4. **Modellgestützte Verortung** (erlaubt, Abschnitt 10): Das Modell bekommt die Nennung und die Gazetteer-Objekte
+   des Gebiets als Liste und wählt eines oder „unbekannt“. Sie läuft als getrennte Spalte, damit ihr Anteil und ihre
+   Fehlerquote (Abstand zum Referenz-Spot in Schritt E) sichtbar bleiben; die bindende Kennzahl der
+   Entscheidungsregel wird einmal ohne und einmal mit dieser Spalte berichtet.
 
 Danach werden Nennungen zu **Web-Orten** geclustert (≤ 300 m, Annahme) und je Web-Ort die **unabhängigen Quellen**
 gezählt: verschiedene registrierbare Domain und keine Kopie (Annahme: ≥ 12 gemeinsame Wörter in Folge wie
 `copyMinSharedWords`, geprüft zwischen den Zitaten und den umgebenden 600 Wörtern).
+
+**Was als Quelle zählt** (Festlegung nach dem Bauer-Check): bindend ist die pipelinenahe Regel aus
+`lib/domain/research/confirmation.ts`: eine Seite zählt, wenn sie `first_hand` ist (eigene Erfahrung: Törnbericht,
+Forum) oder ein `pilot_guide`, der den Ort als Liegeplatz führt. Als zweite, nicht bindende Spalte wird „jede
+zählende Seite nach `page_kind`“ ausgewiesen, damit sichtbar bleibt, wie viel die Regel kostet.
 
 ### E. Abgleich gegen die Referenz (lokal, nur Zählungen)
 
@@ -150,7 +159,7 @@ Navily wird erst hier gelesen (`loadNavilySpots`, `NAVILY_SPOTS_PATH`). Ausgabe 
 
 | Kennzahl | Nenner |
 | --- | --- |
-| Spots mit ≥ 1 Web-Ort ≤ 150 m / ≤ 300 m / ≤ 600 m | 637 (Tor-Kacheln) und Polygon-Spots |
+| Spots mit ≥ 1 Web-Ort ≤ 150 m / ≤ 300 m / ≤ 600 m | Kacheln GR-I (414) und Tor-Kacheln (637) |
 | Spots mit ≥ 2 unabhängigen Quellen ≤ 300 m (die Bestätigungsregel) | dito |
 | dasselbe auf **Buchtebene**: Spots ≤ 300 m zueinander als ein Liegeplatz gezählt | Zahl der Cluster |
 | Beitrag je Suchweg: Spots nur über D, nur über C, über beide gedeckt | gedeckte Spots |
@@ -167,7 +176,13 @@ Navily), Navily-Werte nicht.
 ## 6. Entscheidungsregel (vorab)
 
 Damit der Pilot nicht im Nachhinein gedeutet wird, steht fest, was aus welchem Ergebnis folgt (Schwellen: Annahme,
-Entscheidung Christian in Abschnitt 10). Maßgeblich ist die Buchtebene mit ≥ 2 unabhängigen Quellen ≤ 300 m:
+Entscheidung Christian in Abschnitt 10). Maßgeblich ist die Buchtebene mit ≥ 2 unabhängigen Quellen ≤ 300 m nach der
+pipelinenahen Quellenregel (5D). **Bindender Nenner** (Festlegung nach dem Bauer-Check, korrigiert beim Planen): die
+Bucht-Cluster aller Spots in den **Kacheln von GR-I** (`gate_input.tiles.all`, 34 Kacheln, wie T2: 414 Spots ohne
+`prohibited`/`dry-berthing`), weil das der Suchumfang ist. Nicht das Polygon: es überlappt auf See mit GR-J und
+zählt 751 Spots, darunter Epidavros und Ermioni, die zu GR-J gehören. Die 637 Spots der bearbeiteten Tor-Kacheln
+(`tiles.worked` + Puffer) werden zum Vergleich mit T3 daneben berichtet (lokal reproduzierbar über `gate_input` und
+`tileIdFor`, ohne dass Navily-Werte den Rechner verlassen).
 
 | Ergebnis | Folge |
 | --- | --- |
@@ -176,22 +191,32 @@ Entscheidung Christian in Abschnitt 10). Maßgeblich ist die Buchtebene mit ≥ 
 | < 20 % | Das Web als alleinige Quellenklasse reicht nicht für das Ziel; andere Klassen prüfen (lizenzierte Revierführer, Positionsdaten), bevor weiter an Suche und Gerüst gearbeitet wird |
 
 Unabhängig davon: Zeigt der Vergleich D/C, dass ein Weg ≥ 80 % der tragenden Seiten des anderen enthält, bleibt es
-bei einem Weg (dem billigeren). Zeigt die Koordinaten-Messung einen Median-Abstand > 300 m, sind Koordinaten nur
+bei einem Weg (dem billigeren). **Tragende Seite** (Festlegung nach dem Bauer-Check): eine zählende Seite mit
+mindestens einer in GR-I verorteten Liegeplatz-Nennung; Navily geht in diese Definition nicht ein. Zeigt die Koordinaten-Messung einen Median-Abstand > 300 m, sind Koordinaten nur
 zur Verortung auf Buchtebene brauchbar, nicht für die Ankerposition.
 
 ## 7. Was entsteht, und wo
 
 | Artefakt | Ort | Bleibt? |
 | --- | --- | --- |
-| Lab-Skript `scripts/lab-region-search.ts` (Unterbefehle `search`, `fetch`, `assess`, `extract`, `locate`, `compare`) | Zweig `pruefung/attika-2` | ja, als Lab-Skript gekennzeichnet (wie `lab-image-framing.ts`); kein Produktionscode, keine Tests gegen das Netz |
+| Lab-Skript `scripts/lab-region-search.ts` (Unterbefehle `search`, `fetch`, `assess`, `extract`, `locate`, `compare`) | Zweig `pruefung/attika-2` | ja, als Lab-Skript gekennzeichnet (Vorbild: das noch unversionierte `scripts/lab-image-framing.ts` im Haupt-Checkout); kein Produktionscode, keine Tests gegen das Netz |
 | Pilot-Prompt Extraktion/Verortung | neben dem Skript (`scripts/lab/…`) | ja |
 | Zwischenstände, Einzellisten, Markdown der Seiten | Scratchpad | nein |
 | Protokoll `P1-revier-suche.md` | `docs/pilot/neuausrichtung/attika-2/` | ja |
 | Zeile(n) in `befunde.md` | `docs/pilot/pruefung/` | ja (nächste Nummer nach B35) |
 
-Grundsätze des Repos, die auch für das Lab-Skript gelten: externe Dienste nur über die vorhandenen Adapter; Zitate
-wörtlich; Navily nie in Commits, Logs oder MCP-Argumenten; `skipDomains` beachten; `robots.txt` über die vorhandene
-Crawl-Logik.
+Grundsätze des Repos, die auch für das Lab-Skript gelten: Zitate wörtlich; Navily nie in Commits, Logs oder
+MCP-Argumenten; `skipDomains` beachten (der Platzhalter `tripadvisor.*` muss für `blocked_domains` in konkrete
+Domains aufgelöst werden); `robots.txt` über die vorhandene Crawl-Logik. Externe Dienste über die vorhandenen
+Adapter, **soweit sie das Nötige können**: Der KI-Client des Repos (`createAnthropicClient`) kennt weder
+Server-Werkzeuge (`web_search_…`) noch Prompts außerhalb `config/prompts`; damit laufen nur `assess-page` über ihn.
+Für Weg C, die Pilot-Extraktion (5C) und die modellgestützte Verortung (D4) gibt es zwei Wege, Entscheidung in
+Abschnitt 10:
+
+- (a) direkter Aufruf des Anthropic-SDK im Lab-Skript mit eigener Kostensumme aus `usage` (kein Produktionscode,
+  keine Buchung in `external_calls`);
+- (b) kleine Erweiterung des Clients um ein zweites Prompt-Verzeichnis und Server-Werkzeuge, mit Tests, auf dem
+  Prüfzweig (Produktionscode, bleibt nach dem Pilot).
 
 ## 8. Was dem Bauer überlassen bleibt
 
@@ -217,12 +242,23 @@ Crawl-Logik.
 Die Kosten laufen über lokale Schlüssel, nicht über die Tagesbudgets der Produktion; das Skript führt eine eigene
 Summe und bricht bei 40 € ab.
 
-## 10. Entscheidungen bei Christian
+## 10. Entscheidungen Christian (28.10.2026)
 
-1. **Kostenrahmen** 40 € Obergrenze (Erwartung ~22 €): ja?
-2. **Modellgestützte Verortung** (Weg D4): erlauben als getrennt ausgewiesene Spalte, oder ausschließen, weil
-   Modellwissen nie ein Ort sein darf?
-3. **Schwellen der Entscheidungsregel** (40 % / 20 % auf Buchtebene, ≥ 2 unabhängige Quellen ≤ 300 m): so, oder andere?
+1. **Kostenrahmen:** Obergrenze 40 € (Erwartung ~22 €); das Skript bricht bei 40 € ab.
+2. **Modellgestützte Verortung** (Weg D4): erlaubt, als getrennt ausgewiesene Spalte mit eigener Fehlerquote.
+3. **Schwellen der Entscheidungsregel:** 40 % / 20 % auf Buchtebene, ≥ 2 unabhängige Quellen ≤ 300 m nach der
+   pipelinenahen Quellenregel (Abschnitt 6 gilt wie geschrieben).
+4. **KI-Aufrufe außerhalb des Repo-Clients:** Weg (a), direkter SDK-Aufruf im Lab-Skript mit eigener Kostensumme;
+   der Repo-Client bleibt unverändert, nur `assess-page` läuft über ihn.
+
+## 12. Festlegungen nach dem Bauer-Check (meine Entscheidungen, zum Gegenlesen)
+
+- Quellenregel für „≥ 2 unabhängige Quellen“: pipelinenah (`first_hand` oder `pilot_guide`), zweite Spalte „alle
+  zählenden Seiten“ nur zur Information (5D).
+- Bindender Nenner der Entscheidungsregel: Bucht-Cluster der Spots in den Kacheln von GR-I (414); Tor-Kacheln (637)
+  zum Vergleich (6).
+- „Tragende Seite“ für den Vergleich D/C: zählende Seite mit ≥ 1 in GR-I verorteter Nennung, ohne Navily (6).
+- Namensabgleich im Pilot: `berthNameMatches` aus `assign.ts`, nicht ein eigener (5D).
 
 ## 11. Zeitplan
 
