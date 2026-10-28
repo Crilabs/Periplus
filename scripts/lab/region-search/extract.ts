@@ -120,7 +120,7 @@ async function systemPrompt(): Promise<string> {
 }
 
 /** Every counting, not generated page without a row in `extract.jsonl`; writes `mentions.jsonl` and `extract.jsonl`. */
-export async function runExtract(ledger: CostLedger, dir: string, opts: { limit?: number } = {}): Promise<void> {
+export async function runExtract(ledger: CostLedger, dir: string, opts: { limit?: number; concurrency?: number } = {}): Promise<void> {
   const cfg = getConfig();
   const counting = new Set<string>(cfg.research.confirmation.countingPageKinds);
   const quoteCfg = cfg.extraction.quote;
@@ -130,10 +130,9 @@ export async function runExtract(ledger: CostLedger, dir: string, opts: { limit?
   const pages = new Map((await readJsonl<PageRow>(dir, "pages.jsonl")).filter((p) => !p.error).map((p) => [p.url, p]));
   const done = new Set((await readJsonl<ExtractRow>(dir, "extract.jsonl")).map((r) => r.url));
   const todo = (await readJsonl<Assessment>(dir, "assessments.jsonl")).filter((a) => !a.error && counting.has(a.page_kind) && !a.generated && !done.has(a.url) && pages.has(a.url));
-  let budget = opts.limit ?? Number.POSITIVE_INFINITY;
+  const queue = todo.slice(0, opts.limit);
   let n = 0;
-  for (const a of todo) {
-    if (budget-- <= 0) break;
+  const one = async (a: Assessment) => {
     const page = pages.get(a.url)!;
     const markdown = await readFile(path.join(dir, "pages", page.file), "utf8");
     const text = firstWords(markdown, cfg.research.extraction.maxUnitWords);
@@ -165,13 +164,24 @@ export async function runExtract(ledger: CostLedger, dir: string, opts: { limit?
     }
     await appendJsonl(dir, "extract.jsonl", [row]);
     n++;
-    process.stdout.write(`extract ${String(n).padStart(4)}/${todo.length} ${row.mentions} mentions, ${row.dropped.length} dropped, ${row.regexCoords} coords, ${row.costEur.toFixed(3)} EUR  ${a.url.slice(0, 80)}${row.error ? `  ERROR ${row.error}` : ""}\n`);
-  }
+    process.stdout.write(`extract ${String(n).padStart(4)}/${queue.length} ${row.mentions} mentions, ${row.dropped.length} dropped, ${row.regexCoords} coords, ${row.costEur.toFixed(3)} EUR  ${a.url.slice(0, 80)}${row.error ? `  ERROR ${row.error}` : ""}\n`);
+  };
+  const worker = async () => {
+    for (;;) {
+      const a = queue.shift();
+      if (!a) return;
+      await one(a);
+    }
+  };
+  await Promise.all(Array.from({ length: opts.concurrency ?? 4 }, worker));
 }
 
 export const extractCommand: Command = async (args, dir) => {
   const flags = parseFlags(args);
   const ledger = await CostLedger.open(dir);
-  await runExtract(ledger, dir, { limit: typeof flags.limit === "string" ? Number(flags.limit) : undefined });
+  await runExtract(ledger, dir, {
+    limit: typeof flags.limit === "string" ? Number(flags.limit) : undefined,
+    concurrency: typeof flags.concurrency === "string" ? Number(flags.concurrency) : undefined,
+  });
   process.stdout.write(`spent ${ledger.totalEur.toFixed(3)} EUR\n`);
 };
