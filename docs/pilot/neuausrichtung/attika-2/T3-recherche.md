@@ -91,3 +91,6 @@ Eigene Hochrechnung aus Rauchprobe 1 (11,59 € für 81 Plätze ohne Cache, 0,14
 Stand 28.10. 07:45: Suche 764/764, Abruf 8.190/8.286 (96 gescheitert, 1,2 %), Bewertung 80/102 Jobs; Kosten 30,30 €.
 `research.assess` stand seit 01:09 an der Budgetpause (B33: Reservierung 79,97 €, gebucht 20,70 €). Christian:
 Queue freigeben; `queue_resume` 07:50, die übrigen 22 Batches sind abgeschickt.
+`research.extract` stand 07:54 ebenfalls an der Budgetpause (Reservierung der Bewertungs-Batches noch offen; Auszugs-
+Batches je ~7,6 € geschätzt, gebucht ~0,46 €). Mit derselben Freigabe 09:33 und 09:44 per `queue_resume` fortgesetzt;
+Auszug 38/38 um 09:51, Kosten 48,61 €.
