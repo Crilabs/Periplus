@@ -7,6 +7,7 @@ import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { aiBatches, berthSignals, documents, documentVersions, pageAssessments, researchHits, researchUnits, serpQueries, serpResults } from "@/lib/db/schema";
 import { activeAssessor } from "@/lib/domain/research/assessment";
+import { NOT_NAMED_REASON } from "@/lib/domain/research/assign";
 import { noDrops } from "@/lib/domain/research/extraction";
 import { newId } from "@/lib/domain/ids";
 import { beginStage, createRun } from "@/lib/domain/runs";
@@ -269,7 +270,7 @@ describe("research.extract", () => {
       const runId = await runWithStage(tx, [ypsilon.placeId]);
       expect(await planResearchExtract(tx, { id: runId, params: { placeIds: [ypsilon.placeId] } }, config, archive)).toEqual([]);
       const [unit] = await tx.select().from(researchUnits).where(eq(researchUnits.placeId, ypsilon.placeId));
-      expect(unit).toMatchObject({ status: "skipped", reason: "Liegeplatz auf der Seite nicht genannt" });
+      expect(unit).toMatchObject({ status: "skipped", reason: NOT_NAMED_REASON });
     }));
 
   /** A hit page of Ypsilon whose assessment names only Xyla Bay; `text` is its archived Markdown. */
@@ -295,7 +296,7 @@ describe("research.extract", () => {
         const { ypsilon, versionId, archiveWith } = await xylaPage(tx, "We anchored in Xyla Bay for the night.");
         const [unit] = await tx
           .insert(researchUnits)
-          .values({ documentVersionId: versionId, placeId: ypsilon.placeId, model, promptVersion, status, reason: status === "skipped" ? "Liegeplatz auf der Seite nicht genannt" : null, dropped: noDrops(), runId: await insertTestRun(tx) })
+          .values({ documentVersionId: versionId, placeId: ypsilon.placeId, model, promptVersion, status, reason: status === "skipped" ? NOT_NAMED_REASON : null, dropped: noDrops(), runId: await insertTestRun(tx) })
           .returning({ id: researchUnits.id });
         const reads: string[] = [];
         const archive = { get: async (key: string) => { reads.push(key); return archiveWith("We anchored off Ypsilon.").get(key); } };
@@ -305,6 +306,22 @@ describe("research.extract", () => {
         const [after] = await tx.select().from(researchUnits).where(eq(researchUnits.id, unit!.id));
         expect(after!.status, status).toBe(status);
       }
+    }));
+
+  it("judges a unit skipped as not named under the old name matching again: a case form of the name now counts (B34)", () =>
+    withRollback(async (tx) => {
+      const { model, promptVersion } = activeExtractor(config);
+      const { ypsilon, versionId, archiveWith } = await xylaPage(tx, "x");
+      const [unit] = await tx
+        .insert(researchUnits)
+        .values({ documentVersionId: versionId, placeId: ypsilon.placeId, model, promptVersion, status: "skipped", reason: "Liegeplatz auf der Seite nicht genannt", dropped: noDrops(), runId: await insertTestRun(tx) })
+        .returning({ id: researchUnits.id });
+      expect(NOT_NAMED_REASON).not.toBe("Liegeplatz auf der Seite nicht genannt");
+      const runId = await runWithStage(tx, [ypsilon.placeId]);
+      const jobs = await planResearchExtract(tx, { id: runId, params: { placeIds: [ypsilon.placeId] } }, config, archiveWith("We anchored off Ypsilou for the night."));
+      expect(jobs.flatMap((j) => j.unitIds as string[])).toEqual([unit!.id]);
+      const [after] = await tx.select().from(researchUnits).where(eq(researchUnits.id, unit!.id));
+      expect(after!.status).toBe("pending");
     }));
 
   it("reads the Markdown of many versions in parallel, at most 8 at a time", () =>
@@ -369,7 +386,7 @@ describe("research.extract", () => {
       const [batch] = await tx.select().from(aiBatches).where(eq(aiBatches.runId, runId));
       await pollBatch(tx, { model, boss, config, handlers: BATCH_HANDLERS }, batch!.id);
       const [unit] = await tx.select().from(researchUnits).where(eq(researchUnits.placeId, ypsilon.placeId));
-      expect(unit).toMatchObject({ status: "skipped", reason: "Liegeplatz auf der Seite nicht genannt" });
+      expect(unit).toMatchObject({ status: "skipped", reason: NOT_NAMED_REASON });
       expect(await tx.select().from(berthSignals).where(eq(berthSignals.placeId, ypsilon.placeId))).toHaveLength(0);
     }));
 

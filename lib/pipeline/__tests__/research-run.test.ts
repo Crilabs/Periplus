@@ -36,7 +36,7 @@ import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 import { startSiteServer, type SiteServer } from "@/test/site-server";
-import { insertNamedObject, insertTestSubdivision, insertTestTile } from "@/test/text";
+import { insertNamedObject, insertTestCountry, insertTestSubdivision, insertTestTile } from "@/test/text";
 
 let site: SiteServer;
 const agent = createGuardedAgent({ resolveAll: async () => [{ address: "127.0.0.1", family: 4 }], isAllowedAddress: () => true });
@@ -81,6 +81,7 @@ const serp = (urls: string[]) =>
 
 async function seedCandidates(tx: Db, key: string, names: string[] = ["Vathi", "Kalo"]): Promise<string[]> {
   const sub = await insertTestSubdivision(tx, key, [21.0, 35.0, 21.5, 35.5], { country: "GR" });
+  await insertTestCountry(tx);
   await insertTestTile(tx, "q025:84:140", null, sub.id);
   const ids: string[] = [];
   for (const [i, name] of names.entries()) {

@@ -20,6 +20,11 @@ describe("berthNameMatches", () => {
     expect(berthNameMatches({ name: "Vathy Bay", island: null }, ["Vathi"], affixes)).toBe(false);
     expect(berthNameMatches({ name: "Kolona", island: null }, ["Vathi"], affixes)).toBe(false);
   });
+  it("matches Greek case and transliteration endings of the same name (B34)", () => {
+    expect(berthNameMatches({ name: "Lavrion Marina", island: null }, ["Limani Lavriou"], affixes)).toBe(true);
+    expect(berthNameMatches({ name: "Ormos Monastiri", island: null }, ["Ormos Monastiriou"], affixes)).toBe(true);
+    expect(berthNameMatches({ name: "Selino", island: "Crete" }, ["Ormos Selinia"], affixes, ["Salamina"])).toBe(false);
+  });
   it("requires the same island when both are named", () => {
     expect(berthNameMatches({ name: "Vathi", island: "Ithaca" }, ["Vathi"], affixes, ["Meganisi"])).toBe(false);
     expect(berthNameMatches({ name: "Vathi", island: "Ithaca" }, ["Vathi"], affixes, ["Ithaca"])).toBe(true);

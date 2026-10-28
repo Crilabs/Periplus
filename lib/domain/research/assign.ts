@@ -6,6 +6,7 @@ import type { Db } from "@/lib/db/client";
 import { documents, documentVersions, geoNames, geoObjects, pageAssessments, placeWebsites, places, researchHits, researchRouteStops, researchUnits } from "@/lib/db/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { stripAffix } from "@/lib/domain/research/util/affixes";
+import { stemName, type NameStemConfig } from "@/lib/domain/research/util/name-stem";
 import { activeAssessor } from "./assessment";
 import { provisionalNameIds } from "./provisional-names";
 import { namesOccur } from "./unit-text";
@@ -14,7 +15,8 @@ import type { Archive } from "@/lib/adapters/s3";
 /*
  * Assigns assessed pages to berth candidates (plan N2): a page that is a research hit of place A may name other
  * berths nearby; each such candidate within the extraction radius whose name matches an assessed berth of the page
- * becomes part of the page's research unit. Names are compared normalized and without generic affixes, never fuzzy.
+ * becomes part of the page's research unit. Names are compared normalized and without generic affixes, also across
+ * Greek case and transliteration endings (`stemName`, B34), never fuzzy.
  * A page is also a page of every place one of its route stops points to (`research_route_stops`, plan N2 task 5).
  * A page of the place's own website counts without that (N3b). A page found by searching a place is only a unit of that place when it names the berth (N3 task 0): the page's
  * assessment names a berth matching the place, or the page's Markdown (read from the `archive`) contains one of
@@ -23,8 +25,11 @@ import type { Archive } from "@/lib/adapters/s3";
 
 export type ResearchUnitPlan = { documentVersionId: string; placeIds: string[] };
 
-/** The skip reason of a unit whose page does not name its berth (N3 task 0). */
-export const NOT_NAMED_REASON = "Liegeplatz auf der Seite nicht genannt";
+/**
+ * The skip reason of a unit whose page does not name its berth (N3 task 0). It names the version of the name matching:
+ * a unit skipped under an older matching (before the endings of B34) is judged again (`planUnits`).
+ */
+export const NOT_NAMED_REASON = "Liegeplatz auf der Seite nicht genannt (Namensabgleich 2)";
 
 /** The model and prompt version that extracts berths now (task `extract-berth`). */
 export function activeBerthExtractor(config: AppConfig = getConfig()): { model: string; promptVersion: number } {
@@ -67,20 +72,28 @@ function containsWords(b: string, a: string): boolean {
 
 /**
  * Whether an assessed berth of a page is the candidate: one name form equals or contains the other (as whole words),
- * generic affixes stripped. The island must agree when both the page and the candidate (`candidateIslands`) name one.
+ * generic affixes stripped, or so do their stems (`stemName`: "Lavrion Marina" is "Limani Lavriou"). The island must
+ * agree when both the page and the candidate (`candidateIslands`) name one.
  */
 export function berthNameMatches(
   assessed: { name: string; island: string | null },
   candidateNames: string[],
   affixes: NameAffixesConfig,
   candidateIslands: string[] = [],
+  stem: NameStemConfig = getConfig().research.nameStem,
 ): boolean {
   const island = assessed.island ? normalizeName(assessed.island) : "";
   if (island && candidateIslands.length > 0 && !candidateIslands.some((i) => { const c = normalizeName(i); return c !== "" && (containsWords(c, island) || containsWords(island, c)); })) {
     return false;
   }
   const mine = berthNameForms(assessed.name, affixes);
-  return candidateNames.some((name) => berthNameForms(name, affixes).some((c) => mine.some((m) => containsWords(c, m) || containsWords(m, c))));
+  const mineStems = mine.map((m) => stemName(m, stem));
+  return candidateNames.some((name) =>
+    berthNameForms(name, affixes).some((c) => {
+      const cs = stemName(c, stem);
+      return mine.some((m) => containsWords(c, m) || containsWords(m, c)) || mineStems.some((m) => containsWords(cs, m) || containsWords(m, cs));
+    }),
+  );
 }
 
 /**
@@ -225,7 +238,7 @@ export async function planUnits(
       const md = body === null ? null : new TextDecoder().decode(body);
       for (const placeId of needText.get(k.id)!) {
         // no Markdown: undecidable here, the unit stays and extraction skips it as missing Markdown
-        if (md === null || namesOccur(md, own.get(placeId)?.names ?? [])) named.add(`${k.id}:${placeId}`);
+        if (md === null || namesOccur(md, own.get(placeId)?.names ?? [], cfg.research.nameStem)) named.add(`${k.id}:${placeId}`);
       }
     });
   }

@@ -108,12 +108,23 @@ describe("matchStops", () => {
       await insertPlace(tx, { name: "Poros", lon: X0 + 0.15, lat: LAT, status: "candidate" });
       const georgios = await insertPlace(tx, { name: "Agios Georgios", lon: X0 + 0.07, lat: LAT + 0.005, status: "candidate" });
       await unnamedPlace(tx, X0 + 0.1, LAT - 0.005);
-      const versionId = await routedPage(tx, hydra, ["Hydra", "Agios Georgious", "Poros"]);
+      const versionId = await routedPage(tx, hydra, ["Hydra", "Agios Georgioss", "Poros"]);
 
       expect(await matchStops(tx, versionId, config)).toEqual({ byName: 2, byCorridor: 1, open: 0 });
-      expect((await stopsOf(tx, versionId))[1]).toEqual({ name: "Agios Georgious", placeId: georgios.placeId, match: "corridor" });
+      expect((await stopsOf(tx, versionId))[1]).toEqual({ name: "Agios Georgioss", placeId: georgios.placeId, match: "corridor" });
       expect((await namesOf(tx, georgios.objectId)).map((n) => n.name)).toEqual(["Agios Georgios"]);
       expect((await namesOf(tx, georgios.objectId))[0]!.isPreferred).toBe(true);
+    }));
+
+  it("assigns a stop whose name differs only in its Greek ending by name (B34)", () =>
+    withRollback(async (tx) => {
+      const hydra = await insertPlace(tx, { name: "Hydra", lon: X0, lat: LAT, status: "candidate" });
+      await insertPlace(tx, { name: "Poros", lon: X0 + 0.15, lat: LAT, status: "candidate" });
+      const georgios = await insertPlace(tx, { name: "Agios Georgios", lon: X0 + 0.07, lat: LAT + 0.005, status: "candidate" });
+      const versionId = await routedPage(tx, hydra, ["Hydra", "Agios Georgiou", "Poros"]);
+
+      expect(await matchStops(tx, versionId, config)).toEqual({ byName: 3, byCorridor: 0, open: 0 });
+      expect((await stopsOf(tx, versionId))[1]).toMatchObject({ name: "Agios Georgiou", placeId: georgios.placeId });
     }));
 
   it("leaves the stop open when two unnamed bays lie in the corridor", () =>

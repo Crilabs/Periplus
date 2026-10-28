@@ -17,7 +17,7 @@ import type { FetchUrlDeps } from "@/lib/pipeline/fetch/page";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 import { startSiteServer, type SiteServer } from "@/test/site-server";
-import { insertNamedObject, insertTestRun, insertTestSubdivision, insertTestTile, insertTestVersion } from "@/test/text";
+import { insertNamedObject, insertTestCountry, insertTestRun, insertTestSubdivision, insertTestTile, insertTestVersion } from "@/test/text";
 
 let site: SiteServer;
 const agent = createGuardedAgent({ resolveAll: async () => [{ address: "127.0.0.1", family: 4 }], isAllowedAddress: () => true });
@@ -210,6 +210,7 @@ describe("planResearchFetch", () => {
 
   async function seedTwo(tx: Db, urls: string[]) {
     const sub = await insertTestSubdivision(tx, "GR-XR1", [21.0, 35.0, 21.5, 35.5], { country: "GR" });
+    await insertTestCountry(tx);
     await insertTestTile(tx, "q025:84:140", null, sub.id);
     const ids: string[] = [];
     for (const [i, name] of ["Vathi", "Kalo"].entries()) {
