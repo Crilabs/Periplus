@@ -71,5 +71,5 @@ Gattungsnamen griechischer Buchten („Ormos Agiou Nikolaou“) treffen ganz Gri
 (geschätzt ≤ 6 Plätze). Folge: selbst mit perfekter Recherche läge die Abdeckung bei 150 m bei höchstens ~24 %
 (486 von 637 Spots ohne Kandidat, B28); mit der heutigen Ausbeute 0,8 %.
 
-Offen (Entscheidung Christian): Revier in die Suchvorlagen (Landesteil, Insel, Nachbarort), Namensvarianten
-(griechische Kasusformen, Übersetzungen) in den Abgleich; Zielgröße der Abdeckung.
+Christian (28.10.): Land und bis zu zwei Reviere in die Suchvorlagen, Vorlagen ohne Ort ersetzen, griechische Endungen
+im Namensabgleich; Abdeckungsziel 50 % bleibt (braucht zusätzlich ein dichteres Gerüst, B28). Umsetzung PR #47.

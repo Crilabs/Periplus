@@ -126,3 +126,7 @@ Kandidat), passend zu T2 (25,1 %).
 Die 0,8 % entstehen in der Recherche: Befund **B34** (Suche trifft gleichnamige Buchten anderer Reviere; von 473
 zählenden Seiten-Paaren der 82 Plätze mit zu wenigen Quellen nennen 418 den Platz nicht, 28 wurden Einheiten).
 Namensvarianten sind ein kleiner Anteil.
+
+Christian (28.10.): Suche schärfen mit Land und bis zu zwei Revieren, Vorlagen ohne Ort ersetzen, Namensvarianten
+mitbauen; Abdeckungsziel 50 % bleibt. Umsetzung PR #47 (`fix/research-search-context`), danach Nachlauf GR-I mit
+Schätzung.
