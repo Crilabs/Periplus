@@ -87,3 +87,7 @@ Ohne `confirm` (27.10. 21:13): 764 Plätze; Server-Schätzung 30,95 € (Basis R
 Eigene Hochrechnung aus Rauchprobe 1 (11,59 € für 81 Plätze ohne Cache, 0,143 €/Platz): **~110 €**, davon DataForSEO
 ~15 €. Budgetstand vor dem Start: Anthropic 13,44/80 €, DataForSEO 2,24/20 €, OpenAI 0,25/10 €. Abbruch (`run_end`) über
 **165 €** (+50 %). Anthropic-Tagesbudget reicht nicht für einen Tag; der Lauf wartet am Budget und setzt am Folgetag fort.
+
+Stand 28.10. 07:45: Suche 764/764, Abruf 8.190/8.286 (96 gescheitert, 1,2 %), Bewertung 80/102 Jobs; Kosten 30,30 €.
+`research.assess` stand seit 01:09 an der Budgetpause (B33: Reservierung 79,97 €, gebucht 20,70 €). Christian:
+Queue freigeben; `queue_resume` 07:50, die übrigen 22 Batches sind abgeschickt.

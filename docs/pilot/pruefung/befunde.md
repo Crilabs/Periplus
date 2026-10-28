@@ -43,3 +43,12 @@ anderer Regionen (Korfu, Rhodos, Paros, Spanien). In der Probekachel: 25 Strand-
 
 Nach #42–#44 blieb `configHash` gleich; ob `config/geometry.json` oder `config/gazetteer.json` auf Produktion gelten,
 ist über `version` nicht prüfbar. Umweg: `computations.rules_version` per `sql`.
+
+## B33 – Batch-Reservierung schätzt die Seitenbewertung rund viermal zu hoch, die Budgetpause hält den ganzen Tag
+
+Hauptlauf GR-I (`01a17eff…`): 40 Bewertungs-Batches am 28.10. 01:04–01:09 reservierten zusammen 79,97 €, gebucht wurden
+20,70 €. Die Reservierung erreichte das Tagesbudget (80 €), der Worker hielt `research.assess` mit `budget:anthropic`
+bis Mitternacht UTC an. Nach dem Buchen war das Budget frei, die Pause blieb aber stehen (Rest 22 Jobs, ~17 h
+Wartezeit). Christian gab die Queue am 28.10. 07:50 per `queue_resume` frei; die 22 Batches reservierten 44,79 €.
+Offen: Schätzung je Batch an gebuchte Kosten angleichen (`estimatedCostEur`), Budgetpause nach Ende der Reservierungen
+selbst aufheben statt bis zum Tageswechsel.
