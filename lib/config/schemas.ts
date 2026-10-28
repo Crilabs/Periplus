@@ -1319,8 +1319,16 @@ export const areaImportFileSchema = z
   });
 
 const researchTemplateSchema = z.strictObject({
-  /** `{name}`: the berth's name (required: a query without it would hit pages that name no berth); `{island}`: its island's name. */
-  template: z.string().refine((t) => t.includes("{name}"), { error: "template must contain {name}" }),
+  /**
+   * `{name}`: the berth's name (required: a query without it would hit pages that name no berth); `{island}`: its
+   * island's name; `{area}`: the name of a sailing area around it (one query per area, `maxAreasPerCandidate`);
+   * `{country}`: its country's name. A location is required too (B34): the names of Greek bays recur all over the
+   * country, a query with the name alone finds the other bays.
+   */
+  template: z
+    .string()
+    .refine((t) => t.includes("{name}"), { error: "template must contain {name}" })
+    .refine((t) => /\{(island|area|country)\}/.test(t), { error: "template must contain {island}, {area} or {country}" }),
   lang: z.string().min(1),
 });
 
@@ -1343,6 +1351,13 @@ export const researchSchema = z
       negative: z.array(researchTemplateSchema),
     }),
     maxHitsPerCandidate: z.number().int().positive(),
+    /** `{area}` is filled with this many sailing areas around the candidate, the smallest first. */
+    maxAreasPerCandidate: z.number().int().positive(),
+    /**
+     * Name matching across Greek case and transliteration endings (B34, `stemName`): words of at least
+     * `minWordLetters` letters lose their ending when at least `minStemLetters` letters remain.
+     */
+    nameStem: z.strictObject({ minWordLetters: z.number().int().positive(), minStemLetters: z.number().int().positive() }),
     /** Landside research (plan N4b): searches for the towns and sights around a confirmed berth. */
     landside: z.strictObject({
       templates: z.array(landsideTemplateSchema).min(1),

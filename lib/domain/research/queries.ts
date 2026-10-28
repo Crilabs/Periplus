@@ -11,16 +11,26 @@ export type CandidateNames = {
   names: Record<string, string>;
   /** Names of the nearest ancestor of type island/islet per language; null when there is none. */
   island: Record<string, string> | null;
+  /** Names per language of the sailing areas around the candidate, smallest first, at most `maxAreasPerCandidate`. */
+  areas: Array<Record<string, string>>;
+  /** Names per language of the candidate's country; null when there is none. */
+  country: Record<string, string> | null;
   /** ISO 3166-1 alpha-2 country of the candidate's subdivision; empty when it has none. */
   countryCode: string;
   tileId: string | null;
 };
 
+/** A location's name in `lang`, else its English name (sailing areas and countries often have no it/fr name). */
+function locationName(names: Record<string, string> | null, lang: string): string | undefined {
+  return names?.[lang] ?? names?.en;
+}
+
 /**
  * The queries of one candidate for one purpose: per template (of a language searched in the candidate's country)
- * the candidate's name in the template's language (for `{name}`) and the island's name in that language (for `{island}`); a
- * template without the name it needs yields no query. `priority` is the index of the template, deduplicated over
- * `queryKey` (the lowest priority wins). `tileId` books the cost on the candidate's tile.
+ * the candidate's name in the template's language (for `{name}`), the island's name in that language (for `{island}`),
+ * one query per sailing area (for `{area}`) and the country's name (for `{country}`); areas and the country fall back
+ * to their English name. A template without the name it needs yields no query. `priority` is the index of the
+ * template, deduplicated over `queryKey` (the lowest priority wins). `tileId` books the cost on the candidate's tile.
  */
 export function buildResearchQueries(
   placeId: string,
@@ -45,24 +55,39 @@ export function buildResearchQueries(
       if (!island) continue;
       keyword = keyword.replaceAll("{island}", island);
     }
-    const q: DiscoveryQuery = {
-      keyword,
-      languageCode: t.lang,
-      locationCode,
-      level: "research",
-      scopeId: placeId,
-      priority,
-      ...(input.tileId ? { tileId: input.tileId } : {}),
-    };
-    const prior = byKey.get(queryKey(q));
-    if (!prior || priority < prior.priority) byKey.set(queryKey(q), q);
+    if (keyword.includes("{country}")) {
+      const country = locationName(input.country, t.lang);
+      if (!country) continue;
+      keyword = keyword.replaceAll("{country}", country);
+    }
+    const keywords = keyword.includes("{area}")
+      ? input.areas.flatMap((a) => {
+          const area = locationName(a, t.lang);
+          return area ? [keyword.replaceAll("{area}", area)] : [];
+        })
+      : [keyword];
+    for (const k of keywords) {
+      const q: DiscoveryQuery = {
+        keyword: k,
+        languageCode: t.lang,
+        locationCode,
+        level: "research",
+        scopeId: placeId,
+        priority,
+        ...(input.tileId ? { tileId: input.tileId } : {}),
+      };
+      const prior = byKey.get(queryKey(q));
+      if (!prior || priority < prior.priority) byKey.set(queryKey(q), q);
+    }
   }
   return [...byKey.values()];
 }
 
 /**
  * The names a candidate is searched with: the preferred valid names of its geo object, the names of its nearest
- * island/islet ancestor (via `parent_id`), the country of its subdivision and its tile. Unknown place: empty names.
+ * island/islet ancestor (via `parent_id`), of the smallest sailing areas (`area` objects) whose geometry covers its
+ * position (`maxAreasPerCandidate`), of its subdivision's country (`country` object with that ISO 3166-1 code), the
+ * country code and its tile. Unknown place: empty names.
  */
 export async function candidateNames(db: Db, placeId: string): Promise<CandidateNames> {
   const [row] = await db
@@ -71,7 +96,7 @@ export async function candidateNames(db: Db, placeId: string): Promise<Candidate
     .innerJoin(geoObjects, eq(geoObjects.id, places.geoObjectId))
     .leftJoin(subdivisions, eq(subdivisions.id, geoObjects.subdivisionId))
     .where(eq(places.id, placeId));
-  if (!row) return { names: {}, island: null, countryCode: "", tileId: null };
+  if (!row) return { names: {}, island: null, areas: [], country: null, countryCode: "", tileId: null };
 
   const { rows } = await db.execute<{ id: string }>(sql`
     with recursive up as (
@@ -83,13 +108,38 @@ export async function candidateNames(db: Db, placeId: string): Promise<Candidate
   `);
   const islandId = rows[0]?.id;
 
-  const languages = Object.keys(getConfig().research.locationCodes);
-  const byLanguage = await namesByLanguage(db, islandId ? [row.geoObjectId, islandId] : [row.geoObjectId], languages);
+  const cfg = getConfig().research;
+  const { rows: areaRows } = await db.execute<{ id: string }>(sql`
+    select o.id from geo_objects o join places p on p.id = ${placeId}
+    where o.type = 'area' and o.valid_to is null and o.merged_into_id is null
+      and o.geom && p.position and st_covers(o.geom, p.position)
+    order by st_area(o.geom::geography), o.id
+    limit ${cfg.maxAreasPerCandidate}
+  `);
+  const { rows: countryRows } = row.country
+    ? await db.execute<{ id: string }>(sql`
+        select id from geo_objects
+        where type = 'country' and valid_to is null and merged_into_id is null and tags->>'ISO3166-1' = ${row.country}
+        order by id limit 1
+      `)
+    : { rows: [] };
+  const countryId = countryRows[0]?.id;
+
+  const ids = [row.geoObjectId, ...(islandId ? [islandId] : []), ...areaRows.map((a) => a.id), ...(countryId ? [countryId] : [])];
+  const byLanguage = await namesByLanguage(db, ids, Object.keys(cfg.locationCodes));
   const record = (id: string) => Object.fromEntries(byLanguage.get(id) ?? []);
-  const island = islandId ? record(islandId) : null;
+  const named = (id: string | undefined) => {
+    const r = id ? record(id) : {};
+    return Object.keys(r).length > 0 ? r : null;
+  };
   return {
     names: record(row.geoObjectId),
-    island: island && Object.keys(island).length > 0 ? island : null,
+    island: named(islandId),
+    areas: areaRows.flatMap((a) => {
+      const r = named(a.id);
+      return r ? [r] : [];
+    }),
+    country: named(countryId),
     countryCode: row.country ?? "",
     tileId: row.tileId,
   };

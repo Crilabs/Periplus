@@ -17,7 +17,7 @@ import { assessPageBatchEntry, assessPages, planResearchAssess, RESEARCH_ASSESS_
 import { searchCandidate } from "@/lib/pipeline/research/search";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
-import { insertNamedObject, insertTestRun, insertTestSubdivision, insertTestTile, insertTestVersion } from "@/test/text";
+import { insertNamedObject, insertTestCountry, insertTestRun, insertTestSubdivision, insertTestTile, insertTestVersion } from "@/test/text";
 
 const base = loadConfig("config");
 const config: AppConfig = { ...base, budgets: { ...base.budgets, anthropic: { dailyEur: 1000 } } };
@@ -35,6 +35,7 @@ const answer = (urls: string[]) =>
 /** Two candidates which both hit every URL; a document (with archived Markdown) per URL. */
 async function seed(tx: Db, urls: string[], markdown: (url: string) => string = () => "# Vathi\n\nWe anchored in Vathi in June 2024.") {
   const sub = await insertTestSubdivision(tx, "GR-XR1", [21.0, 35.0, 21.5, 35.5], { country: "GR" });
+  await insertTestCountry(tx);
   await insertTestTile(tx, "q025:84:140", null, sub.id);
   const placeIds: string[] = [];
   for (const [i, name] of ["Vathi", "Kalo"].entries()) {

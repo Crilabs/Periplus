@@ -298,7 +298,7 @@ export async function extractInputs(db: Db, archive: Pick<Archive, "get">, ids: 
         ].filter((n): n is string => !!n && n !== berth.name),
       ),
     ].sort();
-    const { text, offset } = unitText(md, berth.names, config.research.extraction);
+    const { text, offset } = unitText(md, berth.names, config.research.extraction, config.research.nameStem);
     const input: ExtractItemInput = {
       berth,
       otherBerths,

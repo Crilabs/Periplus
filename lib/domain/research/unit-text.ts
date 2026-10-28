@@ -1,4 +1,5 @@
 import { normalizeName } from "@/lib/domain/gazetteer/names";
+import { stemName, type NameStemConfig } from "@/lib/domain/research/util/name-stem";
 
 /** Separator between two windows of a unit text. */
 const GAP = "\n\n[…]\n\n";
@@ -36,8 +37,11 @@ function foldWithMap(markdown: string): { folded: string; map: number[] } {
   return { folded: out.join(""), map };
 }
 
-/** Original character ranges `[start, end)` of every whole-word occurrence of one of the names. */
-function nameRanges(markdown: string, names: string[]): Array<[number, number]> {
+/**
+ * Original character ranges `[start, end)` of every whole-word occurrence of one of the names; with `stem` also of
+ * every run of words whose stems are the stems of a name (`stemName`, B34: "Lavriou" for "Lavrion").
+ */
+function nameRanges(markdown: string, names: string[], stem?: NameStemConfig): Array<[number, number]> {
   const keys = [...new Set(names.map(normalizeName).filter((k) => k !== ""))];
   if (keys.length === 0) return [];
   const { folded, map } = foldWithMap(markdown);
@@ -50,12 +54,23 @@ function nameRanges(markdown: string, names: string[]): Array<[number, number]> 
       ranges.push([map[first]!, map[last]! + 1]);
     }
   }
+  if (!stem) return ranges;
+  const words = [...folded.matchAll(/\S+/g)].map((m) => ({ stem: stemName(m[0], stem), first: m.index, last: m.index + m[0].length - 1 }));
+  for (const key of new Set(keys.map((k) => stemName(k, stem)))) {
+    const parts = key.split(" ");
+    for (let i = 0; i + parts.length <= words.length; i++) {
+      if (parts.every((p, j) => words[i + j]!.stem === p)) ranges.push([map[words[i]!.first]!, map[words[i + parts.length - 1]!.last]! + 1]);
+    }
+  }
   return ranges;
 }
 
-/** Whether one of the names occurs in the markdown (same whole-word, case- and accent-insensitive search as `unitText`). */
-export function namesOccur(markdown: string, names: string[]): boolean {
-  return nameRanges(markdown, names).length > 0;
+/**
+ * Whether one of the names occurs in the markdown (same whole-word, case- and accent-insensitive search as `unitText`;
+ * with `stem` also across Greek endings).
+ */
+export function namesOccur(markdown: string, names: string[], stem?: NameStemConfig): boolean {
+  return nameRanges(markdown, names, stem).length > 0;
 }
 
 /** Index of the word that contains `pos`, else the next one (the last word when none follows). */
@@ -73,7 +88,8 @@ function wordAt(words: Word[], pos: number): number {
 /**
  * The text a unit (a berth candidate) is extracted from. Up to `maxUnitWords` words the whole markdown
  * (`offset: null`). Longer texts yield only the windows of `windowWords` words before and after every occurrence of
- * one of `names` (found case- and accent-insensitively, whole words, through inline markup), overlapping or touching
+ * one of `names` (found case- and accent-insensitively, whole words, through inline markup; with `stem` also across
+ * Greek endings, `stemName`), overlapping or touching
  * windows merged, in document order, joined by `\n\n[…]\n\n`, at most `maxUnitWords` words in all (later windows are
  * cut off). Without any occurrence: the first `maxUnitWords` words.
  *
@@ -84,12 +100,13 @@ export function unitText(
   markdown: string,
   names: string[],
   cfg: { maxUnitWords: number; windowWords: number },
+  stem?: NameStemConfig,
 ): { text: string; offset: number[] | null } {
   const words: Word[] = [...markdown.matchAll(/\S+/g)].map((m) => ({ start: m.index, end: m.index + m[0].length }));
   if (words.length <= cfg.maxUnitWords) return { text: markdown, offset: null };
 
   const spans: Array<[number, number]> = []; // word index ranges, inclusive
-  for (const [from, to] of nameRanges(markdown, names)) {
+  for (const [from, to] of nameRanges(markdown, names, stem)) {
     spans.push([Math.max(0, wordAt(words, from) - cfg.windowWords), Math.min(words.length - 1, wordAt(words, to - 1) + cfg.windowWords)]);
   }
   spans.sort((a, b) => a[0] - b[0]);

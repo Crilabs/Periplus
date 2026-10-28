@@ -11,7 +11,9 @@ import { recordHits, recordWebsiteHit } from "@/lib/domain/research/hits";
 import { planResearchSearch, searchCandidate } from "@/lib/pipeline/research/search";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
-import { insertNamedObject, insertTestRun, insertTestSubdivision, insertTestTile } from "@/test/text";
+import { addNames } from "@/lib/domain/gazetteer/names";
+import { candidateNames } from "@/lib/domain/research/queries";
+import { insertNamedObject, insertTestGeoObject, insertTestRun, insertTestSubdivision, insertTestTile } from "@/test/text";
 
 const SUB_KEY = "GR-XR1";
 const TILE = "q025:84:140";
@@ -100,6 +102,38 @@ describe("searchCandidate", () => {
 async function website(tx: Db, placeId: string, geoObjectId: string, url: string, o: { bound?: boolean; createdAt?: Date } = {}) {
   await tx.insert(placeWebsites).values({ placeId, geoObjectId, url, urlNormalized: url, origin: "osm", bound: o.bound ?? true, ...(o.createdAt ? { createdAt: o.createdAt } : {}) });
 }
+
+/** A square polygon of `half` degrees around the candidate's point (21.12, 35.21). */
+const square = (half: number, lon = 21.12, lat = 35.21) =>
+  geomFromGeoJson({ type: "Polygon", coordinates: [[[lon - half, lat - half], [lon + half, lat - half], [lon + half, lat + half], [lon - half, lat + half], [lon - half, lat - half]]] });
+
+async function namedObject(tx: Db, values: Parameters<typeof insertTestGeoObject>[1], names: Array<[string, string]>) {
+  const id = await insertTestGeoObject(tx, values);
+  await addNames(tx, id, names.map(([language, name]) => ({ name, language, origin: "osm" as const })));
+  return id;
+}
+
+describe("candidateNames: sailing areas and country (B34)", () => {
+  it("gives the smallest sailing areas around the candidate, at most maxAreasPerCandidate, smallest first, and the country", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await seed(tx, "Vathi");
+      await namedObject(tx, { type: "area", geom: square(1) }, [["en", "Eastern Peloponnese"]]);
+      await namedObject(tx, { type: "area", geom: square(0.4) }, [["en", "Argo-Saronic Gulf"]]);
+      await namedObject(tx, { type: "area", geom: square(0.1) }, [["en", "Saronic Gulf"], ["el", "Σαρωνικός Κόλπος"]]);
+      await namedObject(tx, { type: "area", geom: square(0.1, 25, 37) }, [["en", "Cyclades"]]);
+      await namedObject(tx, { type: "country", geom: square(2), tags: { "ISO3166-1": "GR", country: "GR" } }, [["en", "Greece"], ["de", "Griechenland"]]);
+      const names = await candidateNames(tx, placeId);
+      expect(getConfig().research.maxAreasPerCandidate).toBe(2);
+      expect(names.areas).toEqual([{ en: "Saronic Gulf", el: "Σαρωνικός Κόλπος" }, { en: "Argo-Saronic Gulf" }]);
+      expect(names.country).toEqual({ en: "Greece", de: "Griechenland" });
+    }));
+
+  it("has no areas and no country where none is stored", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await seed(tx, "Vathi");
+      expect(await candidateNames(tx, placeId)).toMatchObject({ areas: [], country: null });
+    }));
+});
 
 describe("searchCandidate: bound marina website (N3b)", () => {
   it("records the newest website as a positive rank-0 hit of origin place_website when it is bound, without a serp query", () =>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { unitText } from "@/lib/domain/research/unit-text";
+import { namesOccur, unitText } from "@/lib/domain/research/unit-text";
 
 const cfg = { maxUnitWords: 3000, windowWords: 600 };
 const filler = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag}${i}`).join(" ");
@@ -87,5 +87,22 @@ describe("unitText", () => {
   it("uses the first words for empty names too", () => {
     const md = filler(3000, "w");
     expect(unitText(md, [""], { maxUnitWords: 1000, windowWords: 600 }).text.split(/\s+/)).toHaveLength(1000);
+  });
+});
+
+describe("name variants (B34)", () => {
+  const stem = { minWordLetters: 5, minStemLetters: 4 };
+
+  it("finds a Greek case form of the name only with stemming", () => {
+    const md = "Wir lagen zwei Nächte im Hafen von Lavriou.";
+    expect(namesOccur(md, ["Lavrion"])).toBe(false);
+    expect(namesOccur(md, ["Lavrion"], stem)).toBe(true);
+    expect(namesOccur("Ypsilonia is another place.", ["Ypsilon"], stem)).toBe(false);
+  });
+
+  it("cuts the window around a case form of the name", () => {
+    const md = `${filler(30000, "a")} Limani Lavriou ${filler(30000, "b")}`;
+    const { text } = unitText(md, ["Lavrion"], { maxUnitWords: 3000, windowWords: 600 }, stem);
+    expect(text).toContain("a29999 Limani Lavriou b0");
   });
 });

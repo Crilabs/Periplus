@@ -121,6 +121,13 @@ export type TestNamedObject = {
   category?: PoiCategory | null;
 };
 
+/** The country object of an ISO 3166-1 code with its English name (research queries fill `{country}` from it). */
+export async function insertTestCountry(tx: Db, code = "GR", name = "Greece"): Promise<string> {
+  const id = await insertTestGeoObject(tx, { type: "country", origin: "manual", tags: { "ISO3166-1": code, country: code } });
+  await addNames(tx, id, [{ name, language: "en", origin: "osm" }]);
+  return id;
+}
+
 /** A geo object with its names (incl. transliterations, via `addNames`) and its tile assignments. */
 export async function insertNamedObject(tx: Db, o: TestNamedObject): Promise<string> {
   const id = await insertTestGeoObject(tx, {

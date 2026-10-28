@@ -115,10 +115,10 @@ describe("research config", () => {
     const templates = getConfig().research.templates.positive;
     expect(templates).toEqual(
       expect.arrayContaining([
-        { template: "{name} sailing blog", lang: "en" },
-        { template: "{name} anchored overnight", lang: "en" },
+        { template: "{name} {area} sailing blog", lang: "en" },
+        { template: "{name} {country} anchored overnight", lang: "en" },
         { template: "{name} {island} Törnbericht", lang: "de" },
-        { template: "{name} vela ancoraggio", lang: "it" },
+        { template: "{name} {country} vela ancoraggio", lang: "it" },
       ]),
     );
   });
@@ -126,6 +126,12 @@ describe("research config", () => {
   it("rejects a template with only {island} (it would find pages that name no berth)", () => {
     const c = valid();
     c.templates.positive.push({ template: "Törn {island}", lang: "de" });
+    expect(researchSchema.safeParse(c).success).toBe(false);
+  });
+
+  it("rejects a template without a location: {name} alone finds the bays of the same name elsewhere (B34)", () => {
+    const c = valid();
+    c.templates.positive.push({ template: "{name} anchorage", lang: "en" });
     expect(researchSchema.safeParse(c).success).toBe(false);
   });
 
