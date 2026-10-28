@@ -1,5 +1,5 @@
 import { searchOrganic } from "../../../lib/adapters/dataforseo";
-import { getTransport } from "../../../lib/adapters/http";
+import { HttpError, RetryableHttpError, getTransport } from "../../../lib/adapters/http";
 import { getConfig } from "../../../lib/config";
 import type { Db } from "../../../lib/db/client";
 import { buildQueries, type Area, type Query } from "./areas";
@@ -27,7 +27,18 @@ export async function runSearchD(db: Db, ledger: CostLedger, dir: string, areas:
     const locationCode = cfg.research.locationCodes[q.lang];
     if (!locationCode) throw new Error(`no locationCode for ${q.lang}`);
     ledger.assertRoom(serp.costPerQueryEur);
-    const { items } = await searchOrganic(getTransport(), { keyword: q.keyword, languageCode: q.lang, locationCode }, { db, stage: "lab.search" }, serp);
+    let items: Awaited<ReturnType<typeof searchOrganic>>["items"];
+    try {
+      ({ items } = await searchOrganic(getTransport(), { keyword: q.keyword, languageCode: q.lang, locationCode }, { db, stage: "lab.search" }, serp));
+    } catch (error) {
+      // Ruling (Task 10): a query DataForSEO keeps failing on (40101 after the adapter's retries) is recorded and skipped;
+      // the run must not stop on one search.
+      if (!(error instanceof HttpError || error instanceof RetryableHttpError)) throw error;
+      await ledger.add({ stage: "search-d", service: "dataforseo", units: 1, costEur: serp.costPerQueryEur });
+      await appendJsonl(dir, "queries-d.jsonl", [{ ...q, results: 0, kept: 0, error: error.message.slice(0, 160) }]);
+      process.stdout.write(`d ${q.area.padEnd(26)} ${q.lang} FAILED ${error.message.slice(0, 100)}\n`);
+      continue;
+    }
     await ledger.add({ stage: "search-d", service: "dataforseo", units: 1, costEur: serp.costPerQueryEur });
     const hits: Hit[] = [];
     for (const it of items) {
