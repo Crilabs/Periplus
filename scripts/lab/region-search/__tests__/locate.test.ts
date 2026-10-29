@@ -11,6 +11,8 @@ const gaz: GazObject[] = [
   { id: "g3", type: "bay", category: null, names: ["Kolpos Mirrin"], lon: 4.9, lat: 54.1, islandName: "Nisos Quell" },
   { id: "g4", type: "settlement", category: null, names: ["Vrontaki"], lon: 4.7, lat: 54.3, islandName: "Nisos Plinth" },
   { id: "g5", type: "bay", category: null, names: ["Ormos Vrontaki"], lon: 4.7008, lat: 54.3005, islandName: "Nisos Plinth" },
+  { id: "i1", type: "island", category: null, names: ["Nisos Plinth", "Plinth"], lon: 4.6, lat: 54.25, islandName: "Nisos Plinth" },
+  { id: "i2", type: "island", category: null, names: ["Nisos Quell", "Quell"], lon: 4.9, lat: 54.1, islandName: "Nisos Quell" },
 ];
 
 const affixes = getConfig().nameAffixes;
@@ -57,6 +59,17 @@ describe("locateByGazetteer", () => {
     ];
     const r = locateByGazetteer(mention({ name: "Drossia", kind: "port" }), town, affixes);
     expect("object" in r && r.object.id).toBe("h1");
+  });
+
+  it("ignores an area that is not an island when filtering by island", () => {
+    // the page places the bay in a gulf; the gazetteer object sits on an island of that gulf
+    const r = locateByGazetteer(mention({ name: "Zorbakia", area: "Gulf of Plinth" }), gaz, affixes);
+    expect("object" in r && r.object.id).toBe("g1");
+  });
+
+  it("still rejects an object on another island when the area names an island", () => {
+    const r = locateByGazetteer(mention({ name: "Zorbakia", area: "Nisos Quell" }), gaz, affixes);
+    expect("reason" in r && r.reason).toBe("no_match");
   });
 
   it("reports no match for an unknown name", () => {

@@ -1,11 +1,12 @@
 import { getConfig, type NameAffixesConfig } from "../../../lib/config";
+import { normalizeName } from "../../../lib/domain/gazetteer/names";
 import { distanceM } from "../../../lib/domain/gazetteer/rings";
 import { berthNameMatches } from "../../../lib/domain/research/assign";
 import { parseFlags, type Command } from "./cli";
 import { CostLedger } from "./costs";
 import type { Mention } from "./extract";
 import { readGazetteer, type GazObject } from "./gazetteer";
-import { appendJsonl, readJsonl, writeJson } from "./store";
+import { appendJsonl, readJson, readJsonl, writeJson } from "./store";
 
 /*
  * Spec 5D: a mention becomes a point by, in this order, its literal coordinate, a gazetteer object with a matching
@@ -29,9 +30,26 @@ const TYPE_RANK: Record<Mention["kind"], string[]> = {
 };
 const SAME_PLACE_M = 300;
 
+const contains = (a: string, b: string): boolean => {
+  const x = normalizeName(a);
+  const y = normalizeName(b);
+  return x !== "" && y !== "" && (` ${x} `.includes(` ${y} `) || ` ${y} `.includes(` ${x} `));
+};
+
+/**
+ * The island the page's area names, if it names one; a gulf or coast as area must not reject objects on its islands
+ * (ruling, Task 10: "Poros" placed in the "Saronic Gulf" was rejected against the island filter).
+ */
+export function islandOf(area: string | null, gaz: GazObject[]): string | null {
+  if (!area) return null;
+  const island = gaz.find((g) => (g.type === "island" || g.type === "islet") && g.names.some((n) => contains(n, area)));
+  return island ? (island.islandName ?? island.names[0]!) : null;
+}
+
 export function locateByGazetteer(m: Mention, gaz: GazObject[], affixes: NameAffixesConfig): { object: GazObject } | { reason: "no_match" | "ambiguous" } {
   const names = [m.name, ...m.aliases];
-  const hits = gaz.filter((g) => names.some((n) => berthNameMatches({ name: n, island: m.area }, g.names, affixes, g.islandName ? [g.islandName] : [])));
+  const island = islandOf(m.area, gaz);
+  const hits = gaz.filter((g) => names.some((n) => berthNameMatches({ name: n, island }, g.names, affixes, g.islandName ? [g.islandName] : [])));
   if (hits.length === 0) return { reason: "no_match" };
   const rank = (g: GazObject) => {
     const i = TYPE_RANK[m.kind].indexOf(g.type);
@@ -60,6 +78,10 @@ export const locateCommand: Command = async (args, dir) => {
   const gaz = await readGazetteer(dir);
   const mentions = await readJsonl<Mention>(dir, "mentions.jsonl");
   let located = locateAll(mentions, gaz, getConfig().nameAffixes);
+  // A paid model result of an earlier run is kept for a mention the name pass still cannot place.
+  const previous = (await readJson<Located[]>(dir, "located.json")) ?? [];
+  const modelHits = new Map(previous.filter((p) => p.method === "model").map((p) => [`${p.url}\n${p.name}\n${p.berthQuote}`, p]));
+  located = located.map((l) => (l.method === null ? (modelHits.get(`${l.url}\n${l.name}\n${l.berthQuote}`) ?? l) : l));
   const count = (rows: Located[]) => {
     const out: Record<string, number> = {};
     for (const l of rows) {
