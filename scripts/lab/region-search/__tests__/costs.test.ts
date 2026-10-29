@@ -23,6 +23,10 @@ describe("CostLedger", () => {
     expect(reopened.totalEur).toBeCloseTo(0.0135, 6);
   });
 
+  it("refuses to open with a cap that is not a finite number", async () => {
+    await expect(CostLedger.open(await tmp(), Number("50,00"))).rejects.toThrow(/cap/);
+  });
+
   it("refuses a call that would pass the cap, across restarts", async () => {
     const dir = await tmp();
     const ledger = await CostLedger.open(dir, 40);

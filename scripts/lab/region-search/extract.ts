@@ -86,10 +86,10 @@ export function validateMentions(
     let coordinateQuote: string | null = null;
     if (m.coordinate_text && m.coordinate_quote) {
       const q = locateQuote(markdown, m.coordinate_quote, quoteCfg);
-      const parsed = parseCoordinate(m.coordinate_text);
-      // the quote must hold the coordinate itself, not only talk about one
-      if (q.ok && parsed && coordinatesIn(m.coordinate_quote).length > 0) {
-        coordinate = parsed;
+      // the coordinate is what the (verified) quote itself says; `coordinate_text` only tells us the model saw one
+      const fromQuote = q.ok ? parseCoordinate(m.coordinate_quote) : null;
+      if (fromQuote) {
+        coordinate = fromQuote;
         coordinateQuote = m.coordinate_quote;
       }
     }

@@ -95,4 +95,26 @@ describe("locateAll", () => {
     expect(located[1]?.reason).toBe("no_match");
     expect(located[2]?.reason).toBe("no_name");
   });
+
+  it("does not place a mention the page puts in a foreign area, even when a GR-I object shares the name", () => {
+    const known = ["Gulf of Plinth", "Nisos Plinth"];
+    const located = locateAll(
+      [
+        mention({ name: "Zorbakia", area: "Isle of Farthing" }), // neither an island here nor a known area nor a gazetteer name
+        mention({ name: "Zorbakia", area: "Gulf of Plinth" }), // known search area
+        mention({ name: "Zorbakia", area: "Vrontaki" }), // a gazetteer settlement: known
+        mention({ name: "Zorbakia", area: "Greece" }), // country: not foreign
+        mention({ name: "Zorbakia", area: "Athen" }), // the region's capital, in German: not foreign
+      ],
+      gaz,
+      affixes,
+      known,
+    );
+    expect(located[0]?.method).toBeNull();
+    expect(located[0]?.reason).toBe("foreign_area");
+    expect(located[1]?.method).toBe("gazetteer");
+    expect(located[2]?.method).toBe("gazetteer");
+    expect(located[3]?.method).toBe("gazetteer");
+    expect(located[4]?.method).toBe("gazetteer");
+  });
 });

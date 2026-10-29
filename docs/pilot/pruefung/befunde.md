@@ -92,7 +92,7 @@ Pipeline den Batch-Rabatt (50 %) in die Schätzung einrechnen.
 
 ## B37 – Gazetteer kennt englische Seglernamen nicht; Namensabgleich ohne Wortstamm auf dem Prüfzweig (P1)
 
-Von 312 unverortbaren Nennungen mit GR-I-Gebiet entfallen 12 auf den meistgenannten Ankerplatz des Reviers unter
+Von 295 unverortbaren Nennungen mit GR-I-Gebiet entfallen 12 auf den meistgenannten Ankerplatz des Reviers unter
 seinem englischen Seglernamen; das Gazetteer führt nur den griechischen Namen. Weitere Fälle: Schreibvarianten
 (Vathi/Vathy, Aponisos/Aponissos; der Wortstamm-Abgleich aus PR #47 fehlt auf `pruefung/attika-2`), Namen auf
 mehreren Inseln (Mandraki 25, Agia Marina 12), die ohne Inselkontext der Seite mehrdeutig bleiben. Behebung:
@@ -101,14 +101,15 @@ Inselkontext aus Seite und Suchgebiet in die Zuordnung.
 
 ## B38 – Revier-Seiten decken ganz Griechenland; gleichnamige Orte werden fehlverortet (P1)
 
-1.095 von 1.623 unverorteten Nennungen nennen andere Reviere (Paros, Kefalonia, Paxos, Lefkada, Korfu, Kythnos …), und
-unter den 37 Konflikt-Web-Orten stehen Namen aus dem Ionischen Meer, den Sporaden, den Kykladen und Messenien, die
-auf gleichnamige GR-I-Objekte verortet wurden. Ein Quelle-zuerst-Ablauf braucht eine Revier-Zuordnung je Nennung
+1.166 von 2.627 Nennungen nennen andere Reviere (Paxos, Paros, Kythnos, Kefalonia, Ithaka, Lefkada, Korfu …); ohne
+Filter wurden sie auf gleichnamige GR-I-Objekte verortet (bindende Zahl 36 statt 27 Cluster), mit Filter bleiben unter
+den 25 Konflikt-Web-Orten noch Namen aus dem Ionischen Meer, den Sporaden und Messenien, deren Seiten kein Gebiet
+nennen. Ein Quelle-zuerst-Ablauf braucht eine Revier-Zuordnung je Nennung
 (Gebietsangabe der Seite, Abschnittskontext) vor der Verortung, sonst entstehen Phantom-Kandidaten.
 
 ## B39 – Hafen- und Ortsobjekte verorten auf Polygon-Mittelpunkte, nicht auf den Liegeplatz (P1)
 
-262 Nennungen landen auf Hafenobjekten, 210 auf Orten, 72 auf Inseln. Der meistgenannte Stadtkai des Reviers
+254 Nennungen landen auf Hafenobjekten, 160 auf Orten, 67 auf Inseln. Der meistgenannte Stadtkai des Reviers
 (35 unabhängige Quellen) zählt als Konflikt, weil der Referenzpunkt am Kai > 300 m vom Mittelpunkt des
 Hafenpolygons liegt. Für Häfen und Marinas braucht die Verortung eine Kai-/Liegeplatzposition (OSM `mooring`,
 `seamark:berth`, Steg-Linien), für Orte den Hafen des Orts statt des Ortsmittelpunkts.

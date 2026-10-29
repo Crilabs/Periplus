@@ -56,6 +56,17 @@ describe("validateMentions", () => {
     expect(mentions[0]?.coordinate?.lat).toBeCloseTo(37.5167, 3);
   });
 
+  it("takes the coordinate from the quote, never from the model's coordinate_text", () => {
+    const { mentions } = validateMentions(
+      output({ coordinate_text: "37°45'N 23°10'E", coordinate_quote: "Position given in the pilot: 37°31'N 23°27'E, which matched our plotter" }),
+      markdown,
+      page,
+      quoteCfg,
+    );
+    expect(mentions[0]?.coordinate?.lat).toBeCloseTo(37.5167, 3);
+    expect(mentions[0]?.coordinate?.lon).toBeCloseTo(23.45, 3);
+  });
+
   it("nulls a coordinate whose quote is not in the text, but keeps the mention", () => {
     const { mentions } = validateMentions(
       output({ coordinate_text: "37°31'N 23°27'E", coordinate_quote: "The anchorage lies at 37°31'N 23°27'E according to our chart" }),

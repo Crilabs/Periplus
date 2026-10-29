@@ -50,6 +50,8 @@ export type Metrics = {
   conflicts300: number;
   unresolved: Record<string, number>;
   unresolvedWithPosition: number;
+  /** Located mentions outside this denominator's tiles (GR-J and beyond). */
+  outside: number;
 };
 
 const BAY_RADIUS_M = 300;
@@ -73,12 +75,28 @@ export function denominators(
   gate: { tiles: { all: string[]; worked: string[] }; bufferM: number },
   navilyCfg: { excludedTypes: string[] },
 ): Denominator[] {
-  const make = (name: string, tiles: string[]): Denominator => {
-    const set = new Set(tiles);
+  // `tiles` is where web places may lie for this denominator (review fix 1: the gate's spots sit in neighbouring tiles
+  // too, so its split must cover own ∪ worked tiles); `spots` are the reference spots counted.
+  const make = (name: string, spotTiles: string[], splitTiles: string[]): Denominator => {
+    const set = new Set(spotTiles);
     const inside = spots.filter((s) => set.has(tileIdFor(s.lon, s.lat)) && !isExcludedSpot(s, navilyCfg));
-    return { name, tiles: set, spots: inside, clusters: clusterPoints(inside, BAY_RADIUS_M) };
+    return { name, tiles: new Set(splitTiles), spots: inside, clusters: clusterPoints(inside, BAY_RADIUS_M) };
   };
-  return [make("Kacheln GR-I", gate.tiles.all), make("Tor-Kacheln", gate.tiles.worked)];
+  return [make("Kacheln GR-I", gate.tiles.all, gate.tiles.all), make("Tor-Kacheln", gate.tiles.worked, [...gate.tiles.all, ...gate.tiles.worked])];
+}
+
+export type ClusterOpts = { copyMinSharedWords: number; engineOf: (url: string) => { d: boolean; c: boolean } };
+
+/**
+ * The metrics of one denominator: mentions split by its tiles, web places built twice — without model-located
+ * mentions (binding figures) and with them (the "mit Modell" column, spec 5D.4; review fix 2).
+ */
+export function metricsFor(allLocated: Located[], den: Denominator, opts: ClusterOpts): Metrics {
+  const { inside, outside } = splitByArea(allLocated, den.tiles);
+  const noModel = inside.filter((l) => l.method !== "model");
+  const places = clusterLocated(noModel, BAY_RADIUS_M, opts);
+  const placesWithModel = clusterLocated(inside, BAY_RADIUS_M, opts);
+  return { ...measure(places, inside, den, placesWithModel), outside: outside.length };
 }
 
 const nearest = (p: { lon: number; lat: number }, places: WebPlace[]): { place: WebPlace; d: number } | null => {
@@ -90,8 +108,7 @@ const nearest = (p: { lon: number; lat: number }, places: WebPlace[]): { place: 
   return best;
 };
 
-export function measure(places: WebPlace[], located: Located[], den: Denominator): Metrics {
-  const withoutModel = places.filter((p) => p.mentions.some((m) => m.method !== "model"));
+export function measure(places: WebPlace[], located: Located[], den: Denominator, placesWithModel: WebPlace[] = places): Metrics {
   const covered1 = { "150": 0, "300": 0, "600": 0 };
   let confirmedStrict300 = 0;
   let confirmedAll300 = 0;
@@ -135,8 +152,9 @@ export function measure(places: WebPlace[], located: Located[], den: Denominator
     covered1,
     confirmedStrict300,
     confirmedAll300,
-    clustersConfirmedStrict300: clusterConfirmed(withoutModel),
-    clustersConfirmedStrict300WithModel: clusterConfirmed(places),
+    clustersConfirmedStrict300: clusterConfirmed(places),
+    clustersConfirmedStrict300WithModel: clusterConfirmed(placesWithModel),
+    outside: 0,
     byEngine,
     byMethod,
     coordMentions: { count: coordRows.length, medianDistanceM: median, within150: coordDistances.filter((d) => d <= 150).length },
@@ -167,14 +185,25 @@ export const compareCommand: Command = async (_args, dir) => {
     enginesOf.set(h.url, e);
   }
   const dens = denominators(spots, { tiles: { all: own, worked: gate.tiles.worked }, bufferM: gate.bufferM }, cfg.quality.navily);
+  const opts: ClusterOpts = { copyMinSharedWords: cfg.research.confirmation.copyMinSharedWords, engineOf: (url) => enginesOf.get(url) ?? { d: false, c: false } };
+  const metrics = dens.map((d) => metricsFor(allLocated, d, opts));
+  // the lists and the domain table follow the binding denominator
   const { inside: located, outside } = splitByArea(allLocated, dens[0]!.tiles);
-  const places = clusterLocated(located, BAY_RADIUS_M, { copyMinSharedWords: cfg.research.confirmation.copyMinSharedWords, engineOf: (url) => enginesOf.get(url) ?? { d: false, c: false } });
-  const metrics = dens.map((d) => measure(places, located, d));
+  const places = clusterLocated(located.filter((l) => l.method !== "model"), BAY_RADIUS_M, opts);
 
   const pages = await readJsonl<PageRow>(dir, "pages.jsonl");
   const assessments = await readJsonl<Assessment>(dir, "assessments.jsonl");
   const extracts = await readJsonl<ExtractRow>(dir, "extract.jsonl");
   const counting = new Set<string>(cfg.research.confirmation.countingPageKinds);
+  // "tragende Seite" (spec 6): a counting page with at least one mention located inside GR-I; per search engine
+  const bearingUrls = new Set(located.filter((l) => l.method !== null).map((l) => l.url));
+  const bearing = { d: 0, c: 0, both: 0 };
+  for (const url of bearingUrls) {
+    const e = enginesOf.get(url) ?? { d: false, c: false };
+    if (e.d && e.c) bearing.both++;
+    else if (e.d) bearing.d++;
+    else if (e.c) bearing.c++;
+  }
   const domainStats = new Map<string, { pages: number; mentions: number }>();
   for (const l of located) {
     const s = domainStats.get(l.domain) ?? { pages: 0, mentions: 0 };
@@ -194,11 +223,13 @@ export const compareCommand: Command = async (_args, dir) => {
     metrics,
     outside: outside.length,
     costs: { totalEur: ledger.totalEur, byStage: ledger.byStage(), capEur: ledger.capEur },
+    bearing,
     counts: {
       queriesD: (await readJsonl(dir, "queries-d.jsonl")).length,
       queriesC: (await readJsonl(dir, "queries-c.jsonl")).length,
       hitsD: new Set(hits.filter((h) => h.engine === "d").map((h) => h.url)).size,
       hitsC: new Set(hits.filter((h) => h.engine === "c").map((h) => h.url)).size,
+      hitsBoth: [...enginesOf.values()].filter((e) => e.d && e.c).length,
       pages: pages.filter((p) => !p.error).length,
       assessed: assessments.filter((a) => !a.error).length,
       counting: assessments.filter((a) => !a.error && counting.has(a.page_kind) && !a.generated).length,
@@ -218,7 +249,8 @@ export const compareCommand: Command = async (_args, dir) => {
   await writeFile(path.join(dir, "lists", "spots.tsv"), `index\tname\ttype\tnearest_m\tplace\tsources_strict\tmention_names\n${lines.join("\n")}\n`, "utf8");
   const conflictLines = places.filter((p) => p.sourcesStrict >= 2 && !dens[0]!.spots.some((s) => distanceM(s, p) <= 300)).map((p) => [p.id, p.lat.toFixed(5), p.lon.toFixed(5), p.sourcesStrict, p.mentions.map((m) => `${m.name} <${m.url}>`).join("; ")].join("\t"));
   await writeFile(path.join(dir, "lists", "conflicts.tsv"), `place\tlat\tlon\tsources_strict\tmentions\n${conflictLines.join("\n")}\n`, "utf8");
-  const reportPath = path.join(process.cwd(), "docs", "pilot", "neuausrichtung", "attika-2", "P1-revier-suche.md");
+  // the generated report stays in the pilot directory; the committed protocol is written by hand from it
+  const reportPath = path.join(dir, "report.md");
   await writeFile(reportPath, report, "utf8");
   process.stdout.write(`${report}\n→ ${reportPath}\n`);
 };

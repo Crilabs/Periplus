@@ -10,7 +10,9 @@ export type ReportInput = {
   /** Located mentions outside the area's tiles (GR-J and beyond): not counted anywhere else. */
   outside: number;
   costs: { totalEur: number; byStage: Record<string, number>; capEur: number };
-  counts: { queriesD: number; queriesC: number; hitsD: number; hitsC: number; pages: number; assessed: number; counting: number; mentions: number; dropped: number };
+  counts: { queriesD: number; queriesC: number; hitsD: number; hitsC: number; hitsBoth: number; pages: number; assessed: number; counting: number; mentions: number; dropped: number };
+  /** Counting pages with ≥ 1 mention located in GR-I, by the engine(s) that found them (spec 6, the 80 % rule). */
+  bearing: { d: number; c: number; both: number };
   topDomains: Array<{ domain: string; pages: number; mentions: number }>;
   generatedAt: Date;
 };
@@ -27,7 +29,7 @@ export function decision(m: Metrics): string {
 }
 
 export function renderReport(input: ReportInput): string {
-  const { metrics, outside, costs, counts, topDomains, generatedAt } = input;
+  const { metrics, outside, costs, counts, bearing, topDomains, generatedAt } = input;
   const date = generatedAt.toISOString().slice(0, 10);
   const lines: string[] = [];
   lines.push(`# P1 – Revier-Suche und Verortung aus Berichten (Attika 2)`, ``);
@@ -35,7 +37,7 @@ export function renderReport(input: ReportInput): string {
   lines.push(`## Trichter`, ``);
   lines.push(`| Stufe | Zahl |`, `| --- | ---: |`);
   lines.push(`| Anfragen DataForSEO (D) / Gebiete Claude-Websuche (C) | ${counts.queriesD} / ${counts.queriesC} |`);
-  lines.push(`| URLs aus D / aus C | ${counts.hitsD} / ${counts.hitsC} |`);
+  lines.push(`| URLs aus D / aus C / aus beiden | ${counts.hitsD} / ${counts.hitsC} / ${counts.hitsBoth} (gesamt ${counts.hitsD + counts.hitsC - counts.hitsBoth}) |`);
   lines.push(`| Seiten geholt / bewertet / zählend | ${counts.pages} / ${counts.assessed} / ${counts.counting} |`);
   lines.push(`| Nennungen (gültig) / verworfen | ${counts.mentions} / ${counts.dropped} |`);
   lines.push(`| davon verortet außerhalb der Kacheln von GR-I (GR-J und weiter) | ${outside} |`, ``);
@@ -54,6 +56,12 @@ export function renderReport(input: ReportInput): string {
     lines.push(`Wörtliche Koordinaten: ${m.coordMentions.count} Nennungen, Median-Abstand zum nächsten Spot ${m.coordMentions.medianDistanceM === null ? "–" : `${m.coordMentions.medianDistanceM.toFixed(0)} m`}, davon ≤ 150 m: ${m.coordMentions.within150}.`, ``);
     lines.push(`Unverortete Nennungen: ${Object.entries(m.unresolved).map(([k, v]) => `${k} ${v}`).join(", ") || "keine"}; davon mit Lagebeschreibung ${m.unresolvedWithPosition}.`, ``);
   }
+  const bearingTotal = bearing.d + bearing.c + bearing.both;
+  const shareD = bearingTotal === 0 ? 0 : (bearing.d + bearing.both) / bearingTotal;
+  const shareC = bearingTotal === 0 ? 0 : (bearing.c + bearing.both) / bearingTotal;
+  lines.push(`## Tragende Seiten je Suchweg (Spec 6)`, ``);
+  lines.push(`Zählende Seiten mit mindestens einer in GR-I verorteten Nennung: ${bearingTotal}; nur D ${bearing.d}, nur C ${bearing.c}, beide ${bearing.both}. D enthält ${pct(bearing.d + bearing.both, bearingTotal)} aller tragenden Seiten, C ${pct(bearing.c + bearing.both, bearingTotal)}.`);
+  lines.push(shareD >= 0.8 || shareC >= 0.8 ? `Ein Weg enthält ≥ 80 % der tragenden Seiten: der billigere reicht.` : `Kein Weg enthält ≥ 80 % der tragenden Seiten des anderen: beide Wege bleiben.`, ``);
   const binding = metrics[0];
   if (binding) {
     lines.push(`## Entscheidungsregel (Spec 6)`, ``);

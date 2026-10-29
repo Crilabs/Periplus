@@ -2,6 +2,7 @@ import { getConfig, type NameAffixesConfig } from "../../../lib/config";
 import { normalizeName } from "../../../lib/domain/gazetteer/names";
 import { distanceM } from "../../../lib/domain/gazetteer/rings";
 import { berthNameMatches } from "../../../lib/domain/research/assign";
+import type { Area } from "./areas";
 import { parseFlags, type Command } from "./cli";
 import { CostLedger } from "./costs";
 import type { Mention } from "./extract";
@@ -62,10 +63,27 @@ export function locateByGazetteer(m: Mention, gaz: GazObject[], affixes: NameAff
   return { object: best };
 }
 
-export function locateAll(mentions: Mention[], gaz: GazObject[], affixes: NameAffixesConfig): Located[] {
+/** Area words that name the country or a region containing GR-I: not foreign, not an island either. */
+const HOME_AREA_WORDS = ["greece", "griechenland", "grece", "grecia", "hellas", "ελλαδα", "attica", "attika", "attiki", "αττικη", "athens", "athen", "athina", "athenes", "atene", "αθηνα", "piraeus", "piräus", "pireas", "πειραιας", "peloponnese", "peloponnes", "peloponneso", "πελοποννησος", "argolis", "argolida", "argolic", "saronic", "saronischer", "saronico", "σαρωνικος", "aegean", "ägäis", "aigaio", "mediterranean", "mittelmeer"];
+
+/**
+ * A page area that names neither an island, a search area, a gazetteer object (GR-I/GR-J) nor the country or a
+ * region around GR-I (review fix 3): a mention placed there must not land on a GR-I object of the same name.
+ */
+export function isForeignArea(area: string | null, gaz: GazObject[], knownAreas: string[]): boolean {
+  if (!area || !normalizeName(area)) return false;
+  if (islandOf(area, gaz)) return false;
+  const a = normalizeName(area);
+  if (HOME_AREA_WORDS.some((w) => a.split(" ").includes(w))) return false;
+  if (knownAreas.some((k) => contains(k, area))) return false;
+  return !gaz.some((g) => g.names.some((n) => contains(n, area)));
+}
+
+export function locateAll(mentions: Mention[], gaz: GazObject[], affixes: NameAffixesConfig, knownAreas: string[] = []): Located[] {
   return mentions.map((m) => {
     if (m.coordinate) return { ...m, method: "coordinate", lon: m.coordinate.lon, lat: m.coordinate.lat, reason: null, gazId: null };
     if (!m.name.trim()) return { ...m, method: null, lon: null, lat: null, reason: "no_name", gazId: null };
+    if (isForeignArea(m.area, gaz, knownAreas)) return { ...m, method: null, lon: null, lat: null, reason: "foreign_area", gazId: null };
     const r = locateByGazetteer(m, gaz, affixes);
     if ("object" in r) return { ...m, method: "gazetteer", lon: r.object.lon, lat: r.object.lat, reason: null, gazId: r.object.id };
     return { ...m, method: null, lon: null, lat: null, reason: r.reason, gazId: null };
@@ -77,11 +95,12 @@ export const locateCommand: Command = async (args, dir) => {
   const flags = parseFlags(args);
   const gaz = await readGazetteer(dir);
   const mentions = await readJsonl<Mention>(dir, "mentions.jsonl");
-  let located = locateAll(mentions, gaz, getConfig().nameAffixes);
-  // A paid model result of an earlier run is kept for a mention the name pass still cannot place.
+  const knownAreas = ((await readJson<Area[]>(dir, "areas.json")) ?? []).flatMap((a) => Object.values(a.names).filter((n): n is string => !!n));
+  let located = locateAll(mentions, gaz, getConfig().nameAffixes, knownAreas);
+  // A paid model result of an earlier run is kept for a mention the name pass still cannot place (not for a foreign one).
   const previous = (await readJson<Located[]>(dir, "located.json")) ?? [];
   const modelHits = new Map(previous.filter((p) => p.method === "model").map((p) => [`${p.url}\n${p.name}\n${p.berthQuote}`, p]));
-  located = located.map((l) => (l.method === null ? (modelHits.get(`${l.url}\n${l.name}\n${l.berthQuote}`) ?? l) : l));
+  located = located.map((l) => (l.method === null && l.reason !== "foreign_area" ? (modelHits.get(`${l.url}\n${l.name}\n${l.berthQuote}`) ?? l) : l));
   const count = (rows: Located[]) => {
     const out: Record<string, number> = {};
     for (const l of rows) {

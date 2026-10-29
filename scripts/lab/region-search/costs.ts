@@ -21,6 +21,8 @@ export class CostLedger {
 
   /** The cap: 40 € by spec section 10, raised to 50 € by Christian on 29.10. after the assessment overrun (`PILOT_CAP_EUR`). */
   static async open(dir: string, capEur = Number(process.env.PILOT_CAP_EUR ?? 40)): Promise<CostLedger> {
+    // a cap that is not a number would never trip (`total + cost > NaN` is false): refuse to run instead
+    if (!Number.isFinite(capEur) || capEur <= 0) throw new Error(`cost cap is not a positive number: ${process.env.PILOT_CAP_EUR ?? capEur}`);
     const entries = (await readJson<CostEntry[]>(dir, FILE)) ?? [];
     return new CostLedger(dir, capEur, entries);
   }

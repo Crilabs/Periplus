@@ -8,7 +8,7 @@ import type { GazObject } from "./gazetteer";
 import type { Located } from "./locate";
 import { searchCostEur } from "./search-claude";
 import type { Hit } from "./search-dataforseo";
-import { readJson, readJsonl } from "./store";
+import { appendJsonl, readJson, readJsonl } from "./store";
 
 /*
  * Spec 5D step 4 (allowed by Christian, 28.10.): for a mention neither a coordinate nor a name resolved, the model
@@ -74,9 +74,11 @@ export async function locateByModel(ledger: CostLedger, dir: string, located: Lo
     ledger.assertRoom(0.01);
     const list = candidates.map((c) => `${c.id} | ${c.type}${c.category ? `/${c.category}` : ""} | ${c.names.join(" / ")}${c.islandName ? ` | ${c.islandName}` : ""}`).join("\n");
     const user = `Mention: ${l.name}${l.aliases.length ? ` (also: ${l.aliases.join(", ")})` : ""}\nArea named on the page: ${l.area ?? "-"}\nSearch area: ${[...(urlAreas.get(l.url) ?? [])].join(", ") || "-"}\nKind: ${l.kind}\nPosition: ${l.positionQuote ?? "-"}\nBerth quote: ${l.berthQuote}\n\nGazetteer objects (id | type | names | island):\n${list}`;
-    const message = await client.messages.create({ model: MODEL, max_tokens: 400, system: SYSTEM, messages: [{ role: "user", content: user }], output_config: { effort: "low", format: { type: "json_schema", schema } } });
+    // Review fix 7: thinking tokens count against max_tokens on Sonnet 5.5; 400 could cut the answer off. The stop reason is logged per call.
+    const message = await client.messages.create({ model: MODEL, max_tokens: 4000, system: SYSTEM, messages: [{ role: "user", content: user }], output_config: { effort: "low", format: { type: "json_schema", schema } } });
     const costEur = searchCostEur(message.usage);
     await ledger.add({ stage: "locate-model", service: "anthropic", units: 1, costEur });
+    await appendJsonl(dir, "locate-model-calls.jsonl", [{ url: l.url, name: l.name, candidates: candidates.length, stopReason: message.stop_reason, outputTokens: message.usage.output_tokens, costEur }]);
     const text = message.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
     let id: string | null = null;
     try {
