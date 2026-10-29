@@ -81,3 +81,34 @@ mit `dataforseo status 40102 … No Search Results` bei einer einzelnen Suche. 4
 Fehler; die anderen Suchen des Kandidaten gehen damit verloren und eine Aufgabe „Fehlgeschlagener Job“ entsteht. Ein
 `job_retry` scheitert wieder gleich. 1 von 763 Kandidaten. Behebung: 40102 als Suche ohne Treffer behandeln
 (`fix/`-Zweig mit Regressionstest).
+
+## B36 – Kostenschätzung des Pilots um Faktor 2 zu niedrig (Revier-Suche, P1)
+
+Pilot `P1-revier-suche.md`: geschätzt ~22 €, gelaufen 49,65 €. Zwei Suchwege × 40 Treffer je Anfrage ergaben 2.553
+statt 1.200 bewertete Seiten, und `assess-page` kostet je Seite 0,012 € (synchron, Sonnet 5.5, bis 6.000 Wörter)
+statt der angenommenen 0,007 €. Das Guthaben des lokalen Schlüssels war nachts erschöpft, der Lauf stand bis zum
+Aufladen. Folge für jede Kostenprojektion: erst 10 % des Umfangs laufen lassen und messen, dann hochrechnen; in der
+Pipeline den Batch-Rabatt (50 %) in die Schätzung einrechnen.
+
+## B37 – Gazetteer kennt englische Seglernamen nicht; Namensabgleich ohne Wortstamm auf dem Prüfzweig (P1)
+
+Von 312 unverortbaren Nennungen mit GR-I-Gebiet entfallen 12 auf den meistgenannten Ankerplatz des Reviers unter
+seinem englischen Seglernamen; das Gazetteer führt nur den griechischen Namen. Weitere Fälle: Schreibvarianten
+(Vathi/Vathy, Aponisos/Aponissos; der Wortstamm-Abgleich aus PR #47 fehlt auf `pruefung/attika-2`), Namen auf
+mehreren Inseln (Mandraki 25, Agia Marina 12), die ohne Inselkontext der Seite mehrdeutig bleiben. Behebung:
+englische/deutsche Exonyme als Namen (Quelle: die Nennungen selbst, mit Beleg), Wortstamm-Abgleich mergen,
+Inselkontext aus Seite und Suchgebiet in die Zuordnung.
+
+## B38 – Revier-Seiten decken ganz Griechenland; gleichnamige Orte werden fehlverortet (P1)
+
+1.095 von 1.623 unverorteten Nennungen nennen andere Reviere (Paros, Kefalonia, Paxos, Lefkada, Korfu, Kythnos …), und
+unter den 37 Konflikt-Web-Orten stehen Namen aus dem Ionischen Meer, den Sporaden, den Kykladen und Messenien, die
+auf gleichnamige GR-I-Objekte verortet wurden. Ein Quelle-zuerst-Ablauf braucht eine Revier-Zuordnung je Nennung
+(Gebietsangabe der Seite, Abschnittskontext) vor der Verortung, sonst entstehen Phantom-Kandidaten.
+
+## B39 – Hafen- und Ortsobjekte verorten auf Polygon-Mittelpunkte, nicht auf den Liegeplatz (P1)
+
+262 Nennungen landen auf Hafenobjekten, 210 auf Orten, 72 auf Inseln. Der meistgenannte Stadtkai des Reviers
+(35 unabhängige Quellen) zählt als Konflikt, weil der Referenzpunkt am Kai > 300 m vom Mittelpunkt des
+Hafenpolygons liegt. Für Häfen und Marinas braucht die Verortung eine Kai-/Liegeplatzposition (OSM `mooring`,
+`seamark:berth`, Steg-Linien), für Orte den Hafen des Orts statt des Ortsmittelpunkts.
