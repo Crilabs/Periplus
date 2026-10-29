@@ -244,7 +244,9 @@ Summe und bricht bei 40 € ab.
 
 ## 10. Entscheidungen Christian (28.10.2026)
 
-1. **Kostenrahmen:** Obergrenze 40 € (Erwartung ~22 €); das Skript bricht bei 40 € ab.
+1. **Kostenrahmen:** Obergrenze 40 € (Erwartung ~22 €); das Skript bricht bei 40 € ab. **Nachtrag 29.10.:** Die
+   Bewertung kostete 30,6 € (2.553 Seiten à 0,012 € statt 1.200 à 0,007 €); Christian hat die Obergrenze auf 50 €
+   erhöht, damit Extraktion und Modell-Verortung zu Ende laufen (`PILOT_CAP_EUR=50`).
 2. **Modellgestützte Verortung** (Weg D4): erlaubt, als getrennt ausgewiesene Spalte mit eigener Fehlerquote.
 3. **Schwellen der Entscheidungsregel:** 40 % / 20 % auf Buchtebene, ≥ 2 unabhängige Quellen ≤ 300 m nach der
    pipelinenahen Quellenregel (Abschnitt 6 gilt wie geschrieben).

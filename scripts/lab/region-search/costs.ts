@@ -19,7 +19,8 @@ export class CostLedger {
     private entries: CostEntry[],
   ) {}
 
-  static async open(dir: string, capEur = 40): Promise<CostLedger> {
+  /** The cap: 40 € by spec section 10, raised to 50 € by Christian on 29.10. after the assessment overrun (`PILOT_CAP_EUR`). */
+  static async open(dir: string, capEur = Number(process.env.PILOT_CAP_EUR ?? 40)): Promise<CostLedger> {
     const entries = (await readJson<CostEntry[]>(dir, FILE)) ?? [];
     return new CostLedger(dir, capEur, entries);
   }
