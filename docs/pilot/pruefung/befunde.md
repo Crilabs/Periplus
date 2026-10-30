@@ -113,3 +113,44 @@ nennen. Ein Quelle-zuerst-Ablauf braucht eine Revier-Zuordnung je Nennung
 (35 unabhängige Quellen) zählt als Konflikt, weil der Referenzpunkt am Kai > 300 m vom Mittelpunkt des
 Hafenpolygons liegt. Für Häfen und Marinas braucht die Verortung eine Kai-/Liegeplatzposition (OSM `mooring`,
 `seamark:berth`, Steg-Linien), für Orte den Hafen des Orts statt des Ortsmittelpunkts.
+
+## B40 – Inselfilter der Pilot-Verortung verglich den Erstnamen des Inselobjekts mit der Insel der Bucht (P1)
+
+Der Inselfilter aus dem Review-Fix von P1 (`scripts/lab/region-search/locate.ts`, `islandOf`) gab den Erstnamen des
+Inselobjekts zurück („Hidra“, „Isola di Poros“, „İspeçe“) und verglich ihn mit der `islandName` der Bucht („Hydra“,
+„Kalavria“, „Spetses“). Fast jede Nennung mit Insel als Seiten-Gebiet fiel dadurch auf „kein Treffer“: die drei
+meistgenannten Buchten des Reviers (37, 14 und 12 unabhängige Domains) blieben unverortet, obwohl das Gazetteer sie
+führt; Verortung per Gazetteer 680 statt 820 im ersten Lauf. Behoben am 31.10. (Vergleich gegen alle Namen des
+Inselobjekts, Test im Lab): per Gazetteer 726, bindende Bucht-Cluster **27 → 33 (8,7 %)**, Spots mit Web-Ort ≤ 300 m
+63 → 80, Konflikte 25 → 22, tragende Seiten 230 → 247. Die Entscheidungsstufe (< 20 %) ändert sich nicht; das
+Protokoll P1 ist korrigiert. Offen bleibt die meistgenannte Bucht (33 Nennungen mehrdeutig): auf derselben Insel
+liegen zwei Gazetteer-Buchten gleichen Namens > 300 m auseinander (Dublette, vgl. B42).
+
+## B41 – Bestätigungsregel „offizielle Seite“ sperrt griechische Gemeindehäfen (Attika 2)
+
+Für `officialPlaceKinds` (Marina, Hafen) verlangt `confirmation.ts` eine Seite der Art Marina oder Behörde plus eine
+weitere Domain (Spec Neuausrichtung 5.6, Entscheidung Claude). In GR-I sind 7 Marinas bestätigt, alle mit eigener
+Website (Athener Riviera, Lavrio, Poros). Die Gemeindehäfen, an denen Yachten liegen, bleiben Kandidat mit Grund
+„keine offizielle Seite“, obwohl sie mehr unabhängige zählende Quellen haben als jeder bestätigte Ankerplatz: Perdika
+7 Domains, Ägina-Stadt 5, Hydra 5, Poros (zweites Objekt) 2. Die Website-Suche fand für keinen von ihnen eine Seite.
+Dazu stuft die Seitenbewertung Hafenhandbuch-Einträge mit Inspektion (ADAC Skipper: 10 von 15 Seiten) als
+„Verzeichnis“ ein, das nirgends zählt. Vorschlag: offizielle Seite **oder** ≥ 2 unabhängige zählende Quellen; Wirkung
+in GR-I sofort +3 bis +4 bestätigte Häfen ohne Kosten. Entscheidung bei Christian (T8).
+
+## B42 – Dubletten unter den bestätigten Plätzen (Attika 2)
+
+Von 18 bestätigten Plätzen in GR-I sind 15 verschieden: zwei Buchten „Agia Marina“ auf Ägina 614 m auseinander
+(berechnete und OSM-Bucht; `merge.similarNameDistanceM.bay` 1.500 m hätte sie zusammenführen müssen), Bucht und Strand
+derselben Stelle auf Hydra 366 m auseinander (Bucht- und Strand-Kandidat je ein Platz), zwei OSM-Objekte des
+Stadthafens Poros 140 m auseinander (`merge.distanceM.harbour` 300 m). Dazu zwei Gazetteer-Buchten gleichen Namens auf
+Hydra > 300 m auseinander (B40). Folge: doppelte Lieferung desselben Liegeplatzes; die Zählung „bestätigt“ ist um ~17 %
+zu hoch. Prüfen: Merge berechneter Buchten gegen OSM-Buchten, Strand-Kandidat gegen Bucht-Kandidat derselben Stelle,
+Hafen-Merge über Objektarten (Relation und Knoten).
+
+## B43 – DataForSEO liefert Google-Weiterleitungen statt Ziel-URLs (klein)
+
+In Produktion tragen 361 von 85.779 SERP-Ergebnissen eine URL `google.com/goto?url=…` (Domain `google.com`) statt der
+Ziel-URL; in einer Handabfrage vom 30.10. (de, Desktop, Tiefe 50) waren es 29 von 49. Die echte Domain steht nur im
+`breadcrumb`. Weil `google.com` in `skipDomains` steht, fallen diese Treffer still weg. Noch selten, aber bei
+Ausweitung verlöre die Suche die Hälfte der Treffer unbemerkt. Behebung: Ziel aus `breadcrumb` rekonstruieren oder die
+Antwort-Parameter von DataForSEO prüfen; Zähler für übersprungene Weiterleitungen im Lauf.

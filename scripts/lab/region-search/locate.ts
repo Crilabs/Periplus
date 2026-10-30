@@ -38,19 +38,27 @@ const contains = (a: string, b: string): boolean => {
 };
 
 /**
- * The island the page's area names, if it names one; a gulf or coast as area must not reject objects on its islands
- * (ruling, Task 10: "Poros" placed in the "Saronic Gulf" was rejected against the island filter).
+ * All names of the island the page's area names, if it names one; a gulf or coast as area must not reject objects on
+ * its islands (ruling, Task 10: "Poros" placed in the "Saronic Gulf" was rejected against the island filter). All
+ * names, because an object's `islandName` is one spelling ("Hydra", "Kalavria") and the island object's first name
+ * another ("Hidra", "Isola di Poros"); comparing only those two rejected nearly every island mention (B40).
  */
-export function islandOf(area: string | null, gaz: GazObject[]): string | null {
+export function islandOf(area: string | null, gaz: GazObject[]): string[] | null {
   if (!area) return null;
   const island = gaz.find((g) => (g.type === "island" || g.type === "islet") && g.names.some((n) => contains(n, area)));
-  return island ? (island.islandName ?? island.names[0]!) : null;
+  return island ? [...new Set([island.islandName, ...island.names].filter((n): n is string => !!n))] : null;
+}
+
+/** Whether an object's island is the island the area names: no island on either side passes, else one name must contain the other. */
+function onIsland(objectIsland: string | null, islandNames: string[] | null): boolean {
+  if (!islandNames || !objectIsland) return true;
+  return islandNames.some((n) => contains(n, objectIsland));
 }
 
 export function locateByGazetteer(m: Mention, gaz: GazObject[], affixes: NameAffixesConfig): { object: GazObject } | { reason: "no_match" | "ambiguous" } {
   const names = [m.name, ...m.aliases];
-  const island = islandOf(m.area, gaz);
-  const hits = gaz.filter((g) => names.some((n) => berthNameMatches({ name: n, island }, g.names, affixes, g.islandName ? [g.islandName] : [])));
+  const islandNames = islandOf(m.area, gaz);
+  const hits = gaz.filter((g) => onIsland(g.islandName, islandNames) && names.some((n) => berthNameMatches({ name: n, island: null }, g.names, affixes)));
   if (hits.length === 0) return { reason: "no_match" };
   const rank = (g: GazObject) => {
     const i = TYPE_RANK[m.kind].indexOf(g.type);

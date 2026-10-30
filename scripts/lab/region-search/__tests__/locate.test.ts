@@ -72,6 +72,26 @@ describe("locateByGazetteer", () => {
     expect("reason" in r && r.reason).toBe("no_match");
   });
 
+  it("accepts the island the area names under another spelling than the bay's islandName", () => {
+    // the island object lists "Hidrea" first, the bay carries "Hydrea": the same island (B40)
+    const g: GazObject[] = [
+      { id: "b1", type: "bay", category: null, names: ["Ormos Kelpsa"], lon: 4.3, lat: 54.5, islandName: "Hydrea" },
+      { id: "i3", type: "island", category: null, names: ["Hidrea", "Hydrea", "Hydrea Island"], lon: 4.3, lat: 54.5, islandName: "Hidrea" },
+    ];
+    const r = locateByGazetteer(mention({ name: "Kelpsa", area: "Hydrea" }), g, affixes);
+    expect("object" in r && r.object.id).toBe("b1");
+  });
+
+  it("accepts a bay whose island is one of the names of the island object the area names", () => {
+    // the page says "Pyros", the bay sits on "Kalvyra", and the island object lists both names
+    const g: GazObject[] = [
+      { id: "b2", type: "bay", category: null, names: ["Russet Bay"], lon: 4.4, lat: 54.6, islandName: "Kalvyra" },
+      { id: "i4", type: "island", category: null, names: ["Isola di Pyros", "Kalvyra", "Pyros"], lon: 4.4, lat: 54.6, islandName: "Isola di Pyros" },
+    ];
+    const r = locateByGazetteer(mention({ name: "Russet Bay", area: "Pyros" }), g, affixes);
+    expect("object" in r && r.object.id).toBe("b2");
+  });
+
   it("reports no match for an unknown name", () => {
     const r = locateByGazetteer(mention({ name: "Kalimnotis" }), gaz, affixes);
     expect("reason" in r && r.reason).toBe("no_match");

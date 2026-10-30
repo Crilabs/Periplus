@@ -1,6 +1,7 @@
 # P1 – Revier-Suche und Verortung aus Berichten (Attika 2)
 
-Stand 29.10.2026, 10:00 (nach dem Review-Durchgang). Messpilot nach
+Stand 31.10.2026, 00:30 (nach dem Review-Durchgang und der Korrektur B40; die Zahlen vor der Korrektur stehen im
+Abschnitt „Korrektur B40“). Messpilot nach
 `docs/superpowers/specs/2026-10-28-periplus-pilot-revier-suche-design.md`, Plan
 `docs/superpowers/plans/2026-10-28-periplus-pilot-revier-suche.md`, Lab-Skript `scripts/lab/region-search` (nur auf
 `pruefung/attika-2`, kein Produktionscode). Zahlen aus `compare` (Generat `<Pilotverzeichnis>/report.md`); nur
@@ -44,24 +45,24 @@ Zählungen und Quoten, die Referenz ist nie Datenquelle. Einzellisten liegen au�
 | Seiten geholt / bewertet / zählend | 2.553 / 2.553 / 539 |
 | Nennungen (gültig) / verworfen (Zitat nicht auf der Seite) | 2.627 / 66 |
 | nicht verortet, weil die Seite ein fremdes Revier nennt (`foreign_area`) | 1.166 |
-| verortet: Gazetteer-Name / Koordinate / Modell | 680 / 112 / 19 |
-| davon außerhalb der Kacheln von GR-I (GR-J und weiter) | 285 |
-| unverortet: mehrdeutig / kein Treffer | 201 / 449 |
+| verortet: Gazetteer-Name / Koordinate / Modell | 726 / 112 / 19 |
+| davon außerhalb der Kacheln von GR-I (GR-J und weiter) | 282 |
+| unverortet: mehrdeutig / kein Treffer | 248 / 356 |
 
 ## Nenner „Kacheln GR-I“: 414 Spots, 379 Bucht-Cluster (≤ 300 m)
 
 | Kennzahl | Wert | Anteil |
 | --- | ---: | ---: |
-| Spots mit Web-Ort ≤ 150 m | 40 | 9,7 % |
-| Spots mit Web-Ort ≤ 300 m | 63 | 15,2 % |
-| Spots mit Web-Ort ≤ 600 m | 122 | 29,5 % |
-| Spots mit ≥ 2 unabhängigen Quellen ≤ 300 m (pipelinenah: erste Hand oder Revierführer) | 32 | 7,7 % |
-| Spots mit ≥ 2 unabhängigen Quellen ≤ 300 m (alle zählenden Seiten) | 32 | 7,7 % |
-| **Bucht-Cluster mit ≥ 2 unabhängigen Quellen ≤ 300 m (bindend, ohne Modell-Verortung)** | **27** | **7,1 %** |
-| dasselbe mit modellgestützter Verortung | 30 | 7,9 % |
-| Web-Orte mit ≥ 2 Quellen ohne Spot ≤ 300 m (Konfliktlast) | 25 | |
+| Spots mit Web-Ort ≤ 150 m | 48 | 11,6 % |
+| Spots mit Web-Ort ≤ 300 m | 80 | 19,3 % |
+| Spots mit Web-Ort ≤ 600 m | 141 | 34,1 % |
+| Spots mit ≥ 2 unabhängigen Quellen ≤ 300 m (pipelinenah: erste Hand oder Revierführer) | 41 | 9,9 % |
+| Spots mit ≥ 2 unabhängigen Quellen ≤ 300 m (alle zählenden Seiten) | 41 | 9,9 % |
+| **Bucht-Cluster mit ≥ 2 unabhängigen Quellen ≤ 300 m (bindend, ohne Modell-Verortung)** | **33** | **8,7 %** |
+| dasselbe mit modellgestützter Verortung | 36 | 9,5 % |
+| Web-Orte mit ≥ 2 Quellen ohne Spot ≤ 300 m (Konfliktlast) | 22 | |
 
-Gedeckte Spots (≤ 300 m) nach Suchweg: nur D 14, nur C 14, beide 35. Nach Verortungsweg: Gazetteer 33, Koordinate 30.
+Gedeckte Spots (≤ 300 m) nach Suchweg: nur D 15, nur C 20, beide 45. Nach Verortungsweg: Gazetteer 51, Koordinate 29.
 
 Wörtliche Koordinaten: 53 Nennungen in GR-I, Median-Abstand zum nächsten Spot 125 m, davon ≤ 150 m: 35.
 
@@ -69,40 +70,42 @@ Wörtliche Koordinaten: 53 Nennungen in GR-I, Median-Abstand zum nächsten Spot 
 
 | Kennzahl | Wert | Anteil |
 | --- | ---: | ---: |
-| Spots mit Web-Ort ≤ 150 m / ≤ 300 m / ≤ 600 m | 49 / 86 / 158 | 7,7 % / 13,5 % / 24,8 % |
-| Spots mit ≥ 2 unabhängigen Quellen ≤ 300 m | 41 | 6,4 % |
-| Bucht-Cluster mit ≥ 2 unabhängigen Quellen ≤ 300 m (ohne / mit Modell) | 33 / 36 | 5,7 % / 6,2 % |
-| Konfliktlast | 29 | |
+| Spots mit Web-Ort ≤ 150 m / ≤ 300 m / ≤ 600 m | 55 / 105 / 183 | 8,6 % / 16,5 % / 28,7 % |
+| Spots mit ≥ 2 unabhängigen Quellen ≤ 300 m | 53 | 8,3 % |
+| Bucht-Cluster mit ≥ 2 unabhängigen Quellen ≤ 300 m (ohne / mit Modell) | 42 / 45 | 7,3 % / 7,8 % |
+| Konfliktlast | 25 | |
 
 Zum Vergleich der Hauptlauf (`tor.md`, N=2, dieser Nenner): 14 bestätigt, 5 korrekt, Abdeckung 0,8 %.
 
 ## Tragende Seiten je Suchweg (Spec 6)
 
-Zählende Seiten mit mindestens einer in GR-I verorteten Nennung: **230**; nur D 89, nur C 102, beide 39. D enthält
-56 % aller tragenden Seiten, C 61 %. Kein Weg enthält ≥ 80 % der tragenden Seiten des anderen: **beide Wege bleiben.**
+Zählende Seiten mit mindestens einer in GR-I verorteten Nennung: **247**; nur D 93, nur C 112, beide 42. D enthält
+55 % aller tragenden Seiten, C 62 %. Kein Weg enthält ≥ 80 % der tragenden Seiten des anderen: **beide Wege bleiben.**
 
 ## Entscheidungsregel (Spec 6)
 
-Bindend: Bucht-Cluster „Kacheln GR-I“ mit ≥ 2 unabhängigen Quellen ≤ 300 m: **27 von 379 = 7,1 %** (mit Modell 30,
-7,9 %).
+Bindend: Bucht-Cluster „Kacheln GR-I“ mit ≥ 2 unabhängigen Quellen ≤ 300 m: **33 von 379 = 8,7 %** (mit Modell 36,
+9,5 %).
 
 Folge nach der vorab festgelegten Regel (40 % / 20 %): **< 20 %. Das Web als alleinige Quellenklasse reicht für das
 Abdeckungsziel nicht; andere Klassen prüfen, bevor weiter an Suche und Gerüst gearbeitet wird.**
 
 Einordnung, damit die Zahl nicht überinterpretiert wird:
 
-- Die Obergrenze dessen, was die gefundenen Seiten überhaupt hergeben, liegt bei **29,5 %** (Spots mit irgendeinem
+- Die Obergrenze dessen, was die gefundenen Seiten überhaupt hergeben, liegt bei **34,1 %** (Spots mit irgendeinem
   Web-Ort ≤ 600 m). Selbst mit perfekter Verortung und doppelt so vielen Quellen je Ort bliebe der bindende Wert
   unter 40 %.
 - Die Verortung verliert viel: von 2.627 Nennungen bleiben 1.166 wegen fremder Reviere draußen (richtig so), weitere
-  **650 bleiben unverortet**, obwohl sie kein fremdes Revier nennen: 295 nennen ein Gebiet von GR-I und scheitern am
-  Namen – englische Seglernamen, die das Gazetteer nur griechisch kennt (der meistgenannte Ankerplatz des Reviers:
-  12 Nennungen, kein Treffer), Schreibvarianten (Vathi/Vathy; der Wortstamm-Abgleich aus PR #47 ist auf diesem Zweig
-  noch nicht enthalten), Namen auf mehreren Inseln (Mandraki 25, Agia Marina 12) –, 216 nennen kein Gebiet, 139 ein
-  Gebiet, das weder GR-I noch erkennbar fremd ist. Mit den 295 wären nach dem Muster der verorteten Nennungen etwa
-  10–15 weitere Cluster erreichbar, also ~10–11 %. Die Regelstufe ändert das nicht.
-- Die Modell-Verortung hat im Pilot wenig gebracht: 1.450 Aufrufe, 5,31 €, 31 Zuordnungen (19 nach dem Fix des
-  Inselfilters noch nötig), +3 Cluster. Zwei Ursachen sind möglich und nicht trennbar, weil der `stop_reason` nicht
+  **604 bleiben unverortet** (248 mehrdeutig, 356 kein Treffer), obwohl sie kein fremdes Revier nennen: 250 nennen ein
+  Gebiet von GR-I und scheitern am Namen – Schreibvarianten (Vathi/Vathy, Genitiv-Endungen; der Wortstamm-Abgleich
+  aus PR #47 ist auf diesem Zweig nicht enthalten), gleichnamige Gazetteer-Objekte derselben Insel (die meistgenannte
+  Bucht des Reviers: 33 Nennungen mehrdeutig, zwei Buchtobjekte > 300 m auseinander, B42), mehrere Häfen eines Orts
+  (Lavrio: 10 mehrdeutig) –, 216 nennen kein Gebiet, 138 ein Gebiet, das weder GR-I noch erkennbar fremd ist. 269
+  dieser Nennungen tragen eine Lagebeschreibung. Benannte Plätze mit ≥ 2 unabhängigen Domains: 281, davon 93 mit
+  ≥ 2 verorteten Domains, 42 teilweise, 146 nie verortet (darunter Fremdreviere ohne Gebietsangabe). Die Regelstufe
+  ändert das nicht.
+- Die Modell-Verortung hat im Pilot wenig gebracht: 1.450 Aufrufe, 5,31 €, 31 Zuordnungen (19 nach den Fixes der
+  Namensverortung noch nötig), +3 Cluster. Zwei Ursachen sind möglich und nicht trennbar, weil der `stop_reason` nicht
   mitgeschrieben wurde: die Kandidatenliste (für Nennungen mit Gebiet „Saronischer Golf“ bekam das Modell nur
   Festlandobjekte) und ein zu kleines `max_tokens` (400 bei eingeschaltetem Thinking, Antwort könnte abgeschnitten
   sein). Beides ist im Skript behoben (Kandidaten bleiben, `max_tokens` 4.000, `stop_reason` wird geloggt); ein
@@ -131,17 +134,17 @@ stehen, liegen sie nah am nächsten Spot: Median 125 m, zwei Drittel ≤ 150 m �
 Spot-Dichte, eine Kontrolle mit Zufallspunkten fehlt. Lagebeschreibungen hat fast jede zweite Nennung (1.120),
 auch 296 der unverorteten GR-I-nahen; sie werden bisher nicht genutzt.
 
-**Verortung.** 680 Nennungen landen auf Gazetteer-Objekten: Hafen 254, Bucht 173, Ort 160, Insel 67, Kap 21, Strand
-17, Eiland 7. Die 67 Insel- und 160 Ort-Treffer sind grob (Mittelpunkt der Insel bzw. des Orts); sie erzeugen zum
+**Verortung.** 726 Nennungen landen auf Gazetteer-Objekten (nach B40): Hafen 312, Bucht 180, Ort 176, Kap 24, Insel
+15, Strand/POI 13, Eiland 6. Die Insel- und Ort-Treffer sind grob (Mittelpunkt der Insel bzw. des Orts); sie erzeugen zum
 Teil Web-Orte, die nichts treffen. Hafenobjekte sind Polygon-Mittelpunkte: der meistgenannte Stadtkai des Reviers
 (35 unabhängige Quellen) steht als „Konflikt“, weil der Referenzpunkt am Kai > 300 m vom Mittelpunkt liegt.
 
-**Qualität der Treffer.** Von 31 Spots, deren *nächster* Web-Ort ≤ 300 m liegt und ≥ 2 unabhängige Quellen hat,
+**Qualität der Treffer** (Stichprobe vor der Korrektur B40). Von 31 Spots, deren *nächster* Web-Ort ≤ 300 m liegt und ≥ 2 unabhängige Quellen hat,
 stimmt bei 25 der Name einer Nennung mit dem Spot überein; die 6 übrigen sind nach Stichprobe plausible
 Nachbarbenennungen (Strand statt Bucht, Marina statt Hafenbecken), keine Fehlzuordnungen. Art der getroffenen Spots:
 15 Ankerplätze, 9 `aflot`, 5 Steg, 2 Kai.
 
-**Konflikte.** 25 Web-Orte mit ≥ 2 Quellen ohne Spot ≤ 300 m, 8 davon mit ≥ 5 Quellen. Drei Gruppen: (a) echte,
+**Konflikte.** 22 Web-Orte mit ≥ 2 Quellen ohne Spot ≤ 300 m (vor B40: 25), 6 davon mit ≥ 5 Quellen. Drei Gruppen: (a) echte,
 vielgenannte Liegeplätze, deren Referenzpunkt > 300 m vom Gazetteer-Punkt liegt (Stadtkais, Marinas, Kap-Ankerplätze,
 Inselmittelpunkte); (b) **Fehlverortungen gleichnamiger Orte anderer Reviere** ohne Gebietsangabe auf der Seite
 (Namen aus dem Ionischen Meer, den Sporaden, Messenien bleiben auch nach dem `foreign_area`-Filter übrig, weil die
@@ -164,6 +167,28 @@ Die Schätzung von ~22 € lag um das Doppelte daneben (Befund B36): zwei Suchwe
 1.200 Seiten, und die Bewertung kostet je Seite 0,012 € statt 0,007 €. Der Lauf stand nachts einmal, weil das
 Guthaben des lokalen Schlüssels aufgebraucht war. In der Pipeline liefe die Bewertung mit 50 % Batch-Rabatt.
 
+## Korrektur B40 (31.10.)
+
+Nach dem Review fiel auf, dass die drei meistgenannten Buchten des Reviers (37, 14 und 12 unabhängige Domains)
+unverortet blieben, obwohl das Gazetteer sie führt. Ursache: Der Inselfilter des Review-Fixes verglich den Erstnamen
+des Inselobjekts („Hidra“, „Isola di Poros“, „İspeçe“) mit der Insel der Bucht („Hydra“, „Kalavria“, „Spetses“); fast
+jede Nennung mit Insel als Seiten-Gebiet fiel auf „kein Treffer“ (Befund B40). Nach dem Fix (Vergleich gegen alle
+Namen des Inselobjekts) wurden `locate` und `compare` ohne Kosten neu gerechnet; die Tabellen oben zeigen den Stand
+danach. Vorher → nachher:
+
+| Kennzahl („Kacheln GR-I“) | vor B40 | nach B40 |
+| --- | ---: | ---: |
+| verortet per Gazetteer | 680 | 726 |
+| Spots mit Web-Ort ≤ 150 / 300 / 600 m | 40 / 63 / 122 | 48 / 80 / 141 |
+| Spots mit ≥ 2 unabhängigen Quellen ≤ 300 m | 32 | 41 |
+| **Bucht-Cluster bindend** (mit Modell) | **27** (30) | **33** (36) |
+| Konfliktlast | 25 | 22 |
+| tragende Seiten (nur D / nur C / beide) | 230 (89 / 102 / 39) | 247 (93 / 112 / 42) |
+| Tor-Kacheln: Bucht-Cluster bindend (mit Modell) | 33 (36) | 42 (45) |
+
+Zwei der drei Buchten sind jetzt verortet (14 bzw. 13 Nennungen); die meistgenannte bleibt mehrdeutig, weil das
+Gazetteer auf derselben Insel zwei Buchtobjekte gleichen Namens > 300 m auseinander führt (B42).
+
 ## Review
 
 Ein frischer Reviewer hat den Lab-Code gegen Spec und Plan geprüft (0 kritisch, 7 wichtig, 12 klein). Behoben vor
@@ -178,10 +203,10 @@ Kostendatei; Koordinaten-Assertion des Berichtstests.
 ## Empfehlung für T8
 
 1. **Das Abdeckungsziel 50 % gegen die Referenz ist mit Web-Quellen nicht erreichbar**, auch nicht mit Revier-Suche
-   und besserer Verortung: die Obergrenze der gefundenen Seiten liegt bei ~30 % (≤ 600 m), realistisch bestätigbar
-   sind ~10 % der Bucht-Cluster. Das Ziel braucht entweder einen anderen Nenner (die kanonischen Ankerplätze, nicht
+   und besserer Verortung: die Obergrenze der gefundenen Seiten liegt bei ~34 % (≤ 600 m), realistisch bestätigbar
+   sind ~10–12 % der Bucht-Cluster. Das Ziel braucht entweder einen anderen Nenner (die kanonischen Ankerplätze, nicht
    die nutzergenerierte Spot-Dichte) oder eine andere Quellenklasse (lizenzierte Revierführer, Positionsdaten).
-2. **Revier-Suche lohnt sich trotzdem**: 27 bestätigte Cluster (32 Spots) für 50 € gegen 5 korrekte Plätze für 51 €
+2. **Revier-Suche lohnt sich trotzdem**: 33 bestätigte Cluster (41 Spots) für 50 € gegen 5 korrekte Plätze für 51 €
    im Hauptlauf bei kleinerem Nenner. Wenn weitergebaut wird, dann Quelle-zuerst mit beiden Suchwegen – aber erst nach
    Punkt 1.
 3. **Verortung ist der Hebel, nicht die Suche**: englische Seglernamen ins Gazetteer (B37), Wortstamm-Abgleich
@@ -190,4 +215,11 @@ Kostendatei; Koordinaten-Assertion des Berichtstests.
 4. **Vor dem nächsten Lauf eine Kostenprobe mit 10 % des Umfangs**, dann hochrechnen; die Schätzung aus diesem Pilot
    war um Faktor 2 zu niedrig.
 
-Befunde: B36–B39 in `docs/pilot/pruefung/befunde.md`.
+Befunde: B36–B43 in `docs/pilot/pruefung/befunde.md`.
+
+## Nächster Schritt: P2 „Verortung mehrfach beschriebener Ankerplätze“
+
+Christian (31.10.): Nicht mehr die Spot-Zahl der Referenz ist das Ziel, sondern die Ankerplätze, die mehrfach in
+Törnberichten oder Revierführern beschrieben sind, zu 80 % sicher zu verorten; die Referenz dient nur noch als
+Positionsprobe. Ausgangslage, Zieldefinition, Verortungspfade und Arbeitsregeln für die neue Session stehen in
+`docs/pilot/neuausrichtung/attika-2/P2-uebergabe.md`.
