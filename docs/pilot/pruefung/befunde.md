@@ -27,3 +27,130 @@
 | B23 | N7 (Schritt 1) | `gazetteer.coarse` für GB (konfiguriert für Akrotiri und Dhekelia) scheiterte dreimal nach je 20–40 min mit „land polygons missing for GB“: das Länderobjekt ist das Vereinigte Königreich, die Abfragen holten alle britischen Inseln und Orte, der Landpolygon-Test lief über die UK-Box ohne Mittelmeer-Land. Dieselben landesweiten Abfragen holten Atlantikküste, Kanaren (108.000 Punkte), Golf von Biskaya und Rotes Meer, und die Elternregel für Golfe/Archipele ohne Radius hängte 133 davon an Mittelmeer-Landesteile (Golfe du Morbihan an FR-OCC, Golf von Suez an EG-SIN) | Lauf `01a17557…`, Job GB; `subdivisions.build` lief zu Recht weiter (`MissingCountries` prüft die Grenzen, die lagen vor) | Grob-Merkmale je Land über die ganze Landesfläche statt über die Mittelmeer-Box | Code | Jede Art nur für den Anteil des Landes an der Box des Landpolygon-Imports (`clipBbox` × `mediterraneanBbox`), ein Land außerhalb fragt nichts; Landtest über diese Box; Teilung weiter in Blöcke/Quadranten; Tests; Commit `6a1b304` | Nachholen GB mit „nur Länder“: 1,0 min, alle Stufen grün. Die 133 Fehlzuordnungen auf 5435 bleiben als Daten stehen |
 | B24 | N7 (Schritt 2) | `gazetteer.land` GR-CYC (24 min) wurde von pg-boss nach 15 min für gescheitert erklärt („handler execution exceeded 900s“) und erneut ausgereicht; der Worker holte den zweiten Versuch in der Sekunde, in der der erste fertig war, und fragte Overpass noch einmal komplett | Job `ce403e1f…`, `retry_count` 1 | `gazetteer.build` hatte kein `expireInSeconds`, pg-boss nimmt 900 s | Konfiguration | `gazetteer.build` 4 h, `datasets.import` 2 h in `config/queues.json`; der Lader lehnt eine Overpass-Warteschlange unter dem Worst Case zweier Teile (3.900 s) ab; Test; Commit `68beeef` | GR-I Dinge an Land 36,5 min in einem Versuch |
 | B25 | N7 (Schritt 2) | Postgres erneut mit Signal 9 beendet, Statement: Straßen-Import (`replaceRoads`), `delete from roads … not in (select … from jsonb_array_elements($9))` mit der kompletten Overpass-Antwort Attikas (267.981.594 Bytes) als Parameter, danach ein Insert mit demselben Parameter | Lauf `01a17707…`, Datensatz `roads` GR-I (Kykladen waren durchgelaufen) | Ein Statement trägt die ganze Antwort | Code | Delete gegen die ID-Liste (Anti-Join), Inserts zu je 1.000 Straßen, eine Transaktion; Test; Commit `f378787` | 212.164 Straßen in 70 s, Spitze 293 MB |
+| B26 | Attika 2 (T1 Step 2) | „Landesteile neu bilden“ auf der frischen Produktion abgelehnt: „Landpolygone fehlen“. Der Import nach Runbook scheiterte zweimal: `sudo mkdir /data/land` geht nicht (`periplus` hat kein Passwort), und ohne `export IMAGE_TAG=$(cat .deployed-tag)` nahm `dc run` einen alten `IMAGE_TAG` aus der Shell: altes Worker-Image (Fehler „Mediterranean seas missing“, im aktuellen Code längst entfernt) und **Postgres mit dem alten Image `f8306b0` neu erstellt** | 26.10.2026 13:50, Container `periplus-postgres-1` | Übergabe und Prüfplan nennen den Landpolygon-Import nicht (N6 hat die Datenbank geleert, die Landpolygone mit); Runbook-Pfad `/data/land` setzt Root voraus; jeder `dc`-Befehl erstellt abhängige Dienste mit dem Tag der Shell neu | Spec / Betrieb | Postgres mit `IMAGE_TAG=$(cat .deployed-tag)` per `dc up -d postgres` zurück auf `4a005d0`; Shapefile unter `/opt/periplus/data/land`, Import mit `-v /opt/periplus/data/land:/data/land:ro`: 26.390 Polygone (Version 2026-10-26). Offen: Runbook auf `/opt/periplus/data/land` umstellen und `dc` nur zusammen mit dem `IMAGE_TAG`-Export nennen (ggf. Alias, der den Tag selbst liest) | `version` 4a005d0, Worker-Heartbeat durchgehend, `land_polygons` 26.390; Lauf `01a17866…` gestartet |
+| B27 | Attika 2 (T1/T2, `places.website`) | Ein Job der Website-Prüfung scheitert mit „Cannot destructure property 'firstElementChild' of 'documentElement' as it is null“ | Lauf `01a179cc…`, Job zu Platz `01a179f1…` (1 von 51) | `htmlToMarkdown` (`lib/adapters/fetch/local.ts`): bei einer Antwort ohne jedes Element (leer, reiner Text, nur Kommentar) lässt linkedom `documentElement` leer; schon der Getter `document.body` und Readability werfen. Derselbe Konverter dient `research.fetch` (T3) | Code | Früher Ausstieg mit leerem Ergebnis (`markdown` "", `mainChars` 0); Test in `converters.test.ts` (RED mit dem Fehlertext aus Produktion, dann GREEN); PR #39, mit #40 deployt 27.10. 00:23 (`0c92e5e`) | Job am 27.10. 09:47 per `job_retry` erneut: 51/51 ohne Fehler |
+| B28 | Attika 2 (T2 Step 3) | Kandidaten-Obergrenze der Abdeckung 18,1 % (75 von 414 Navily-Spots in Kacheln von GR-I mit Kandidat ≤ 150 m), gefordert 50 % (A5); 56 % der Spots haben den nächsten Kandidaten erst in 300–1.000 m | Lauf `01a179cc…`, 1.643 Kandidaten; Probekachel `q025:813:510`: 108 Spots, 80 Kandidaten, Median Spot → Kandidat 559 m | (1) Ankerposition = Mittelpunkt des größten Inkreises der Ankerfläche (`anchorArea`), im Median 173–237 m vor dem Ufer, Navily 64 m; allein kaum wirksam (74 statt 75 Spots mit Buchtposition). (2) Kandidaten entstehen nur aus Buchten (benannt oder berechnet) und Häfen; an offener Küste fehlen sie. 124 der 339 fehlenden Spots haben einen Strand ≤ 300 m, 166 keinen ≤ 600 m | Spec / Code | offen: Christian entscheidet über das Nachschärfen des Gerüsts (Kandidatenquellen, Ankerposition); Rauchprobe T3 läuft parallel | — |
+| B29 | Attika 2 (T3 Step 1, `research.fetch`) | Trotz #39 sechs Konverter-Abstürze: 5× „… 'documentElement' as it is null“ (sea-seek.com, Seite ist nur ein `<script>` mit JS-Weiterleitung auf `/en/…`), 1× „reading 'tagName'“ (bootdepot.de, HTML-Fragment ab `<div>`) | Lauf `01a17cc8…`; mit den echten Seiten lokal nachgestellt | linkedom baut um Markup ohne `<html>`-Wurzel kein `html`/`body`: das erste Element wird Wurzel und verschwindet mit `removeAll(script…)`, bzw. Readability findet kein `body`. Der Guard aus #39 (B27) prüfte nur vor dem Entfernen | Code | `parseDocument` hüllt Markup ohne `HTML`-Wurzel in ein ganzes Dokument; JS-Weiterleitung → `mainChars` 0 → Auto-Render folgt ihr; Fragment behält Inhalt; Tests RED → GREEN; PR #41, deployt 27.10. (`9e800a4b`) | sechs Jobs per `job_retry` erneut: alle gespeichert, sea-seek gerendert 4.535–6.270 Zeichen statt leer |
+| B30 | Attika 2 (T2/T3, Auswertung) | MCP `sql` liefert verschobene Werte, wenn zwei Ergebnisspalten gleich heißen (zweimal `count`, zweimal `st_x`): `count(*)` und `count(position)` zeigen dieselbe Zahl, `st_x` einer Zeile wird `null` | Abfragen vom 27.10. (Plätze je Art, Fehlerplätze der Rauchprobe); mit Aliasen richtig | Zeilen werden vermutlich über Objekte mit Spaltennamen als Schlüssel gebaut, gleiche Namen überschreiben sich | Code (MCP) | offen: Spalten als Array lesen oder doppelte Namen ablehnen; bis dahin jede Spalte mit Alias | eine falsche Zahl (337 statt 1.643 Plätze) im Gespräch korrigiert, nicht im Protokoll |
+
+## B31 – Strand-Kandidaten finden keine Ankerplatz-Seiten (Attika 2, Rauchprobe 2)
+
+Die Suche unter Strandnamen („{strand} anchorage“) liefert Badestrand-, Hotel- und Reiseseiten, oft gleichnamige Strände
+anderer Regionen (Korfu, Rhodos, Paros, Spanien). In der Probekachel: 25 Strand-Kandidaten bei einem Referenz-Spot,
+23 ohne Suchtreffer, 0 bestätigt. Folge: der Gewinn an Obergrenze aus #44 wird nicht zu Abdeckung.
+
+## B32 – `version.configHash` deckt Geometrie, Gerüst und Konsolidierung nicht ab (klein)
+
+Nach #42–#44 blieb `configHash` gleich; ob `config/geometry.json` oder `config/gazetteer.json` auf Produktion gelten,
+ist über `version` nicht prüfbar. Umweg: `computations.rules_version` per `sql`.
+
+## B33 – Batch-Reservierung schätzt die Seitenbewertung rund viermal zu hoch, die Budgetpause hält den ganzen Tag
+
+Hauptlauf GR-I (`01a17eff…`): 40 Bewertungs-Batches am 28.10. 01:04–01:09 reservierten zusammen 79,97 €, gebucht wurden
+20,70 €. Die Reservierung erreichte das Tagesbudget (80 €), der Worker hielt `research.assess` mit `budget:anthropic`
+bis Mitternacht UTC an. Nach dem Buchen war das Budget frei, die Pause blieb aber stehen (Rest 22 Jobs, ~17 h
+Wartezeit). Christian gab die Queue am 28.10. 07:50 per `queue_resume` frei; die 22 Batches reservierten 44,79 €.
+Offen: Schätzung je Batch an gebuchte Kosten angleichen (`estimatedCostEur`), Budgetpause nach Ende der Reservierungen
+selbst aufheben statt bis zum Tageswechsel.
+
+## B34 – Recherche findet für die meisten Kandidaten keine zählenden Seiten (Attika 2, Hauptlauf)
+
+Hauptlauf GR-I (`01a17eff…`), Tor N=2: 98 Spots „zu wenige unabhängige Quellen“ (82 Plätze: 62 Ankerbuchten,
+16 Marinas, 4 Häfen). 80 dieser Plätze haben ≥ 20 Treffer-URLs, 3.671 Seiten geholt; davon sind 473 Paare (Platz ×
+Seite) zählender Seitenart mit aufgeführten Liegeplätzen (Revierführer 283, Törnbericht 96, Forum 45, Behörde 42,
+Marina 7), aber nur 28 wurden Einheiten.
+
+Abgleich der übrigen 445 Paare (Wortstamm der Namen, ohne Gattungswörter): 418 nennen keinen Liegeplatz mit
+passendem Namen; Stichprobe: gleichnamige oder andere Buchten in anderen Revieren (Ionisches Meer, Kykladen, Kreta,
+Karibik, England). Die Namenszuordnung (`berthNameMatches`) verwirft sie zu Recht. 27 Paare mit Stamm-Treffer, davon
+etwa die Hälfte echte Namensvarianten desselben Platzes (Genitiv/Transliteration „Lavrion“–„Lavriou“, Übersetzung
+„Monastery“–„Monastiriou“, „Paralia X“–„X Beach“); der Rest andere Orte gleichen Namens.
+
+Ursache vor allem die Suche: die Vorlagen sind überwiegend `{name} anchorage|sailing|Ankerplatz|…` ohne Revier, die
+Gattungsnamen griechischer Buchten („Ormos Agiou Nikolaou“) treffen ganz Griechenland. Namensvarianten kosten wenig
+(geschätzt ≤ 6 Plätze). Folge: selbst mit perfekter Recherche läge die Abdeckung bei 150 m bei höchstens ~24 %
+(486 von 637 Spots ohne Kandidat, B28); mit der heutigen Ausbeute 0,8 %.
+
+Christian (28.10.): Land und bis zu zwei Reviere in die Suchvorlagen, Vorlagen ohne Ort ersetzen, griechische Endungen
+im Namensabgleich; Abdeckungsziel 50 % bleibt (braucht zusätzlich ein dichteres Gerüst, B28). Umsetzung PR #47.
+
+## B35 – DataForSEO „No Search Results“ (40102) lässt den ganzen Kandidaten scheitern (klein)
+
+Nachlauf Attika 2 (`01a18370`): Der Job `research.search` eines Kandidaten mit Anführungszeichen im Namen scheiterte
+mit `dataforseo status 40102 … No Search Results` bei einer einzelnen Suche. 40102 ist ein leeres Ergebnis, kein
+Fehler; die anderen Suchen des Kandidaten gehen damit verloren und eine Aufgabe „Fehlgeschlagener Job“ entsteht. Ein
+`job_retry` scheitert wieder gleich. 1 von 763 Kandidaten. Behebung: 40102 als Suche ohne Treffer behandeln
+(`fix/`-Zweig mit Regressionstest).
+
+## B36 – Kostenschätzung des Pilots um Faktor 2 zu niedrig (Revier-Suche, P1)
+
+Pilot `P1-revier-suche.md`: geschätzt ~22 €, gelaufen 49,65 €. Zwei Suchwege × 40 Treffer je Anfrage ergaben 2.553
+statt 1.200 bewertete Seiten, und `assess-page` kostet je Seite 0,012 € (synchron, Sonnet 5.5, bis 6.000 Wörter)
+statt der angenommenen 0,007 €. Das Guthaben des lokalen Schlüssels war nachts erschöpft, der Lauf stand bis zum
+Aufladen. Folge für jede Kostenprojektion: erst 10 % des Umfangs laufen lassen und messen, dann hochrechnen; in der
+Pipeline den Batch-Rabatt (50 %) in die Schätzung einrechnen.
+
+## B37 – Gazetteer kennt englische Seglernamen nicht; Namensabgleich ohne Wortstamm auf dem Prüfzweig (P1)
+
+Von 295 unverortbaren Nennungen mit GR-I-Gebiet entfallen 12 auf den meistgenannten Ankerplatz des Reviers unter
+seinem englischen Seglernamen; das Gazetteer führt nur den griechischen Namen. Weitere Fälle: Schreibvarianten
+(Vathi/Vathy, Aponisos/Aponissos; der Wortstamm-Abgleich aus PR #47 fehlt auf `pruefung/attika-2`), Namen auf
+mehreren Inseln (Mandraki 25, Agia Marina 12), die ohne Inselkontext der Seite mehrdeutig bleiben. Behebung:
+englische/deutsche Exonyme als Namen (Quelle: die Nennungen selbst, mit Beleg), Wortstamm-Abgleich mergen,
+Inselkontext aus Seite und Suchgebiet in die Zuordnung.
+
+## B38 – Revier-Seiten decken ganz Griechenland; gleichnamige Orte werden fehlverortet (P1)
+
+1.166 von 2.627 Nennungen nennen andere Reviere (Paxos, Paros, Kythnos, Kefalonia, Ithaka, Lefkada, Korfu …); ohne
+Filter wurden sie auf gleichnamige GR-I-Objekte verortet (bindende Zahl 36 statt 27 Cluster), mit Filter bleiben unter
+den 25 Konflikt-Web-Orten noch Namen aus dem Ionischen Meer, den Sporaden und Messenien, deren Seiten kein Gebiet
+nennen. Ein Quelle-zuerst-Ablauf braucht eine Revier-Zuordnung je Nennung
+(Gebietsangabe der Seite, Abschnittskontext) vor der Verortung, sonst entstehen Phantom-Kandidaten.
+
+## B39 – Hafen- und Ortsobjekte verorten auf Polygon-Mittelpunkte, nicht auf den Liegeplatz (P1)
+
+254 Nennungen landen auf Hafenobjekten, 160 auf Orten, 67 auf Inseln. Der meistgenannte Stadtkai des Reviers
+(35 unabhängige Quellen) zählt als Konflikt, weil der Referenzpunkt am Kai > 300 m vom Mittelpunkt des
+Hafenpolygons liegt. Für Häfen und Marinas braucht die Verortung eine Kai-/Liegeplatzposition (OSM `mooring`,
+`seamark:berth`, Steg-Linien), für Orte den Hafen des Orts statt des Ortsmittelpunkts.
+
+## B40 – Inselfilter der Pilot-Verortung verglich den Erstnamen des Inselobjekts mit der Insel der Bucht (P1)
+
+Der Inselfilter aus dem Review-Fix von P1 (`scripts/lab/region-search/locate.ts`, `islandOf`) gab den Erstnamen des
+Inselobjekts zurück („Hidra“, „Isola di Poros“, „İspeçe“) und verglich ihn mit der `islandName` der Bucht („Hydra“,
+„Kalavria“, „Spetses“). Fast jede Nennung mit Insel als Seiten-Gebiet fiel dadurch auf „kein Treffer“: die drei
+meistgenannten Buchten des Reviers (37, 14 und 12 unabhängige Domains) blieben unverortet, obwohl das Gazetteer sie
+führt; Verortung per Gazetteer 680 statt 820 im ersten Lauf. Behoben am 31.10. (Vergleich gegen alle Namen des
+Inselobjekts, Test im Lab): per Gazetteer 726, bindende Bucht-Cluster **27 → 33 (8,7 %)**, Spots mit Web-Ort ≤ 300 m
+63 → 80, Konflikte 25 → 22, tragende Seiten 230 → 247. Die Entscheidungsstufe (< 20 %) ändert sich nicht; das
+Protokoll P1 ist korrigiert. Offen bleibt die meistgenannte Bucht (33 Nennungen mehrdeutig): auf derselben Insel
+liegen zwei Gazetteer-Buchten gleichen Namens > 300 m auseinander (Dublette, vgl. B42).
+
+## B41 – Bestätigungsregel „offizielle Seite“ sperrt griechische Gemeindehäfen (Attika 2)
+
+Für `officialPlaceKinds` (Marina, Hafen) verlangt `confirmation.ts` eine Seite der Art Marina oder Behörde plus eine
+weitere Domain (Spec Neuausrichtung 5.6, Entscheidung Claude). In GR-I sind 7 Marinas bestätigt, alle mit eigener
+Website (Athener Riviera, Lavrio, Poros). Die Gemeindehäfen, an denen Yachten liegen, bleiben Kandidat mit Grund
+„keine offizielle Seite“, obwohl sie mehr unabhängige zählende Quellen haben als jeder bestätigte Ankerplatz: Perdika
+7 Domains, Ägina-Stadt 5, Hydra 5, Poros (zweites Objekt) 2. Die Website-Suche fand für keinen von ihnen eine Seite.
+Dazu stuft die Seitenbewertung Hafenhandbuch-Einträge mit Inspektion (ADAC Skipper: 10 von 15 Seiten) als
+„Verzeichnis“ ein, das nirgends zählt. Vorschlag: offizielle Seite **oder** ≥ 2 unabhängige zählende Quellen; Wirkung
+in GR-I sofort +3 bis +4 bestätigte Häfen ohne Kosten. Entscheidung bei Christian (T8).
+
+## B42 – Dubletten unter den bestätigten Plätzen (Attika 2)
+
+Von 18 bestätigten Plätzen in GR-I sind 15 verschieden: zwei Buchten „Agia Marina“ auf Ägina 614 m auseinander
+(berechnete und OSM-Bucht; `merge.similarNameDistanceM.bay` 1.500 m hätte sie zusammenführen müssen), Bucht und Strand
+derselben Stelle auf Hydra 366 m auseinander (Bucht- und Strand-Kandidat je ein Platz), zwei OSM-Objekte des
+Stadthafens Poros 140 m auseinander (`merge.distanceM.harbour` 300 m). Dazu zwei Gazetteer-Buchten gleichen Namens auf
+Hydra > 300 m auseinander (B40). Folge: doppelte Lieferung desselben Liegeplatzes; die Zählung „bestätigt“ ist um ~17 %
+zu hoch. Prüfen: Merge berechneter Buchten gegen OSM-Buchten, Strand-Kandidat gegen Bucht-Kandidat derselben Stelle,
+Hafen-Merge über Objektarten (Relation und Knoten).
+
+## B43 – DataForSEO liefert Google-Weiterleitungen statt Ziel-URLs (klein)
+
+In Produktion tragen 361 von 85.779 SERP-Ergebnissen eine URL `google.com/goto?url=…` (Domain `google.com`) statt der
+Ziel-URL; in einer Handabfrage vom 30.10. (de, Desktop, Tiefe 50) waren es 29 von 49. Die echte Domain steht nur im
+`breadcrumb`. Weil `google.com` in `skipDomains` steht, fallen diese Treffer still weg. Noch selten, aber bei
+Ausweitung verlöre die Suche die Hälfte der Treffer unbemerkt. Behebung: Ziel aus `breadcrumb` rekonstruieren oder die
+Antwort-Parameter von DataForSEO prüfen; Zähler für übersprungene Weiterleitungen im Lauf.
